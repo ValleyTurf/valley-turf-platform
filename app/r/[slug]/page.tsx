@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase-server";
 
 export default async function Page({
@@ -26,16 +27,12 @@ export default async function Page({
     .from("scans")
     .insert({
       campaign_id: campaign.id,
-      user_agent: "Next.js test",
+      user_agent: "QR Scan",
     })
     .select();
 
   console.log("SCAN RESULT:", scan);
   console.log("SCAN ERROR:", scanError);
 
-  return (
-    <pre>
-      {JSON.stringify({ scan, scanError }, null, 2)}
-    </pre>
-  );
+  redirect(campaign.destination);
 }
