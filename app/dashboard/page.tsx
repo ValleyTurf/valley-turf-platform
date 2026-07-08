@@ -9,8 +9,7 @@ function startOfToday() {
 function startOfWeek() {
   const date = startOfToday();
   const day = date.getDay();
-  const diff = date.getDate() - day;
-  date.setDate(diff);
+  date.setDate(date.getDate() - day);
   return date;
 }
 
@@ -22,7 +21,7 @@ function startOfMonth() {
 }
 
 function formatDate(value: string | null) {
-  if (!value) return "Unknown";
+  if (!value) return "No scans yet";
   return new Date(value).toLocaleString();
 }
 
@@ -37,8 +36,8 @@ export default async function DashboardPage() {
     .select("*")
     .order("scanned_at", { ascending: false });
 
-  const allScans = scans ?? [];
   const allCampaigns = campaigns ?? [];
+  const allScans = scans ?? [];
 
   const todayStart = startOfToday();
   const weekStart = startOfWeek();
@@ -71,25 +70,38 @@ export default async function DashboardPage() {
     })
     .sort((a, b) => b.totalScans - a.totalScans);
 
+  const topCampaign = campaignStats[0];
+  const maxScans = Math.max(...campaignStats.map((c) => c.totalScans), 1);
+
+  const truckCampaigns = campaignStats.filter((campaign) =>
+    ["truck", "truck2"].includes(campaign.slug)
+  );
+
+  const inactiveCampaigns = campaignStats.filter(
+    (campaign) => campaign.totalScans === 0
+  );
+
   return (
     <main className="min-h-screen bg-green-50 p-8">
       <div className="mx-auto max-w-7xl">
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
             <h1 className="text-4xl font-bold text-green-950">
-              Valley Turf Revival Analytics
+              Valley Turf Revival Dashboard
             </h1>
             <p className="mt-2 text-gray-600">
-              QR scan performance across trucks, print pieces, and campaigns.
+              Marketing performance, QR scans, and campaign activity.
             </p>
           </div>
 
-          <a
-            href="/codes"
-            className="rounded-lg bg-green-900 px-5 py-3 text-sm font-semibold text-white"
-          >
-            View QR Library
-          </a>
+          <div className="flex gap-3">
+            <a
+              href="/codes"
+              className="rounded-lg bg-green-900 px-5 py-3 text-sm font-semibold text-white"
+            >
+              QR Code Library
+            </a>
+          </div>
         </div>
 
         <section className="mt-8 grid gap-6 md:grid-cols-4">
@@ -128,72 +140,124 @@ export default async function DashboardPage() {
               Campaign Leaderboard
             </h2>
 
-            <div className="mt-5 overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b text-gray-500">
-                    <th className="py-3">Campaign</th>
-                    <th className="py-3">Slug</th>
-                    <th className="py-3">Last Scan</th>
-                    <th className="py-3 text-right">Scans</th>
-                  </tr>
-                </thead>
+            <div className="mt-5 space-y-5">
+              {campaignStats.map((campaign) => {
+                const percentage = Math.round(
+                  (campaign.totalScans / maxScans) * 100
+                );
 
-                <tbody>
-                  {campaignStats.map((campaign) => (
-                    <tr key={campaign.id} className="border-b">
-                      <td className="py-4">
+                return (
+                  <div key={campaign.id}>
+                    <div className="flex items-center justify-between">
+                      <div>
                         <p className="font-semibold text-green-950">
                           {campaign.displayName}
                         </p>
                         <p className="text-xs text-gray-500">
-                          {campaign.name}
+                          /r/{campaign.slug}
                         </p>
-                      </td>
+                      </div>
 
-                      <td className="py-4 text-gray-600">
-                        /r/{campaign.slug}
-                      </td>
-
-                      <td className="py-4 text-gray-600">
-                        {formatDate(campaign.lastScan)}
-                      </td>
-
-                      <td className="py-4 text-right text-lg font-bold text-green-950">
+                      <p className="text-lg font-bold text-green-950">
                         {campaign.totalScans}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </p>
+                    </div>
+
+                    <div className="mt-2 h-3 rounded-full bg-green-100">
+                      <div
+                        className="h-3 rounded-full bg-green-900"
+                        style={{ width: `${percentage}%` }}
+                      />
+                    </div>
+
+                    <p className="mt-1 text-xs text-gray-500">
+                      Last scan: {formatDate(campaign.lastScan)}
+                    </p>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
-          <div className="rounded-xl bg-white p-6 shadow">
-            <h2 className="text-2xl font-bold text-green-950">
-              Top Campaign
-            </h2>
+          <div className="space-y-6">
+            <div className="rounded-xl bg-white p-6 shadow">
+              <h2 className="text-2xl font-bold text-green-950">
+                Top Campaign
+              </h2>
 
-            {campaignStats[0] ? (
-              <div className="mt-5 rounded-lg border bg-green-50 p-5">
-                <p className="text-sm text-gray-500">Current leader</p>
-                <p className="mt-2 text-2xl font-bold text-green-950">
-                  {campaignStats[0].displayName}
+              {topCampaign ? (
+                <div className="mt-5 rounded-lg border bg-green-50 p-5">
+                  <p className="text-sm text-gray-500">Current leader</p>
+                  <p className="mt-2 text-2xl font-bold text-green-950">
+                    {topCampaign.displayName}
+                  </p>
+                  <p className="mt-3 text-5xl font-bold text-green-950">
+                    {topCampaign.totalScans}
+                  </p>
+                  <p className="text-sm text-gray-500">total scans</p>
+                </div>
+              ) : (
+                <p className="mt-4 text-gray-500">No campaigns yet.</p>
+              )}
+            </div>
+
+            <div className="rounded-xl bg-white p-6 shadow">
+              <h2 className="text-2xl font-bold text-green-950">
+                Needs Attention
+              </h2>
+
+              {inactiveCampaigns.length > 0 ? (
+                <div className="mt-4 space-y-3">
+                  {inactiveCampaigns.slice(0, 5).map((campaign) => (
+                    <div
+                      key={campaign.id}
+                      className="rounded-lg border bg-gray-50 p-3"
+                    >
+                      <p className="font-semibold text-green-950">
+                        {campaign.displayName}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        No scans recorded yet.
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-4 text-gray-500">
+                  All campaigns have at least one scan.
                 </p>
-                <p className="mt-2 text-4xl font-bold text-green-950">
-                  {campaignStats[0].totalScans}
-                </p>
-                <p className="text-sm text-gray-500">total scans</p>
-              </div>
-            ) : (
-              <p className="mt-4 text-gray-500">No campaigns yet.</p>
-            )}
+              )}
+            </div>
           </div>
         </section>
 
         <section className="mt-8 rounded-xl bg-white p-6 shadow">
           <h2 className="text-2xl font-bold text-green-950">
-            Latest Scan Activity
+            Truck Performance
+          </h2>
+
+          <div className="mt-5 grid gap-6 md:grid-cols-2">
+            {truckCampaigns.map((truck) => (
+              <div key={truck.id} className="rounded-xl border bg-green-50 p-5">
+                <p className="text-sm text-gray-500">Vehicle campaign</p>
+                <p className="mt-2 text-2xl font-bold text-green-950">
+                  {truck.displayName}
+                </p>
+                <p className="mt-3 text-5xl font-bold text-green-950">
+                  {truck.totalScans}
+                </p>
+                <p className="text-sm text-gray-500">total scans</p>
+                <p className="mt-3 text-xs text-gray-500">
+                  Last scan: {formatDate(truck.lastScan)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="mt-8 rounded-xl bg-white p-6 shadow">
+          <h2 className="text-2xl font-bold text-green-950">
+            Latest Activity
           </h2>
 
           <div className="mt-5 space-y-3">
