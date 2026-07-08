@@ -27,9 +27,7 @@ async function createCampaign(formData: FormData) {
     .replace(/\s+/g, "-");
   const destination = String(formData.get("destination") ?? "").trim();
 
-  if (!name || !slug || !destination) {
-    return;
-  }
+  if (!name || !slug || !destination) return;
 
   await supabaseServer.from("campaigns").insert({
     name,
@@ -62,7 +60,7 @@ export default async function CodesPage() {
       const qrDataUrl = await QRCode.toDataURL(trackingUrl, {
         errorCorrectionLevel: "H",
         margin: 4,
-        width: 300,
+        width: 320,
       });
 
       const campaignScans =
@@ -80,7 +78,7 @@ export default async function CodesPage() {
   );
 
   return (
-    <main className="min-h-screen bg-[var(--vtr-background)] p-8">
+    <main className="min-h-screen bg-[#F7F6F2] p-8 text-[#1F2937]">
       <div className="mx-auto max-w-7xl">
         <section className="rounded-3xl bg-gradient-to-r from-[#0E3B2E] to-[#2E6B3F] p-8 text-white shadow-lg">
           <p className="text-sm font-semibold uppercase tracking-widest text-[#F2C94C]">
@@ -92,66 +90,66 @@ export default async function CodesPage() {
           </p>
         </section>
 
-        <section className="mt-8 rounded-2xl border border-[var(--vtr-border)] bg-white p-6 shadow-sm">
-          <h2 className="text-2xl font-bold text-[var(--vtr-green-dark)]">
+        <section className="mt-8 rounded-2xl border border-[#D9E4D4] bg-white p-6 shadow-sm">
+          <h2 className="text-2xl font-bold text-[#0E3B2E]">
             New Campaign
           </h2>
 
           <form action={createCampaign} className="mt-5 grid gap-4 md:grid-cols-2">
             <div>
-              <label className="text-sm font-semibold text-[var(--vtr-text)]">
+              <label className="text-sm font-semibold text-[#1F2937]">
                 Campaign Name
               </label>
               <input
                 name="name"
                 placeholder="Truck 3 QR"
                 required
-                className="mt-1 w-full rounded-xl border border-[var(--vtr-border)] p-3 outline-none focus:border-[var(--vtr-gold)]"
+                className="mt-1 w-full rounded-xl border border-[#D9E4D4] p-3 outline-none focus:border-[#D4A32A]"
               />
             </div>
 
             <div>
-              <label className="text-sm font-semibold text-[var(--vtr-text)]">
+              <label className="text-sm font-semibold text-[#1F2937]">
                 Display Alias
               </label>
               <input
                 name="alias"
                 placeholder="Ford F-250"
-                className="mt-1 w-full rounded-xl border border-[var(--vtr-border)] p-3 outline-none focus:border-[var(--vtr-gold)]"
+                className="mt-1 w-full rounded-xl border border-[#D9E4D4] p-3 outline-none focus:border-[#D4A32A]"
               />
             </div>
 
             <div>
-              <label className="text-sm font-semibold text-[var(--vtr-text)]">
+              <label className="text-sm font-semibold text-[#1F2937]">
                 Slug
               </label>
               <input
                 name="slug"
                 placeholder="truck3"
                 required
-                className="mt-1 w-full rounded-xl border border-[var(--vtr-border)] p-3 outline-none focus:border-[var(--vtr-gold)]"
+                className="mt-1 w-full rounded-xl border border-[#D9E4D4] p-3 outline-none focus:border-[#D4A32A]"
               />
-              <p className="mt-1 text-xs text-[var(--vtr-text-light)]">
+              <p className="mt-1 text-xs text-[#6B7280]">
                 Creates: go.valleyturfrevival.com/r/truck3
               </p>
             </div>
 
             <div>
-              <label className="text-sm font-semibold text-[var(--vtr-text)]">
+              <label className="text-sm font-semibold text-[#1F2937]">
                 Destination URL
               </label>
               <input
                 name="destination"
                 placeholder="https://valleyturfrevival.com"
                 required
-                className="mt-1 w-full rounded-xl border border-[var(--vtr-border)] p-3 outline-none focus:border-[var(--vtr-gold)]"
+                className="mt-1 w-full rounded-xl border border-[#D9E4D4] p-3 outline-none focus:border-[#D4A32A]"
               />
             </div>
 
             <div className="md:col-span-2">
               <button
                 type="submit"
-                className="rounded-xl bg-[var(--vtr-green-dark)] px-6 py-3 font-semibold text-white transition hover:bg-[var(--vtr-green)]"
+                className="rounded-xl bg-[#0E3B2E] px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-[#2E6B3F]"
               >
                 + Create Campaign
               </button>
@@ -159,45 +157,47 @@ export default async function CodesPage() {
           </form>
         </section>
 
-        <div className="mt-8 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <section className="mt-8 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {qrCodes.map((code) => (
-            <div
+            <article
               key={code.id}
-              className="rounded-2xl border border-[var(--vtr-border)] bg-white p-6 shadow-sm"
+              className="rounded-2xl border border-[#D9E4D4] bg-white p-6 shadow-sm"
             >
-              <h2 className="text-xl font-bold text-[var(--vtr-green-dark)]">
-                {code.displayName}
-              </h2>
-
-              <p className="mt-1 text-sm text-[var(--vtr-text-light)]">
-                Campaign: {code.name}
-              </p>
-
-              <p className="mt-1 text-sm text-[var(--vtr-text-light)]">
-                /r/{code.slug}
-              </p>
-
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <div className="rounded-xl bg-[var(--vtr-background)] p-3">
-                  <p className="text-xs text-[var(--vtr-text-light)]">
-                    Total Scans
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold text-[#0E3B2E]">
+                    {code.displayName}
+                  </h2>
+                  <p className="mt-1 text-sm text-[#6B7280]">
+                    Campaign: {code.name}
                   </p>
-                  <p className="text-2xl font-bold text-[var(--vtr-green-dark)]">
+                  <p className="mt-1 text-sm text-[#6B7280]">
+                    /r/{code.slug}
+                  </p>
+                </div>
+
+                <div className="rounded-full bg-[#F2C94C] px-3 py-1 text-xs font-bold text-[#0E3B2E]">
+                  QR
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <div className="rounded-xl bg-[#F7F6F2] p-3">
+                  <p className="text-xs text-[#6B7280]">Total Scans</p>
+                  <p className="text-3xl font-bold text-[#0E3B2E]">
                     {code.totalScans}
                   </p>
                 </div>
 
-                <div className="rounded-xl bg-[var(--vtr-background)] p-3">
-                  <p className="text-xs text-[var(--vtr-text-light)]">
-                    Last Scan
-                  </p>
-                  <p className="text-sm font-semibold text-[var(--vtr-green-dark)]">
+                <div className="rounded-xl bg-[#F7F6F2] p-3">
+                  <p className="text-xs text-[#6B7280]">Last Scan</p>
+                  <p className="text-sm font-semibold text-[#0E3B2E]">
                     {formatArizonaTime(code.lastScan)}
                   </p>
                 </div>
               </div>
 
-              <div className="mt-4 flex justify-center rounded-xl border border-[var(--vtr-border)] bg-white p-4">
+              <div className="mt-5 flex justify-center rounded-xl border border-[#D9E4D4] bg-white p-4">
                 <img
                   src={code.qrDataUrl}
                   alt={`${code.displayName} QR code`}
@@ -205,24 +205,34 @@ export default async function CodesPage() {
                 />
               </div>
 
-              <p className="mt-4 break-all text-sm text-[var(--vtr-text)]">
-                {code.trackingUrl}
-              </p>
+              <div className="mt-5 rounded-xl bg-[#F7F6F2] p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">
+                  Tracking URL
+                </p>
+                <p className="mt-1 break-all text-sm text-[#1F2937]">
+                  {code.trackingUrl}
+                </p>
+              </div>
 
-              <p className="mt-2 break-all text-xs text-[var(--vtr-text-light)]">
-                Redirects to: {code.destination}
-              </p>
+              <div className="mt-3 rounded-xl bg-[#F7F6F2] p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[#6B7280]">
+                  Destination
+                </p>
+                <p className="mt-1 break-all text-sm text-[#1F2937]">
+                  {code.destination}
+                </p>
+              </div>
 
               <a
                 href={code.qrDataUrl}
                 download={`${code.slug}-qr.png`}
-                className="mt-4 inline-block rounded-xl bg-[var(--vtr-green-dark)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--vtr-green)]"
+                className="mt-5 inline-flex w-full justify-center rounded-xl bg-[#0E3B2E] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#2E6B3F]"
               >
                 Download PNG
               </a>
-            </div>
+            </article>
           ))}
-        </div>
+        </section>
       </div>
     </main>
   );
