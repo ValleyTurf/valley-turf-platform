@@ -223,13 +223,22 @@ export default async function CodesPage() {
                 </p>
               </div>
 
-              <a
-                href={code.qrDataUrl}
-                download={`${code.slug}-qr.png`}
-                className="mt-5 inline-flex w-full justify-center rounded-xl bg-[#0E3B2E] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#2E6B3F]"
-              >
-                Download PNG
-              </a>
+             <div className="mt-5 grid gap-3">
+  <a
+    href={`/campaigns/${code.slug}`}
+    className="inline-flex w-full justify-center rounded-xl bg-[#D4A32A] px-4 py-3 text-sm font-semibold text-[#0E3B2E] shadow-sm transition hover:bg-[#F2C94C]"
+  >
+    View Details
+  </a>
+
+  <a
+    href={code.qrDataUrl}
+    download={`${code.slug}-qr.png`}
+    className="inline-flex w-full justify-center rounded-xl bg-[#0E3B2E] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#2E6B3F]"
+  >
+    Download PNG
+  </a>
+</div>
             </article>
           ))}
         </section>
