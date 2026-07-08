@@ -21,7 +21,16 @@ function startOfMonth() {
 
 function formatDate(value: string | null) {
   if (!value) return "No scans yet";
-  return new Date(value).toLocaleString();
+
+  return new Date(value).toLocaleString("en-US", {
+    timeZone: "America/Phoenix",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
 }
 
 export default async function DashboardPage() {
