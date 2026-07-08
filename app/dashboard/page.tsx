@@ -8,8 +8,7 @@ function startOfToday() {
 
 function startOfWeek() {
   const date = startOfToday();
-  const day = date.getDay();
-  date.setDate(date.getDate() - day);
+  date.setDate(date.getDate() - date.getDay());
   return date;
 }
 
@@ -39,20 +38,16 @@ export default async function DashboardPage() {
   const allCampaigns = campaigns ?? [];
   const allScans = scans ?? [];
 
-  const todayStart = startOfToday();
-  const weekStart = startOfWeek();
-  const monthStart = startOfMonth();
-
   const scansToday = allScans.filter(
-    (scan) => scan.scanned_at && new Date(scan.scanned_at) >= todayStart
+    (scan) => scan.scanned_at && new Date(scan.scanned_at) >= startOfToday()
   ).length;
 
   const scansThisWeek = allScans.filter(
-    (scan) => scan.scanned_at && new Date(scan.scanned_at) >= weekStart
+    (scan) => scan.scanned_at && new Date(scan.scanned_at) >= startOfWeek()
   ).length;
 
   const scansThisMonth = allScans.filter(
-    (scan) => scan.scanned_at && new Date(scan.scanned_at) >= monthStart
+    (scan) => scan.scanned_at && new Date(scan.scanned_at) >= startOfMonth()
   ).length;
 
   const campaignStats = allCampaigns
@@ -73,74 +68,50 @@ export default async function DashboardPage() {
   const topCampaign = campaignStats[0];
   const maxScans = Math.max(...campaignStats.map((c) => c.totalScans), 1);
 
-  const truckCampaigns = campaignStats.filter((campaign) =>
-    ["truck", "truck2"].includes(campaign.slug)
-  );
-
-  const inactiveCampaigns = campaignStats.filter(
-    (campaign) => campaign.totalScans === 0
-  );
-
   return (
-    <main className="min-h-screen bg-green-50 p-8">
+    <main className="min-h-screen bg-[var(--vtr-background)] p-8">
       <div className="mx-auto max-w-7xl">
-        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
-          <div>
-            <h1 className="text-4xl font-bold text-green-950">
-              Valley Turf Revival Dashboard
-            </h1>
-            <p className="mt-2 text-gray-600">
-              Marketing performance, QR scans, and campaign activity.
-            </p>
-          </div>
-
-          <div className="flex gap-3">
-            <a
-              href="/codes"
-              className="rounded-lg bg-green-900 px-5 py-3 text-sm font-semibold text-white"
-            >
-              QR Code Library
-            </a>
-          </div>
-        </div>
+        <section className="rounded-3xl bg-gradient-to-r from-[#0E3B2E] to-[#2E6B3F] p-8 text-white shadow-lg">
+          <p className="text-sm font-semibold uppercase tracking-widest text-[#F2C94C]">
+            Valley Turf Revival
+          </p>
+          <h1 className="mt-2 text-4xl font-bold">
+            Marketing Dashboard
+          </h1>
+          <p className="mt-3 max-w-2xl text-green-50">
+            Track QR scans, campaign performance, and truck marketing activity.
+          </p>
+        </section>
 
         <section className="mt-8 grid gap-6 md:grid-cols-4">
-          <div className="rounded-xl bg-white p-6 shadow">
-            <p className="text-sm text-gray-500">Today</p>
-            <p className="mt-2 text-4xl font-bold text-green-950">
-              {scansToday}
-            </p>
-          </div>
-
-          <div className="rounded-xl bg-white p-6 shadow">
-            <p className="text-sm text-gray-500">This Week</p>
-            <p className="mt-2 text-4xl font-bold text-green-950">
-              {scansThisWeek}
-            </p>
-          </div>
-
-          <div className="rounded-xl bg-white p-6 shadow">
-            <p className="text-sm text-gray-500">This Month</p>
-            <p className="mt-2 text-4xl font-bold text-green-950">
-              {scansThisMonth}
-            </p>
-          </div>
-
-          <div className="rounded-xl bg-white p-6 shadow">
-            <p className="text-sm text-gray-500">Total Scans</p>
-            <p className="mt-2 text-4xl font-bold text-green-950">
-              {allScans.length}
-            </p>
-          </div>
+          {[
+            ["Today", scansToday],
+            ["This Week", scansThisWeek],
+            ["This Month", scansThisMonth],
+            ["Total Scans", allScans.length],
+          ].map(([label, value]) => (
+            <div
+              key={label}
+              className="rounded-2xl border border-[var(--vtr-border)] bg-white p-6 shadow-sm"
+            >
+              <p className="text-sm font-semibold text-[var(--vtr-text-light)]">
+                {label}
+              </p>
+              <p className="mt-3 text-4xl font-bold text-[var(--vtr-green-dark)]">
+                {value}
+              </p>
+              <div className="mt-4 h-1 w-16 rounded-full bg-[var(--vtr-gold)]" />
+            </div>
+          ))}
         </section>
 
         <section className="mt-8 grid gap-6 lg:grid-cols-3">
-          <div className="rounded-xl bg-white p-6 shadow lg:col-span-2">
-            <h2 className="text-2xl font-bold text-green-950">
+          <div className="rounded-2xl border border-[var(--vtr-border)] bg-white p-6 shadow-sm lg:col-span-2">
+            <h2 className="text-2xl font-bold text-[var(--vtr-green-dark)]">
               Campaign Leaderboard
             </h2>
 
-            <div className="mt-5 space-y-5">
+            <div className="mt-6 space-y-5">
               {campaignStats.map((campaign) => {
                 const percentage = Math.round(
                   (campaign.totalScans / maxScans) * 100
@@ -150,27 +121,27 @@ export default async function DashboardPage() {
                   <div key={campaign.id}>
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="font-semibold text-green-950">
+                        <p className="font-semibold text-[var(--vtr-text)]">
                           {campaign.displayName}
                         </p>
-                        <p className="text-xs text-gray-500">
+                        <p className="text-xs text-[var(--vtr-text-light)]">
                           /r/{campaign.slug}
                         </p>
                       </div>
 
-                      <p className="text-lg font-bold text-green-950">
+                      <p className="text-lg font-bold text-[var(--vtr-green-dark)]">
                         {campaign.totalScans}
                       </p>
                     </div>
 
-                    <div className="mt-2 h-3 rounded-full bg-green-100">
+                    <div className="mt-2 h-3 rounded-full bg-[#EAF3E4]">
                       <div
-                        className="h-3 rounded-full bg-green-900"
+                        className="h-3 rounded-full bg-[var(--vtr-green-dark)]"
                         style={{ width: `${percentage}%` }}
                       />
                     </div>
 
-                    <p className="mt-1 text-xs text-gray-500">
+                    <p className="mt-1 text-xs text-[var(--vtr-text-light)]">
                       Last scan: {formatDate(campaign.lastScan)}
                     </p>
                   </div>
@@ -179,84 +150,36 @@ export default async function DashboardPage() {
             </div>
           </div>
 
-          <div className="space-y-6">
-            <div className="rounded-xl bg-white p-6 shadow">
-              <h2 className="text-2xl font-bold text-green-950">
-                Top Campaign
-              </h2>
+          <div className="rounded-2xl border border-[var(--vtr-border)] bg-white p-6 shadow-sm">
+            <h2 className="text-2xl font-bold text-[var(--vtr-green-dark)]">
+              Top Campaign
+            </h2>
 
-              {topCampaign ? (
-                <div className="mt-5 rounded-lg border bg-green-50 p-5">
-                  <p className="text-sm text-gray-500">Current leader</p>
-                  <p className="mt-2 text-2xl font-bold text-green-950">
-                    {topCampaign.displayName}
-                  </p>
-                  <p className="mt-3 text-5xl font-bold text-green-950">
-                    {topCampaign.totalScans}
-                  </p>
-                  <p className="text-sm text-gray-500">total scans</p>
-                </div>
-              ) : (
-                <p className="mt-4 text-gray-500">No campaigns yet.</p>
-              )}
-            </div>
-
-            <div className="rounded-xl bg-white p-6 shadow">
-              <h2 className="text-2xl font-bold text-green-950">
-                Needs Attention
-              </h2>
-
-              {inactiveCampaigns.length > 0 ? (
-                <div className="mt-4 space-y-3">
-                  {inactiveCampaigns.slice(0, 5).map((campaign) => (
-                    <div
-                      key={campaign.id}
-                      className="rounded-lg border bg-gray-50 p-3"
-                    >
-                      <p className="font-semibold text-green-950">
-                        {campaign.displayName}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        No scans recorded yet.
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="mt-4 text-gray-500">
-                  All campaigns have at least one scan.
+            {topCampaign ? (
+              <div className="mt-6 rounded-2xl border border-[var(--vtr-border)] bg-[var(--vtr-background)] p-5">
+                <p className="text-sm text-[var(--vtr-text-light)]">
+                  Current leader
                 </p>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <section className="mt-8 rounded-xl bg-white p-6 shadow">
-          <h2 className="text-2xl font-bold text-green-950">
-            Truck Performance
-          </h2>
-
-          <div className="mt-5 grid gap-6 md:grid-cols-2">
-            {truckCampaigns.map((truck) => (
-              <div key={truck.id} className="rounded-xl border bg-green-50 p-5">
-                <p className="text-sm text-gray-500">Vehicle campaign</p>
-                <p className="mt-2 text-2xl font-bold text-green-950">
-                  {truck.displayName}
+                <p className="mt-2 text-2xl font-bold text-[var(--vtr-green-dark)]">
+                  {topCampaign.displayName}
                 </p>
-                <p className="mt-3 text-5xl font-bold text-green-950">
-                  {truck.totalScans}
+                <p className="mt-4 text-5xl font-bold text-[var(--vtr-green-dark)]">
+                  {topCampaign.totalScans}
                 </p>
-                <p className="text-sm text-gray-500">total scans</p>
-                <p className="mt-3 text-xs text-gray-500">
-                  Last scan: {formatDate(truck.lastScan)}
+                <p className="text-sm text-[var(--vtr-text-light)]">
+                  total scans
                 </p>
               </div>
-            ))}
+            ) : (
+              <p className="mt-4 text-[var(--vtr-text-light)]">
+                No campaigns yet.
+              </p>
+            )}
           </div>
         </section>
 
-        <section className="mt-8 rounded-xl bg-white p-6 shadow">
-          <h2 className="text-2xl font-bold text-green-950">
+        <section className="mt-8 rounded-2xl border border-[var(--vtr-border)] bg-white p-6 shadow-sm">
+          <h2 className="text-2xl font-bold text-[var(--vtr-green-dark)]">
             Latest Activity
           </h2>
 
@@ -269,32 +192,28 @@ export default async function DashboardPage() {
               return (
                 <div
                   key={scan.id}
-                  className="flex flex-col justify-between gap-2 rounded-lg border p-4 md:flex-row md:items-center"
+                  className="flex flex-col justify-between gap-2 rounded-xl border border-[var(--vtr-border)] bg-[var(--vtr-background)] p-4 md:flex-row md:items-center"
                 >
                   <div>
-                    <p className="font-semibold text-green-950">
+                    <p className="font-semibold text-[var(--vtr-green-dark)]">
                       {campaign?.alias ?? campaign?.name ?? "Unknown Campaign"}
                     </p>
-                    <p className="text-sm text-gray-500">
+                    <p className="text-sm text-[var(--vtr-text-light)]">
                       {campaign?.slug ? `/r/${campaign.slug}` : "No slug"}
                     </p>
                   </div>
 
                   <div className="text-left md:text-right">
-                    <p className="text-sm font-medium text-gray-700">
+                    <p className="text-sm font-medium text-[var(--vtr-text)]">
                       {formatDate(scan.scanned_at)}
                     </p>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-[var(--vtr-text-light)]">
                       {scan.user_agent ?? "No device info"}
                     </p>
                   </div>
                 </div>
               );
             })}
-
-            {allScans.length === 0 && (
-              <p className="text-gray-500">No scans recorded yet.</p>
-            )}
           </div>
         </section>
       </div>
