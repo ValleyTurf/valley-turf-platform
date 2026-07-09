@@ -64,12 +64,14 @@ async function updateCampaign(formData: FormData) {
 export default async function CampaignDetailPage({
   params,
 }: {
-  params: { slug: string };
+  params: Promise<{ slug: string }>;
 }) {
+  const { slug } = await params;
+
   const { data: campaign } = await supabaseServer
     .from("campaigns")
     .select("*")
-    .eq("slug", params.slug)
+    .eq("slug", slug)
     .single();
 
   if (!campaign) {
