@@ -93,10 +93,13 @@ export default async function Home() {
       .from("scans")
       .select(
         `
-        id,
-        campaign_id,
-        created_at,
-        campaigns (
+       id,
+campaign_id,
+created_at,
+city,
+region,
+country,
+campaigns (
           id,
           name,
           alias,
@@ -249,8 +252,13 @@ export default async function Home() {
                       </div>
 
                       <p className="mt-1 text-sm text-[#6b705c]">
-                        QR code scanned
-                      </p>
+  QR code scanned
+  {scan.city || scan.region || scan.country
+    ? ` from ${[scan.city, scan.region, scan.country]
+        .filter(Boolean)
+        .join(", ")}`
+    : ""}
+</p>
                     </Link>
                   );
                 })
