@@ -18,6 +18,12 @@ const pages = [
     description: "Create and manage QR codes",
   },
   {
+    title: "Analytics",
+    icon: "??",
+    href: "/analytics",
+    description: "Scan trends, campaigns, and audience insights",
+  },
+  {
     title: "Campaigns",
     icon: "📣",
     href: "/campaigns",
@@ -325,3 +331,4 @@ campaigns (
     </main>
   );
 }
+
