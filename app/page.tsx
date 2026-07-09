@@ -77,12 +77,12 @@ export default async function Home() {
     supabaseServer
       .from("scans")
       .select("*", { count: "exact", head: true })
-      .gte("created_at", today.toISOString()),
+      .gte("scanned_at", today.toISOString()),
 
     supabaseServer
       .from("scans")
       .select("*", { count: "exact", head: true })
-      .gte("created_at", weekStart.toISOString()),
+      .gte("scanned_at", weekStart.toISOString()),
 
     supabaseServer.from("campaigns").select("*", {
       count: "exact",
@@ -95,7 +95,7 @@ export default async function Home() {
         `
        id,
 campaign_id,
-created_at,
+scanned_at,
 city,
 region,
 country,
@@ -107,7 +107,7 @@ campaigns (
         )
       `
       )
-      .order("created_at", { ascending: false })
+      .order("scanned_at", { ascending: false })
       .limit(6),
 
     supabaseServer
@@ -247,7 +247,7 @@ campaigns (
                         <p className="font-bold">{campaignName}</p>
 
                         <p className="text-sm text-[#6b705c]">
-                          {formatActivityDate(scan.created_at)}
+                          {formatActivityDate(scan.scanned_at)}
                         </p>
                       </div>
 
