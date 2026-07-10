@@ -14,6 +14,50 @@ type JobberTokenResponse = {
   expires_in?: number;
 };
 
+type JobberGraphQLError = {
+  message: string;
+};
+
+type JobberGraphQLResponse<T> = {
+  data: T | null;
+  errors: JobberGraphQLError[] | null;
+};
+
+async function readResponseBody(
+  response: Response
+): Promise<Record<string, unknown> | string | null> {
+  const text = await response.text();
+
+  if (!text.trim()) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return text;
+  }
+}
+
+function getResponseMessage(
+  body: Record<string, unknown> | string | null,
+  fallback: string
+): string {
+  if (typeof body === "string") {
+    return body.trim() || fallback;
+  }
+
+  if (body && typeof body.message === "string") {
+    return body.message;
+  }
+
+  if (body && typeof body.error === "string") {
+    return body.error;
+  }
+
+  return fallback;
+}
+
 async function getLatestTokenRow(): Promise<JobberTokenRow | null> {
   const { data, error } = await supabaseServer
     .from("jobber_tokens")
@@ -23,6 +67,11 @@ async function getLatestTokenRow(): Promise<JobberTokenRow | null> {
     .single();
 
   if (error || !data) {
+    console.error(
+      "Could not load the latest Jobber token:",
+      error?.message ?? "No token row found."
+    );
+
     return null;
   }
 
@@ -40,43 +89,72 @@ async function refreshJobberToken(
     return null;
   }
 
-  const response = await fetch("https://api.getjobber.com/api/oauth/token", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: tokenRow.refresh_token,
-      client_id: clientId,
-      client_secret: clientSecret,
-    }),
-    cache: "no-store",
-  });
+  const response = await fetch(
+    "https://api.getjobber.com/api/oauth/token",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: tokenRow.refresh_token,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+      cache: "no-store",
+    }
+  );
 
-  const tokenData = (await response.json()) as
-    | JobberTokenResponse
-    | Record<string, unknown>;
+  const body = await readResponseBody(response);
 
-  if (!response.ok || !("access_token" in tokenData)) {
-    console.error("Jobber token refresh failed:", tokenData);
+  if (!response.ok) {
+    console.error(
+      "Jobber token refresh failed:",
+      getResponseMessage(
+        body,
+        `Token refresh failed with status ${response.status}.`
+      )
+    );
+
     return null;
   }
 
-  const accessToken = String(tokenData.access_token);
+  if (
+    !body ||
+    typeof body === "string" ||
+    typeof body.access_token !== "string"
+  ) {
+    console.error(
+      "Jobber token refresh did not return an access token:",
+      body
+    );
+
+    return null;
+  }
+
+  const tokenData = body as JobberTokenResponse;
+  const accessToken = tokenData.access_token;
 
   const refreshToken =
-    "refresh_token" in tokenData && tokenData.refresh_token
-      ? String(tokenData.refresh_token)
+    typeof tokenData.refresh_token === "string" &&
+    tokenData.refresh_token.length > 0
+      ? tokenData.refresh_token
       : tokenRow.refresh_token;
 
-  const { error } = await supabaseServer.from("jobber_tokens").insert({
-    access_token: accessToken,
-    refresh_token: refreshToken,
-  });
+  const { error: saveError } = await supabaseServer
+    .from("jobber_tokens")
+    .insert({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
 
-  if (error) {
-    console.error("Failed to save refreshed Jobber token:", error.message);
+  if (saveError) {
+    console.error(
+      "Failed to save refreshed Jobber token:",
+      saveError.message
+    );
+
     return null;
   }
 
@@ -102,20 +180,21 @@ export async function getJobberAccessToken(
 export async function jobberGraphQL<T>(
   query: string,
   variables: Record<string, unknown> = {}
-): Promise<{
-  data: T | null;
-  errors: Array<{ message: string }> | null;
-}> {
+): Promise<JobberGraphQLResponse<T>> {
   let accessToken = await getJobberAccessToken();
 
   if (!accessToken) {
     return {
       data: null,
-      errors: [{ message: "No Jobber connection was found." }],
+      errors: [
+        {
+          message: "No Jobber connection was found.",
+        },
+      ],
     };
   }
 
-  async function makeRequest(token: string) {
+  async function makeRequest(token: string): Promise<Response> {
     return fetch("https://api.getjobber.com/api/graphql", {
       method: "POST",
       headers: {
@@ -152,23 +231,102 @@ export async function jobberGraphQL<T>(
     response = await makeRequest(accessToken);
   }
 
-  const json = await response.json();
+  const body = await readResponseBody(response);
 
-  if (!response.ok) {
+  /*
+   * Jobber may return an HTTP 429 response or occasionally a
+   * non-JSON provider response when the request is throttled.
+   * Normalize either situation into an error the sync route can retry.
+   */
+  if (response.status === 429) {
     return {
       data: null,
       errors: [
         {
-          message:
-            json?.message ??
-            `Jobber request failed with status ${response.status}.`,
+          message: `Throttled: ${getResponseMessage(
+            body,
+            "Jobber rate limit reached."
+          )}`,
         },
       ],
     };
   }
 
+  if (!response.ok) {
+    const message = getResponseMessage(
+      body,
+      `Jobber request failed with status ${response.status}.`
+    );
+
+    const looksThrottled =
+      response.status === 503 ||
+      message.toLowerCase().includes("throttl") ||
+      message.toLowerCase().includes("rate limit") ||
+      message.toLowerCase().includes("provider");
+
+    return {
+      data: null,
+      errors: [
+        {
+          message: looksThrottled
+            ? `Throttled: ${message}`
+            : message,
+        },
+      ],
+    };
+  }
+
+  if (!body) {
+    return {
+      data: null,
+      errors: [
+        {
+          message: "Jobber returned an empty response.",
+        },
+      ],
+    };
+  }
+
+  if (typeof body === "string") {
+    const looksThrottled =
+      body.toLowerCase().includes("throttl") ||
+      body.toLowerCase().includes("rate limit") ||
+      body.toLowerCase().includes("provider");
+
+    return {
+      data: null,
+      errors: [
+        {
+          message: looksThrottled
+            ? `Throttled: ${body}`
+            : `Jobber returned an unexpected response: ${body}`,
+        },
+      ],
+    };
+  }
+
+  const graphqlErrors = Array.isArray(body.errors)
+    ? body.errors
+        .map((error) => {
+          if (
+            error &&
+            typeof error === "object" &&
+            "message" in error &&
+            typeof error.message === "string"
+          ) {
+            return {
+              message: error.message,
+            };
+          }
+
+          return {
+            message: "Jobber returned an unknown GraphQL error.",
+          };
+        })
+    : null;
+
   return {
-    data: json?.data ?? null,
-    errors: json?.errors ?? null,
+    data: (body.data as T | undefined) ?? null,
+    errors: graphqlErrors,
   };
 }
