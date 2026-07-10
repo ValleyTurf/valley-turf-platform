@@ -83,12 +83,12 @@ export default async function Home() {
     supabaseServer
       .from("scans")
       .select("*", { count: "exact", head: true })
-      .gte("scanned_at", today.toISOString()),
+      .gte("created_at", today.toISOString()),
 
     supabaseServer
       .from("scans")
       .select("*", { count: "exact", head: true })
-      .gte("scanned_at", weekStart.toISOString()),
+      .gte("created_at", weekStart.toISOString()),
 
     supabaseServer.from("campaigns").select("*", {
       count: "exact",
@@ -113,7 +113,7 @@ campaigns (
         )
       `
       )
-       .order("scanned_at", { ascending: false })
+       .order("created_at", { ascending: false })
       .limit(6),
 
     supabaseServer
