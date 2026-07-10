@@ -253,7 +253,7 @@ campaigns (
                         <p className="font-bold">{campaignName}</p>
 
                         <p className="text-sm text-[#6b705c]">
-                          {formatActivityDate(scan.scanned_at)}
+                          {formatActivityDate(scan.created_at)}
                         </p>
                       </div>
 

@@ -34,6 +34,13 @@ type ClientsPage = {
   };
 };
 
+type JobberGraphQLResponse<T> = {
+  data: T | null;
+  errors: Array<{
+    message: string;
+  }> | null;
+};
+
 type CustomerUpsert = {
   jobber_client_id: string;
   first_name: string | null;
@@ -95,54 +102,54 @@ async function syncCustomers() {
   let customersReceived = 0;
   let customersSaved = 0;
 
-  const errors: string[] = [];
+  const warnings: string[] = [];
 
   while (hasNextPage) {
     pageNumber += 1;
 
-    // Safety guard in case Jobber ever returns a repeating cursor.
     if (pageNumber > 100) {
-      errors.push("Sync stopped after 100 pages for safety.");
+      warnings.push("Sync stopped after 100 pages for safety.");
       break;
     }
 
-    const result = await jobberGraphQL<ClientsPage>(
-      `
-        query GetClientsPage($limit: Int!, $cursor: String) {
-          clients(first: $limit, after: $cursor) {
-            nodes {
-              id
-              name
-              firstName
-              lastName
-              companyName
-              balance
-              createdAt
+    const jobberResponse: JobberGraphQLResponse<ClientsPage> =
+      await jobberGraphQL<ClientsPage>(
+        `
+          query GetClientsPage($limit: Int!, $cursor: String) {
+            clients(first: $limit, after: $cursor) {
+              nodes {
+                id
+                name
+                firstName
+                lastName
+                companyName
+                balance
+                createdAt
 
-              emails {
-                address
+                emails {
+                  address
+                }
+
+                phones {
+                  number
+                }
               }
 
-              phones {
-                number
+              pageInfo {
+                endCursor
+                hasNextPage
               }
-            }
-
-            pageInfo {
-              endCursor
-              hasNextPage
             }
           }
+        `,
+        {
+          limit: batchSize,
+          cursor,
         }
-      `,
-      {
-        limit: batchSize,
-        cursor,
-      }
-    );
+      );
 
-    if (result.errors?.length) {
-      const message = result.errors
+    if (jobberResponse.errors?.length) {
+      const message = jobberResponse.errors
         .map((error) => error.message)
         .filter(Boolean)
         .join(", ");
@@ -150,8 +157,8 @@ async function syncCustomers() {
       throw new Error(message || `Jobber failed on page ${pageNumber}.`);
     }
 
-    const clients = result.data?.clients?.nodes ?? [];
-    const pageInfo = result.data?.clients?.pageInfo;
+    const clients = jobberResponse.data?.clients?.nodes ?? [];
+    const pageInfo = jobberResponse.data?.clients?.pageInfo;
 
     customersReceived += clients.length;
 
@@ -178,7 +185,7 @@ async function syncCustomers() {
     cursor = pageInfo?.endCursor ?? null;
 
     if (hasNextPage && !cursor) {
-      errors.push(
+      warnings.push(
         `Jobber reported another page after page ${pageNumber}, but no cursor was returned.`
       );
 
@@ -190,18 +197,18 @@ async function syncCustomers() {
     customersReceived,
     customersSaved,
     pagesProcessed: pageNumber,
-    warnings: errors,
+    warnings,
   };
 }
 
 export async function GET() {
   try {
-    const result = await syncCustomers();
+    const syncResult = await syncCustomers();
 
     return NextResponse.json({
       success: true,
       message: "Jobber customers synchronized successfully.",
-      ...result,
+      ...syncResult,
     });
   } catch (error) {
     console.error("Jobber customer sync failed:", error);
