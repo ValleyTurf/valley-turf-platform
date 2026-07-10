@@ -18,12 +18,6 @@ const pages = [
     description: "Create and manage QR codes",
   },
   {
-    title: "Analytics",
-    icon: "??",
-    href: "/analytics",
-    description: "Scan trends, campaigns, and audience insights",
-  },
-  {
     title: "Campaigns",
     icon: "📣",
     href: "/campaigns",
@@ -35,6 +29,12 @@ const pages = [
     href: "/leads",
     description: "Track incoming customers",
   },
+{
+  title: "Customers",
+  icon: "🏡",
+  href: "/customers",
+  description: "View Jobber customer cards",
+},
   {
     title: "Settings",
     icon: "⚙️",
@@ -101,7 +101,7 @@ export default async function Home() {
         `
        id,
 campaign_id,
-scanned_at,
+created_at,
 city,
 region,
 country,
@@ -113,7 +113,7 @@ campaigns (
         )
       `
       )
-      .order("scanned_at", { ascending: false })
+       .order("scanned_at", { ascending: false })
       .limit(6),
 
     supabaseServer
@@ -331,4 +331,3 @@ campaigns (
     </main>
   );
 }
-
