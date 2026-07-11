@@ -3,6 +3,7 @@ export const revalidate = 0;
 
 import Link from "next/link";
 import { jobberGraphQL } from "@/lib/jobber";
+import { supabaseServer } from "@/lib/supabase-server";
 
 type CustomerDetailPageProps = {
   params: Promise<{
@@ -20,7 +21,7 @@ type JobberPhone = {
 
 type JobberProperty = {
   id: string;
-  jobberWebUri: string;
+  jobberWebUri: string | null;
   address: {
     street1: string | null;
     street2: string | null;
@@ -28,41 +29,42 @@ type JobberProperty = {
     province: string | null;
     postalCode: string | null;
     country: string | null;
-  };
+  } | null;
 };
 
 type JobberJob = {
   id: string;
-  jobNumber: number;
+  jobNumber: number | string | null;
   title: string | null;
-  jobStatus: string;
-  jobType: string;
-  total: number;
+  jobStatus: string | null;
+  jobType: string | null;
+  total: number | string | null;
   startAt: string | null;
   endAt: string | null;
   completedAt: string | null;
-  jobberWebUri: string;
+  jobberWebUri: string | null;
 };
 
 type JobberQuote = {
   id: string;
-  quoteNumber: string;
+  quoteNumber: string | number | null;
   title: string | null;
-  quoteStatus: string;
-  createdAt: string;
-  transitionedAt: string;
-  jobberWebUri: string;
+  quoteStatus: string | null;
+  createdAt: string | null;
+  transitionedAt: string | null;
+  jobberWebUri: string | null;
 };
 
 type JobberInvoice = {
   id: string;
-  invoiceNumber: string;
-  subject: string;
-  invoiceStatus: string;
+  invoiceNumber: string | number | null;
+  subject: string | null;
+  invoiceStatus: string | null;
   issuedDate: string | null;
   dueDate: string | null;
   receivedDate: string | null;
-  jobberWebUri: string;
+  total: number | string | null;
+  jobberWebUri: string | null;
 };
 
 type JobberClient = {
@@ -72,22 +74,38 @@ type JobberClient = {
   lastName: string | null;
   companyName: string | null;
   balance: number | string | null;
-  createdAt: string;
-  jobberWebUri: string;
+  createdAt: string | null;
+  jobberWebUri: string | null;
   emails: JobberEmail[];
   phones: JobberPhone[];
+
   clientProperties: {
     nodes: JobberProperty[];
-  };
+  } | null;
+
   jobs: {
     nodes: JobberJob[];
-  };
+  } | null;
+
   quotes: {
     nodes: JobberQuote[];
-  };
+  } | null;
+
   invoices: {
     nodes: JobberInvoice[];
-  };
+  } | null;
+};
+
+type CustomerFinancials = {
+  jobber_client_id: string;
+  customer_name: string | null;
+  invoice_count: number | string | null;
+  lifetime_invoiced: number | string | null;
+  lifetime_collected: number | string | null;
+  outstanding_balance: number | string | null;
+  average_invoice: number | string | null;
+  first_invoice_date: string | null;
+  latest_invoice_date: string | null;
 };
 
 async function getJobberClient(id: string): Promise<{
@@ -121,6 +139,7 @@ async function getJobberClient(id: string): Promise<{
             nodes {
               id
               jobberWebUri
+
               address {
                 street1
                 street2
@@ -168,13 +187,16 @@ async function getJobberClient(id: string): Promise<{
               issuedDate
               dueDate
               receivedDate
+              total
               jobberWebUri
             }
           }
         }
       }
     `,
-    { id }
+    {
+      id,
+    }
   );
 
   return {
@@ -185,6 +207,43 @@ async function getJobberClient(id: string): Promise<{
         .filter(Boolean)
         .join(", ") ?? null,
   };
+}
+
+async function getCustomerFinancials(
+  jobberClientId: string
+): Promise<CustomerFinancials | null> {
+  const { data, error } = await supabaseServer
+    .from("customer_financials")
+    .select(
+      `
+        jobber_client_id,
+        customer_name,
+        invoice_count,
+        lifetime_invoiced,
+        lifetime_collected,
+        outstanding_balance,
+        average_invoice,
+        first_invoice_date,
+        latest_invoice_date
+      `
+    )
+    .eq("jobber_client_id", jobberClientId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Customer financial query failed:", error.message);
+    return null;
+  }
+
+  return data as CustomerFinancials | null;
+}
+
+function toNumber(
+  value: number | string | null | undefined
+): number {
+  const parsed = Number(value ?? 0);
+
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function formatPhone(phone: string): string {
@@ -205,25 +264,24 @@ function formatPhone(phone: string): string {
   )}-${normalized.slice(6)}`;
 }
 
-function formatCurrency(value: number | string | null): string {
-  const amount = Number(value ?? 0);
-
-  if (Number.isNaN(amount)) {
-    return "$0.00";
-  }
-
+function formatCurrency(
+  value: number | string | null | undefined
+): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-  }).format(amount);
+    maximumFractionDigits: 0,
+  }).format(toNumber(value));
 }
 
 function formatDate(value: string | null): string {
   if (!value) {
-    return "Not scheduled";
+    return "—";
   }
 
-  const date = new Date(value);
+  const date = new Date(
+    value.includes("T") ? value : `${value}T12:00:00`
+  );
 
   if (Number.isNaN(date.getTime())) {
     return value;
@@ -236,7 +294,11 @@ function formatDate(value: string | null): string {
   }).format(date);
 }
 
-function formatStatus(value: string): string {
+function formatStatus(value: string | null): string {
+  if (!value) {
+    return "Unknown";
+  }
+
   return value
     .toLowerCase()
     .split("_")
@@ -246,6 +308,10 @@ function formatStatus(value: string): string {
 
 function formatAddress(property: JobberProperty): string {
   const address = property.address;
+
+  if (!address) {
+    return "Address unavailable";
+  }
 
   const street = [address.street1, address.street2]
     .filter(Boolean)
@@ -260,8 +326,8 @@ function formatAddress(property: JobberProperty): string {
     .join(" ");
 }
 
-function statusClasses(status: string): string {
-  const normalized = status.toUpperCase();
+function statusClasses(status: string | null): string {
+  const normalized = (status ?? "").toUpperCase();
 
   if (
     normalized.includes("PAID") ||
@@ -297,7 +363,10 @@ export default async function CustomerDetailPage({
   const { id } = await params;
   const decodedId = decodeURIComponent(id);
 
-  const { client, error } = await getJobberClient(decodedId);
+  const [{ client, error }, financials] = await Promise.all([
+    getJobberClient(decodedId),
+    getCustomerFinancials(decodedId),
+  ]);
 
   if (!client) {
     return (
@@ -339,15 +408,22 @@ export default async function CustomerDetailPage({
 
   const email = client.emails?.[0]?.address ?? null;
   const phone = client.phones?.[0]?.number ?? null;
+
   const properties = client.clientProperties?.nodes ?? [];
   const jobs = client.jobs?.nodes ?? [];
   const quotes = client.quotes?.nodes ?? [];
   const invoices = client.invoices?.nodes ?? [];
 
-  const jobRevenue = jobs.reduce(
-    (total, job) => total + Number(job.total ?? 0),
+  const recentJobValue = jobs.reduce(
+    (total, job) => total + toNumber(job.total),
     0
   );
+
+  const lifetimeInvoiced = toNumber(financials?.lifetime_invoiced);
+  const lifetimeCollected = toNumber(financials?.lifetime_collected);
+  const outstandingBalance = toNumber(financials?.outstanding_balance);
+  const averageInvoice = toNumber(financials?.average_invoice);
+  const invoiceCount = toNumber(financials?.invoice_count);
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
@@ -355,7 +431,7 @@ export default async function CustomerDetailPage({
         <header className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
-              Customer Profile
+              Customer Intelligence
             </p>
 
             <h1 className="mt-2 text-4xl font-bold">
@@ -369,23 +445,25 @@ export default async function CustomerDetailPage({
             )}
 
             <p className="mt-2 text-sm text-[#6b705c]">
-              Customer since {formatDate(client.createdAt)}
+              Jobber customer since {formatDate(client.createdAt)}
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3">
-            <a
-              href={client.jobberWebUri}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-xl bg-[#d4af37] px-5 py-3 text-center text-sm font-bold text-[#174734]"
-            >
-              Open in Jobber
-            </a>
+            {client.jobberWebUri && (
+              <a
+                href={client.jobberWebUri}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-xl bg-[#d4af37] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#e6c766]"
+              >
+                Open in Jobber
+              </a>
+            )}
 
             <Link
               href="/customers"
-              className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white"
+              className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
             >
               Back to Customers
             </Link>
@@ -393,41 +471,133 @@ export default async function CustomerDetailPage({
         </header>
 
         <section className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-3xl bg-white p-6 shadow">
-            <p className="text-sm text-[#6b705c]">Current Balance</p>
-            <p className="mt-2 text-3xl font-bold">
-              {formatCurrency(client.balance)}
-            </p>
-          </div>
-
-          <div className="rounded-3xl bg-white p-6 shadow">
-            <p className="text-sm text-[#6b705c]">Recent Jobs</p>
-            <p className="mt-2 text-3xl font-bold">{jobs.length}</p>
-          </div>
-
-          <div className="rounded-3xl bg-white p-6 shadow">
-            <p className="text-sm text-[#6b705c]">Recent Quotes</p>
-            <p className="mt-2 text-3xl font-bold">{quotes.length}</p>
-          </div>
-
-          <div className="rounded-3xl bg-white p-6 shadow">
+          <article className="rounded-3xl bg-white p-6 shadow">
             <p className="text-sm text-[#6b705c]">
-              Value of Jobs Shown
+              Lifetime Invoiced
             </p>
+
             <p className="mt-2 text-3xl font-bold">
-              {formatCurrency(jobRevenue)}
+              {formatCurrency(lifetimeInvoiced)}
             </p>
+          </article>
+
+          <article className="rounded-3xl bg-white p-6 shadow">
+            <p className="text-sm text-[#6b705c]">
+              Lifetime Collected
+            </p>
+
+            <p className="mt-2 text-3xl font-bold">
+              {formatCurrency(lifetimeCollected)}
+            </p>
+          </article>
+
+          <article className="rounded-3xl bg-white p-6 shadow">
+            <p className="text-sm text-[#6b705c]">
+              Outstanding Balance
+            </p>
+
+            <p
+              className={`mt-2 text-3xl font-bold ${
+                outstandingBalance > 0
+                  ? "text-amber-700"
+                  : "text-green-700"
+              }`}
+            >
+              {formatCurrency(outstandingBalance)}
+            </p>
+          </article>
+
+          <article className="rounded-3xl bg-white p-6 shadow">
+            <p className="text-sm text-[#6b705c]">
+              Average Invoice
+            </p>
+
+            <p className="mt-2 text-3xl font-bold">
+              {formatCurrency(averageInvoice)}
+            </p>
+          </article>
+        </section>
+
+        <section className="mt-6 rounded-3xl bg-white p-8 shadow">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-2xl font-bold">
+                Financial Summary
+              </h2>
+
+              <p className="mt-1 text-[#6b705c]">
+                Customer lifetime invoice and payment performance.
+              </p>
+            </div>
+
+            <Link
+              href="/revenue"
+              className="text-sm font-bold text-[#9c7a20] hover:underline"
+            >
+              View Financial Dashboard
+            </Link>
+          </div>
+
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-2xl bg-[#f7f6f1] p-5">
+              <p className="text-sm text-[#6b705c]">
+                Invoice Count
+              </p>
+
+              <p className="mt-2 text-3xl font-bold">
+                {invoiceCount}
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-[#f7f6f1] p-5">
+              <p className="text-sm text-[#6b705c]">
+                First Invoice
+              </p>
+
+              <p className="mt-2 text-xl font-bold">
+                {formatDate(financials?.first_invoice_date ?? null)}
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-[#f7f6f1] p-5">
+              <p className="text-sm text-[#6b705c]">
+                Latest Invoice
+              </p>
+
+              <p className="mt-2 text-xl font-bold">
+                {formatDate(financials?.latest_invoice_date ?? null)}
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-[#f7f6f1] p-5">
+              <p className="text-sm text-[#6b705c]">
+                Collection Rate
+              </p>
+
+              <p className="mt-2 text-3xl font-bold">
+                {lifetimeInvoiced > 0
+                  ? `${Math.min(
+                      (lifetimeCollected / lifetimeInvoiced) * 100,
+                      100
+                    ).toFixed(1)}%`
+                  : "0.0%"}
+              </p>
+            </div>
           </div>
         </section>
 
         <div className="mt-6 grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
           <div className="space-y-6">
             <section className="rounded-3xl bg-white p-8 shadow">
-              <h2 className="text-2xl font-bold">Contact Information</h2>
+              <h2 className="text-2xl font-bold">
+                Contact Information
+              </h2>
 
               <div className="mt-6 space-y-5">
                 <div>
-                  <p className="text-sm font-bold text-[#9c7a20]">Email</p>
+                  <p className="text-sm font-bold text-[#9c7a20]">
+                    Email
+                  </p>
 
                   {email ? (
                     <a
@@ -437,12 +607,16 @@ export default async function CustomerDetailPage({
                       {email}
                     </a>
                   ) : (
-                    <p className="mt-1 text-[#6b705c]">No email</p>
+                    <p className="mt-1 text-[#6b705c]">
+                      No email
+                    </p>
                   )}
                 </div>
 
                 <div>
-                  <p className="text-sm font-bold text-[#9c7a20]">Phone</p>
+                  <p className="text-sm font-bold text-[#9c7a20]">
+                    Phone
+                  </p>
 
                   {phone ? (
                     <a
@@ -452,8 +626,20 @@ export default async function CustomerDetailPage({
                       {formatPhone(phone)}
                     </a>
                   ) : (
-                    <p className="mt-1 text-[#6b705c]">No phone</p>
+                    <p className="mt-1 text-[#6b705c]">
+                      No phone
+                    </p>
                   )}
+                </div>
+
+                <div>
+                  <p className="text-sm font-bold text-[#9c7a20]">
+                    Jobber Balance
+                  </p>
+
+                  <p className="mt-1 text-lg font-semibold">
+                    {formatCurrency(client.balance)}
+                  </p>
                 </div>
               </div>
             </section>
@@ -463,23 +649,44 @@ export default async function CustomerDetailPage({
 
               <div className="mt-6 space-y-4">
                 {properties.length > 0 ? (
-                  properties.map((property) => (
-                    <a
-                      key={property.id}
-                      href={property.jobberWebUri}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="block rounded-2xl bg-[#f7f6f1] p-5 transition hover:bg-[#efeadf]"
-                    >
-                      <p className="font-semibold">
-                        {formatAddress(property) || "Address unavailable"}
-                      </p>
+                  properties.map((property) => {
+                    const content = (
+                      <>
+                        <p className="font-semibold">
+                          {formatAddress(property)}
+                        </p>
 
-                      <p className="mt-2 text-sm text-[#9c7a20]">
-                        Open property in Jobber →
-                      </p>
-                    </a>
-                  ))
+                        {property.jobberWebUri && (
+                          <p className="mt-2 text-sm text-[#9c7a20]">
+                            Open property in Jobber →
+                          </p>
+                        )}
+                      </>
+                    );
+
+                    if (property.jobberWebUri) {
+                      return (
+                        <a
+                          key={property.id}
+                          href={property.jobberWebUri}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block rounded-2xl bg-[#f7f6f1] p-5 transition hover:bg-[#efeadf]"
+                        >
+                          {content}
+                        </a>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={property.id}
+                        className="rounded-2xl bg-[#f7f6f1] p-5"
+                      >
+                        {content}
+                      </div>
+                    );
+                  })
                 ) : (
                   <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
                     No properties found.
@@ -489,61 +696,105 @@ export default async function CustomerDetailPage({
             </section>
 
             <section className="rounded-3xl bg-white p-8 shadow">
-              <h2 className="text-2xl font-bold">Marketing Attribution</h2>
+              <h2 className="text-2xl font-bold">
+                Property Profile
+              </h2>
 
               <div className="mt-6 rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
-                QR campaign, first scan, lead source, and campaign revenue will
-                be connected here next.
+                Turf size, gate code, pet count, pet names, odor level,
+                subscription status, service instructions, and internal notes
+                will be editable here.
+              </div>
+            </section>
+
+            <section className="rounded-3xl bg-white p-8 shadow">
+              <h2 className="text-2xl font-bold">
+                Marketing Attribution
+              </h2>
+
+              <div className="mt-6 rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+                QR campaign, lead source, first scan, conversion history, and
+                campaign-generated revenue will be connected here.
               </div>
             </section>
           </div>
 
           <div className="space-y-6">
             <section className="rounded-3xl bg-white p-8 shadow">
-              <h2 className="text-2xl font-bold">Recent Jobs</h2>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-bold">
+                    Recent Jobs
+                  </h2>
+
+                  <p className="mt-1 text-sm text-[#6b705c]">
+                    {jobs.length} recent jobs totaling{" "}
+                    {formatCurrency(recentJobValue)}
+                  </p>
+                </div>
+              </div>
 
               <div className="mt-6 space-y-4">
                 {jobs.length > 0 ? (
-                  jobs.map((job) => (
-                    <a
-                      key={job.id}
-                      href={job.jobberWebUri}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="block rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
-                    >
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                          <p className="font-bold">
-                            Job #{job.jobNumber}
-                            {job.title ? ` — ${job.title}` : ""}
-                          </p>
+                  jobs.map((job) => {
+                    const content = (
+                      <>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="font-bold">
+                              Job #{job.jobNumber ?? "—"}
+                              {job.title ? ` — ${job.title}` : ""}
+                            </p>
 
-                          <p className="mt-2 text-sm text-[#6b705c]">
-                            {formatDate(job.startAt)}
-                          </p>
+                            <p className="mt-2 text-sm text-[#6b705c]">
+                              {formatDate(job.startAt)}
+                            </p>
+                          </div>
+
+                          <span
+                            className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${statusClasses(
+                              job.jobStatus
+                            )}`}
+                          >
+                            {formatStatus(job.jobStatus)}
+                          </span>
                         </div>
 
-                        <span
-                          className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${statusClasses(
-                            job.jobStatus
-                          )}`}
+                        <div className="mt-4 flex items-center justify-between gap-4">
+                          <p className="text-sm text-[#6b705c]">
+                            {formatStatus(job.jobType)}
+                          </p>
+
+                          <p className="font-bold">
+                            {formatCurrency(job.total)}
+                          </p>
+                        </div>
+                      </>
+                    );
+
+                    if (job.jobberWebUri) {
+                      return (
+                        <a
+                          key={job.id}
+                          href={job.jobberWebUri}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
                         >
-                          {formatStatus(job.jobStatus)}
-                        </span>
-                      </div>
+                          {content}
+                        </a>
+                      );
+                    }
 
-                      <div className="mt-4 flex items-center justify-between">
-                        <p className="text-sm text-[#6b705c]">
-                          {formatStatus(job.jobType)}
-                        </p>
-
-                        <p className="font-bold">
-                          {formatCurrency(job.total)}
-                        </p>
+                    return (
+                      <div
+                        key={job.id}
+                        className="rounded-2xl border border-[#e7e2d5] p-5"
+                      >
+                        {content}
                       </div>
-                    </a>
-                  ))
+                    );
+                  })
                 ) : (
                   <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
                     No jobs found.
@@ -553,22 +804,18 @@ export default async function CustomerDetailPage({
             </section>
 
             <section className="rounded-3xl bg-white p-8 shadow">
-              <h2 className="text-2xl font-bold">Recent Quotes</h2>
+              <h2 className="text-2xl font-bold">
+                Recent Quotes
+              </h2>
 
               <div className="mt-6 space-y-4">
                 {quotes.length > 0 ? (
-                  quotes.map((quote) => (
-                    <a
-                      key={quote.id}
-                      href={quote.jobberWebUri}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="block rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
-                    >
+                  quotes.map((quote) => {
+                    const content = (
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div>
                           <p className="font-bold">
-                            Quote #{quote.quoteNumber}
+                            Quote #{quote.quoteNumber ?? "—"}
                           </p>
 
                           <p className="mt-1 text-[#6b705c]">
@@ -588,8 +835,31 @@ export default async function CustomerDetailPage({
                           {formatStatus(quote.quoteStatus)}
                         </span>
                       </div>
-                    </a>
-                  ))
+                    );
+
+                    if (quote.jobberWebUri) {
+                      return (
+                        <a
+                          key={quote.id}
+                          href={quote.jobberWebUri}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
+                        >
+                          {content}
+                        </a>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={quote.id}
+                        className="rounded-2xl border border-[#e7e2d5] p-5"
+                      >
+                        {content}
+                      </div>
+                    );
+                  })
                 ) : (
                   <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
                     No quotes found.
@@ -599,43 +869,74 @@ export default async function CustomerDetailPage({
             </section>
 
             <section className="rounded-3xl bg-white p-8 shadow">
-              <h2 className="text-2xl font-bold">Recent Invoices</h2>
+              <h2 className="text-2xl font-bold">
+                Recent Invoices
+              </h2>
 
               <div className="mt-6 space-y-4">
                 {invoices.length > 0 ? (
-                  invoices.map((invoice) => (
-                    <a
-                      key={invoice.id}
-                      href={invoice.jobberWebUri}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="block rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
-                    >
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                          <p className="font-bold">
-                            Invoice #{invoice.invoiceNumber}
-                          </p>
+                  invoices.map((invoice) => {
+                    const content = (
+                      <>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="font-bold">
+                              Invoice #{invoice.invoiceNumber ?? "—"}
+                            </p>
 
-                          <p className="mt-1 text-[#6b705c]">
-                            {invoice.subject || "No subject"}
-                          </p>
+                            <p className="mt-1 text-[#6b705c]">
+                              {invoice.subject || "No subject"}
+                            </p>
 
-                          <p className="mt-2 text-sm text-[#6b705c]">
-                            Issued {formatDate(invoice.issuedDate)}
-                          </p>
+                            <p className="mt-2 text-sm text-[#6b705c]">
+                              Issued {formatDate(invoice.issuedDate)}
+                            </p>
+                          </div>
+
+                          <span
+                            className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${statusClasses(
+                              invoice.invoiceStatus
+                            )}`}
+                          >
+                            {formatStatus(invoice.invoiceStatus)}
+                          </span>
                         </div>
 
-                        <span
-                          className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${statusClasses(
-                            invoice.invoiceStatus
-                          )}`}
+                        <div className="mt-4 flex items-center justify-between gap-4">
+                          <p className="text-sm text-[#6b705c]">
+                            Due {formatDate(invoice.dueDate)}
+                          </p>
+
+                          <p className="font-bold">
+                            {formatCurrency(invoice.total)}
+                          </p>
+                        </div>
+                      </>
+                    );
+
+                    if (invoice.jobberWebUri) {
+                      return (
+                        <a
+                          key={invoice.id}
+                          href={invoice.jobberWebUri}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
                         >
-                          {formatStatus(invoice.invoiceStatus)}
-                        </span>
+                          {content}
+                        </a>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={invoice.id}
+                        className="rounded-2xl border border-[#e7e2d5] p-5"
+                      >
+                        {content}
                       </div>
-                    </a>
-                  ))
+                    );
+                  })
                 ) : (
                   <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
                     No invoices found.
