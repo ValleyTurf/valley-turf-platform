@@ -4,6 +4,7 @@ export const revalidate = 0;
 import Link from "next/link";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
+import { updateCustomerProfile } from "./actions";
 
 type CustomerDetailPageProps = {
   params: Promise<{
@@ -238,6 +239,45 @@ async function getCustomerFinancials(
   return data as CustomerFinancials | null;
 }
 
+type CustomerProfile = {
+  turf_size_sqft: number | string | null;
+  gate_code: string | null;
+  pet_count: number | string | null;
+  pet_names: string | null;
+  odor_level: string | null;
+  subscription_plan: string | null;
+  service_instructions: string | null;
+  notes: string | null;
+};
+
+async function getCustomerProfile(
+  jobberClientId: string
+): Promise<CustomerProfile | null> {
+  const { data, error } = await supabaseServer
+    .from("customers")
+    .select(
+      `
+        turf_size_sqft,
+        gate_code,
+        pet_count,
+        pet_names,
+        odor_level,
+        subscription_plan,
+        service_instructions,
+        notes
+      `
+    )
+    .eq("jobber_client_id", jobberClientId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Customer profile query failed:", error.message);
+    return null;
+  }
+
+  return data as CustomerProfile | null;
+}
+
 function toNumber(
   value: number | string | null | undefined
 ): number {
@@ -363,9 +403,10 @@ export default async function CustomerDetailPage({
   const { id } = await params;
   const decodedId = decodeURIComponent(id);
 
-  const [{ client, error }, financials] = await Promise.all([
+  const [{ client, error }, financials, profile] = await Promise.all([
     getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
+    getCustomerProfile(decodedId),
   ]);
 
   if (!client) {
@@ -565,11 +606,169 @@ export default async function CustomerDetailPage({
                 Property Profile
               </h2>
 
-              <div className="mt-4 rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
-                Gate code, pet count, pet names, odor level, subscription
-                status, service instructions, and internal notes will be
-                editable here.
-              </div>
+              <p className="mt-1 text-xs text-[#6b705c]">
+                Not synced from Jobber — managed here directly.
+              </p>
+
+              <form
+                action={updateCustomerProfile.bind(null, decodedId)}
+                className="mt-4 space-y-4"
+              >
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label
+                      htmlFor="turf_size_sqft"
+                      className="text-xs font-bold text-[#9c7a20]"
+                    >
+                      Turf Size (sq ft)
+                    </label>
+
+                    <input
+                      id="turf_size_sqft"
+                      name="turf_size_sqft"
+                      type="number"
+                      min="0"
+                      defaultValue={profile?.turf_size_sqft ?? ""}
+                      className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="pet_count"
+                      className="text-xs font-bold text-[#9c7a20]"
+                    >
+                      Pet Count
+                    </label>
+
+                    <input
+                      id="pet_count"
+                      name="pet_count"
+                      type="number"
+                      min="0"
+                      defaultValue={profile?.pet_count ?? ""}
+                      className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="pet_names"
+                    className="text-xs font-bold text-[#9c7a20]"
+                  >
+                    Pet Names
+                  </label>
+
+                  <input
+                    id="pet_names"
+                    name="pet_names"
+                    type="text"
+                    defaultValue={profile?.pet_names ?? ""}
+                    placeholder="e.g. Max, Bella"
+                    className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label
+                      htmlFor="gate_code"
+                      className="text-xs font-bold text-[#9c7a20]"
+                    >
+                      Gate Code
+                    </label>
+
+                    <input
+                      id="gate_code"
+                      name="gate_code"
+                      type="text"
+                      defaultValue={profile?.gate_code ?? ""}
+                      className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="odor_level"
+                      className="text-xs font-bold text-[#9c7a20]"
+                    >
+                      Odor Level
+                    </label>
+
+                    <select
+                      id="odor_level"
+                      name="odor_level"
+                      defaultValue={profile?.odor_level ?? ""}
+                      className="mt-1 w-full rounded-lg border border-[#d9d4c6] bg-white px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                    >
+                      <option value="">Not set</option>
+                      <option value="None">None</option>
+                      <option value="Mild">Mild</option>
+                      <option value="Moderate">Moderate</option>
+                      <option value="Severe">Severe</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="subscription_plan"
+                    className="text-xs font-bold text-[#9c7a20]"
+                  >
+                    Subscription / Plan Notes
+                  </label>
+
+                  <input
+                    id="subscription_plan"
+                    name="subscription_plan"
+                    type="text"
+                    defaultValue={profile?.subscription_plan ?? ""}
+                    className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="service_instructions"
+                    className="text-xs font-bold text-[#9c7a20]"
+                  >
+                    Service Instructions
+                  </label>
+
+                  <textarea
+                    id="service_instructions"
+                    name="service_instructions"
+                    rows={3}
+                    defaultValue={profile?.service_instructions ?? ""}
+                    className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="notes"
+                    className="text-xs font-bold text-[#9c7a20]"
+                  >
+                    Internal Notes
+                  </label>
+
+                  <textarea
+                    id="notes"
+                    name="notes"
+                    rows={3}
+                    defaultValue={profile?.notes ?? ""}
+                    className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="rounded-lg bg-[#174734] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#226246]"
+                >
+                  Save Profile
+                </button>
+              </form>
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">
