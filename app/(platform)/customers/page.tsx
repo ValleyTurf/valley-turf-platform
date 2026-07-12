@@ -8,6 +8,7 @@ type CustomersPageProps = {
   searchParams: Promise<{
     search?: string;
     page?: string;
+    filter?: string;
   }>;
 };
 
@@ -30,6 +31,14 @@ type RecurringCustomer = {
   jobber_client_id: string;
   recurring_categories: string[] | null;
 };
+
+type RecurringFilter = "all" | "recurring" | "non-recurring";
+
+const FILTER_OPTIONS: { key: RecurringFilter; label: string }[] = [
+  { key: "all", label: "All Customers" },
+  { key: "recurring", label: "Recurring Only" },
+  { key: "non-recurring", label: "Non-Recurring Only" },
+];
 
 const PAGE_SIZE = 30;
 
@@ -98,11 +107,19 @@ function escapeSearchValue(value: string): string {
     .replace(/\)/g, "\\)");
 }
 
-function buildCustomersUrl(page: number, search: string): string {
+function buildCustomersUrl(
+  page: number,
+  search: string,
+  filter: RecurringFilter
+): string {
   const params = new URLSearchParams();
 
   if (search) {
     params.set("search", search);
+  }
+
+  if (filter !== "all") {
+    params.set("filter", filter);
   }
 
   if (page > 1) {
@@ -133,6 +150,12 @@ export default async function CustomersPage({
 
   const search = String(params.search ?? "").trim();
 
+  const filter = (["all", "recurring", "non-recurring"].includes(
+    params.filter ?? ""
+  )
+    ? params.filter
+    : "all") as RecurringFilter;
+
   const requestedPage = Number.parseInt(params.page ?? "1", 10);
 
   const currentPage =
@@ -142,6 +165,22 @@ export default async function CustomersPage({
 
   const from = (currentPage - 1) * PAGE_SIZE;
   const to = from + PAGE_SIZE - 1;
+
+  const recurringResult = await supabaseServer
+    .from("recurring_customers")
+    .select("jobber_client_id, recurring_categories");
+
+  const recurringCustomers = (recurringResult.data ??
+    []) as RecurringCustomer[];
+
+  const recurringMap = new Map<string, string[]>(
+    recurringCustomers.map((row) => [
+      row.jobber_client_id,
+      row.recurring_categories ?? [],
+    ])
+  );
+
+  const recurringIds = recurringCustomers.map((row) => row.jobber_client_id);
 
   let query = supabaseServer
     .from("customers")
@@ -167,8 +206,7 @@ export default async function CustomersPage({
     .order("full_name", {
       ascending: true,
       nullsFirst: false,
-    })
-    .range(from, to);
+    });
 
   if (search) {
     const safeSearch = escapeSearchValue(search);
@@ -187,29 +225,28 @@ export default async function CustomersPage({
     );
   }
 
-  const [
-    { data, count, error },
-    recurringResult,
-  ] = await Promise.all([
-    query,
-    supabaseServer
-      .from("recurring_customers")
-      .select("jobber_client_id, recurring_categories"),
-  ]);
+  let noResultsForFilter = false;
+
+  if (filter === "recurring") {
+    if (recurringIds.length === 0) {
+      noResultsForFilter = true;
+    } else {
+      query = query.in("jobber_client_id", recurringIds);
+    }
+  } else if (filter === "non-recurring") {
+    if (recurringIds.length > 0) {
+      const idList = recurringIds.map((id) => `"${id}"`).join(",");
+      query = query.not("jobber_client_id", "in", `(${idList})`);
+    }
+  }
+
+  const { data, count, error } = noResultsForFilter
+    ? { data: [], count: 0, error: null }
+    : await query.range(from, to);
 
   const customers = (data ?? []) as Customer[];
   const totalCustomers = count ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalCustomers / PAGE_SIZE));
-
-  const recurringCustomers = (recurringResult.data ??
-    []) as RecurringCustomer[];
-
-  const recurringMap = new Map<string, string[]>(
-    recurringCustomers.map((row) => [
-      row.jobber_client_id,
-      row.recurring_categories ?? [],
-    ])
-  );
 
   const firstCustomerNumber =
     totalCustomers === 0 ? 0 : from + 1;
@@ -221,12 +258,14 @@ export default async function CustomersPage({
 
   const previousPageUrl = buildCustomersUrl(
     Math.max(1, currentPage - 1),
-    search
+    search,
+    filter
   );
 
   const nextPageUrl = buildCustomersUrl(
     Math.min(totalPages, currentPage + 1),
-    search
+    search,
+    filter
   );
 
   return (
@@ -293,6 +332,10 @@ export default async function CustomersPage({
               className="min-w-0 flex-1 rounded-xl border border-[#d9d4c6] bg-white px-4 py-3 text-[#174734] outline-none transition placeholder:text-[#8b8d82] focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
             />
 
+            {filter !== "all" && (
+              <input type="hidden" name="filter" value={filter} />
+            )}
+
             <button
               type="submit"
               className="rounded-xl bg-[#174734] px-6 py-3 font-bold text-white transition hover:bg-[#226246]"
@@ -309,6 +352,22 @@ export default async function CustomersPage({
               </Link>
             )}
           </form>
+        </section>
+
+        <section className="mt-6 flex flex-wrap gap-2">
+          {FILTER_OPTIONS.map((option) => (
+            <Link
+              key={option.key}
+              href={buildCustomersUrl(1, search, option.key)}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                filter === option.key
+                  ? "bg-[#174734] text-white"
+                  : "border border-[#d9d4c6] bg-white text-[#174734] hover:bg-[#f7f6f1]"
+              }`}
+            >
+              {option.label}
+            </Link>
+          ))}
         </section>
 
         <section className="mt-6">
