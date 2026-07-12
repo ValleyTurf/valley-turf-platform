@@ -70,6 +70,11 @@ const CATEGORY_FILTER_OPTIONS: {
     label: "Weekly Maintenance",
     category: "Weekly Maintenance",
   },
+  {
+    key: "spray-only",
+    label: "Spray Only",
+    category: "Spray Only",
+  },
 ];
 
 const VALID_FILTER_KEYS = [
