@@ -108,10 +108,6 @@ type CustomerFinancials = {
   latest_invoice_date: string | null;
 };
 
-type CustomerProfile = {
-  turf_size_sqft: number | string | null;
-};
-
 async function getJobberClient(id: string): Promise<{
   client: JobberClient | null;
   error: string | null;
@@ -242,23 +238,6 @@ async function getCustomerFinancials(
   return data as CustomerFinancials | null;
 }
 
-async function getCustomerProfile(
-  jobberClientId: string
-): Promise<CustomerProfile | null> {
-  const { data, error } = await supabaseServer
-    .from("customers")
-    .select("turf_size_sqft")
-    .eq("jobber_client_id", jobberClientId)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Customer profile query failed:", error.message);
-    return null;
-  }
-
-  return data as CustomerProfile | null;
-}
-
 function toNumber(
   value: number | string | null | undefined
 ): number {
@@ -347,16 +326,6 @@ function formatAddress(property: JobberProperty): string {
     .join(" ");
 }
 
-function formatTurfSize(value: number | string | null | undefined): string {
-  const amount = toNumber(value);
-
-  if (!amount) {
-    return "Not recorded";
-  }
-
-  return `${new Intl.NumberFormat("en-US").format(amount)} sq ft`;
-}
-
 function statusClasses(status: string | null): string {
   const normalized = (status ?? "").toUpperCase();
 
@@ -394,10 +363,9 @@ export default async function CustomerDetailPage({
   const { id } = await params;
   const decodedId = decodeURIComponent(id);
 
-  const [{ client, error }, financials, profile] = await Promise.all([
+  const [{ client, error }, financials] = await Promise.all([
     getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
-    getCustomerProfile(decodedId),
   ]);
 
   if (!client) {
@@ -447,7 +415,6 @@ export default async function CustomerDetailPage({
   const invoices = client.invoices?.nodes ?? [];
 
   const lifetimeCollected = toNumber(financials?.lifetime_collected);
-  const turfSize = profile?.turf_size_sqft ?? null;
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
@@ -553,17 +520,7 @@ export default async function CustomerDetailPage({
                 </div>
               </div>
 
-              <div className="mt-5 border-t border-[#e7e2d5] pt-4">
-                <p className="text-xs font-bold text-[#9c7a20]">
-                  Turf Size
-                </p>
-
-                <p className="mt-0.5 text-sm font-semibold">
-                  {formatTurfSize(turfSize)}
-                </p>
-              </div>
-
-              <div className="mt-4 space-y-2">
+              <div className="mt-5 space-y-2 border-t border-[#e7e2d5] pt-4">
                 {properties.length > 0 ? (
                   properties.map((property) => {
                     const content = (
