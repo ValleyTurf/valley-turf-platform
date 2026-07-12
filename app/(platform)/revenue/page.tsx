@@ -58,6 +58,13 @@ type CustomerValueSummary = {
   avg_invoices_per_customer: number | string;
 };
 
+type ForecastMonth = {
+  month: string;
+  recurring_revenue_projected: number | string;
+  seasonal_one_off_estimate: number | string;
+  projected_total_revenue: number | string;
+};
+
 function toNumber(value: number | string | null | undefined): number {
   const parsed = Number(value ?? 0);
 
@@ -139,6 +146,7 @@ export default async function RevenuePage() {
       outstandingResult,
       serviceCategoryResult,
       customerValueResult,
+      forecastResult,
     ] = await Promise.all([
       getFinancialMetrics(),
 
@@ -210,6 +218,13 @@ export default async function RevenuePage() {
           "total_customers, one_time_customers, repeat_customers, avg_customer_value, avg_invoices_per_customer"
         )
         .single(),
+
+      supabaseServer
+        .from("forecast_next_12_months_final")
+        .select(
+          "month, recurring_revenue_projected, seasonal_one_off_estimate, projected_total_revenue"
+        )
+        .order("month", { ascending: true }),
     ]);
 
     const queryErrors = [
@@ -218,6 +233,7 @@ export default async function RevenuePage() {
       outstandingResult.error,
       serviceCategoryResult.error,
       customerValueResult.error,
+      forecastResult.error,
     ].filter(Boolean);
 
     if (queryErrors.length > 0) {
@@ -237,6 +253,22 @@ export default async function RevenuePage() {
     const serviceCategories = (serviceCategoryResult.data ??
       []) as ServiceCategorySummary[];
     const customerValue = customerValueResult.data as CustomerValueSummary | null;
+    const forecastMonths = (forecastResult.data ?? []) as ForecastMonth[];
+
+    const maxForecastValue = Math.max(
+      1,
+      ...forecastMonths.map((m) => toNumber(m.projected_total_revenue))
+    );
+
+    const totalForecastRevenue = forecastMonths.reduce(
+      (sum, m) => sum + toNumber(m.projected_total_revenue),
+      0
+    );
+
+    const totalForecastRecurring = forecastMonths.reduce(
+      (sum, m) => sum + toNumber(m.recurring_revenue_projected),
+      0
+    );
 
     const chronologicalMonths = [...monthlyData].reverse();
 
@@ -588,6 +620,117 @@ export default async function RevenuePage() {
               <div className="flex items-center gap-2">
                 <span className="h-3 w-3 rounded-full bg-[#d4af37]" />
                 <span>Cash collected</span>
+              </div>
+            </div>
+          </section>
+
+          <section className="mt-8 rounded-3xl bg-white p-8 shadow">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-2xl font-bold">
+                  Revenue Forecast — Next 12 Months
+                </h2>
+
+                <p className="mt-1 text-[#6b705c]">
+                  Recurring revenue projected from active customer schedules,
+                  plus seasonal one-off work estimated from last year's
+                  pattern.
+                </p>
+              </div>
+
+              <div className="text-right">
+                <p className="text-sm text-[#6b705c]">Projected 12-mo total</p>
+                <p className="text-3xl font-bold text-[#9c7a20]">
+                  {formatCurrency(totalForecastRevenue)}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-4 sm:grid-cols-2">
+              <div className="rounded-2xl bg-[#eef4ee] p-5">
+                <p className="text-sm text-[#174734]">
+                  Locked-in recurring (12mo)
+                </p>
+                <p className="mt-2 text-2xl font-bold text-[#174734]">
+                  {formatCurrency(totalForecastRecurring)}
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-[#faf4e3] p-5">
+                <p className="text-sm text-[#9c7a20]">
+                  Seasonal / one-off estimate (12mo)
+                </p>
+                <p className="mt-2 text-2xl font-bold text-[#9c7a20]">
+                  {formatCurrency(totalForecastRevenue - totalForecastRecurring)}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-8 space-y-6">
+              {forecastMonths.length === 0 ? (
+                <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+                  No forecast data available yet.
+                </p>
+              ) : (
+                forecastMonths.map((month) => {
+                  const recurring = toNumber(month.recurring_revenue_projected);
+                  const oneOff = toNumber(month.seasonal_one_off_estimate);
+                  const total = recurring + oneOff;
+
+                  const recurringWidth = Math.max(
+                    1,
+                    (recurring / maxForecastValue) * 100
+                  );
+                  const oneOffWidth = Math.max(
+                    oneOff > 0 ? 1 : 0,
+                    (oneOff / maxForecastValue) * 100
+                  );
+
+                  return (
+                    <div
+                      key={month.month}
+                      className="grid gap-3 md:grid-cols-[110px_1fr_170px]"
+                    >
+                      <p className="font-bold">{formatMonth(month.month)}</p>
+
+                      <div className="space-y-2">
+                        <div className="h-4 overflow-hidden rounded-full bg-[#eeeae0]">
+                          <div className="flex h-full">
+                            <div
+                              className="h-full rounded-l-full bg-[#174734]"
+                              style={{ width: `${recurringWidth}%` }}
+                            />
+                            <div
+                              className="h-full rounded-r-full bg-[#d4af37]"
+                              style={{ width: `${oneOffWidth}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="text-sm">
+                        <p className="font-semibold">
+                          {formatCurrency(total)} total
+                        </p>
+                        <p className="text-[#6b705c]">
+                          {formatCurrency(recurring)} recurring
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="mt-7 flex flex-wrap gap-6 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full bg-[#174734]" />
+                <span>Recurring (locked-in)</span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full bg-[#d4af37]" />
+                <span>Seasonal / one-off (estimated)</span>
               </div>
             </div>
           </section>
