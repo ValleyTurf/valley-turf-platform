@@ -26,6 +26,11 @@ type Customer = {
   last_synced_at: string | null;
 };
 
+type RecurringCustomer = {
+  jobber_client_id: string;
+  recurring_categories: string[] | null;
+};
+
 const PAGE_SIZE = 30;
 
 function formatPhone(phone: string | null): string {
@@ -109,6 +114,18 @@ function buildCustomersUrl(page: number, search: string): string {
   return query ? `/customers?${query}` : "/customers";
 }
 
+function formatCategoryBadge(categories: string[]): string {
+  if (categories.length === 0) {
+    return "Recurring";
+  }
+
+  if (categories.length === 1) {
+    return categories[0];
+  }
+
+  return `${categories[0]} +${categories.length - 1} more`;
+}
+
 export default async function CustomersPage({
   searchParams,
 }: CustomersPageProps) {
@@ -170,15 +187,29 @@ export default async function CustomersPage({
     );
   }
 
-  const {
-    data,
-    count,
-    error,
-  } = await query;
+  const [
+    { data, count, error },
+    recurringResult,
+  ] = await Promise.all([
+    query,
+    supabaseServer
+      .from("recurring_customers")
+      .select("jobber_client_id, recurring_categories"),
+  ]);
 
   const customers = (data ?? []) as Customer[];
   const totalCustomers = count ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalCustomers / PAGE_SIZE));
+
+  const recurringCustomers = (recurringResult.data ??
+    []) as RecurringCustomer[];
+
+  const recurringMap = new Map<string, string[]>(
+    recurringCustomers.map((row) => [
+      row.jobber_client_id,
+      row.recurring_categories ?? [],
+    ])
+  );
 
   const firstCustomerNumber =
     totalCustomers === 0 ? 0 : from + 1;
@@ -214,6 +245,13 @@ export default async function CustomersPage({
             <p className="mt-2 text-[#6b705c]">
               Search and view customers synchronized from Jobber.
             </p>
+
+            <div className="mt-3 flex items-center gap-2 text-sm text-[#6b705c]">
+              <span className="h-3 w-3 rounded-full border-2 border-[#174734] bg-[#eef4ee]" />
+              <span>
+                Highlighted cards have an active recurring service
+              </span>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-3">
@@ -328,13 +366,24 @@ export default async function CustomersPage({
                   .filter(Boolean)
                   .join(", ");
 
+                const recurringCategories = recurringMap.get(
+                  customer.jobber_client_id
+                );
+                const isRecurring = Boolean(
+                  recurringCategories && recurringCategories.length > 0
+                );
+
                 return (
                   <Link
                     key={customer.id}
                     href={`/customers/${encodeURIComponent(
                       customer.jobber_client_id
                     )}`}
-                    className="block rounded-3xl border border-transparent bg-white p-7 shadow transition hover:-translate-y-1 hover:border-[#d4af37] hover:shadow-lg"
+                    className={`block rounded-3xl border p-7 shadow transition hover:-translate-y-1 hover:shadow-lg ${
+                      isRecurring
+                        ? "border-[#174734] bg-[#eef4ee] hover:border-[#174734]"
+                        : "border-transparent bg-white hover:border-[#d4af37]"
+                    }`}
                   >
                     <div className="flex items-start justify-between gap-4">
                       <div>
@@ -354,9 +403,17 @@ export default async function CustomersPage({
                           )}
                       </div>
 
-                      <span className="rounded-full bg-[#f7f6f1] px-3 py-1 text-xs font-bold">
-                        Jobber
-                      </span>
+                      <div className="flex flex-col items-end gap-2">
+                        {isRecurring && (
+                          <span className="w-fit rounded-full bg-[#174734] px-3 py-1 text-xs font-bold text-white">
+                            {formatCategoryBadge(recurringCategories ?? [])}
+                          </span>
+                        )}
+
+                        <span className="rounded-full bg-[#f7f6f1] px-3 py-1 text-xs font-bold">
+                          Jobber
+                        </span>
+                      </div>
                     </div>
 
                     <div className="mt-6 space-y-4 text-sm">
@@ -391,7 +448,11 @@ export default async function CustomersPage({
                       </div>
                     </div>
 
-                    <div className="mt-6 rounded-2xl bg-[#f7f6f1] p-4">
+                    <div
+                      className={`mt-6 rounded-2xl p-4 ${
+                        isRecurring ? "bg-white" : "bg-[#f7f6f1]"
+                      }`}
+                    >
                       <p className="font-semibold">
                         View full customer details →
                       </p>
