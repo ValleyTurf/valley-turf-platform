@@ -320,6 +320,15 @@ export default async function CustomersPage({
   const totalCustomers = count ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalCustomers / PAGE_SIZE));
 
+  const { data: latestSyncRow } = await supabaseServer
+    .from("customers")
+    .select("last_synced_at")
+    .order("last_synced_at", { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle();
+
+  const lastSyncedAt = latestSyncRow?.last_synced_at ?? null;
+
   const firstCustomerNumber =
     totalCustomers === 0 ? 0 : from + 1;
 
@@ -365,20 +374,26 @@ export default async function CustomersPage({
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href="/api/jobber/sync-customers"
-              className="rounded-xl bg-[#d4af37] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#e6c766]"
-            >
-              Sync Jobber Customers
-            </Link>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex flex-wrap gap-3">
+              <Link
+                href="/api/jobber/sync-customers"
+                className="rounded-xl bg-[#d4af37] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#e6c766]"
+              >
+                Sync Jobber Customers
+              </Link>
 
-            <Link
-              href="/"
-              className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
-            >
-              Home
-            </Link>
+              <Link
+                href="/"
+                className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
+              >
+                Home
+              </Link>
+            </div>
+
+            <p className="text-xs text-[#6b705c]">
+              Last synced {formatDate(lastSyncedAt)}
+            </p>
           </div>
         </header>
 
@@ -500,7 +515,7 @@ export default async function CustomersPage({
               </p>
             </div>
           ) : (
-            <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {customers.map((customer) => {
                 const customerName =
                   customer.full_name ||
@@ -525,44 +540,34 @@ export default async function CustomersPage({
                     href={`/customers/${encodeURIComponent(
                       customer.jobber_client_id
                     )}`}
-                    className={`block rounded-3xl border p-7 shadow transition hover:-translate-y-1 hover:shadow-lg ${
+                    className={`block rounded-2xl border p-4 shadow transition hover:-translate-y-1 hover:shadow-lg ${
                       isRecurring
                         ? "border-[#174734] bg-[#eef4ee] hover:border-[#174734]"
                         : "border-transparent bg-white hover:border-[#d4af37]"
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
-                          Customer
-                        </p>
-
-                        <h2 className="mt-3 text-2xl font-bold">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <h2 className="truncate text-lg font-bold">
                           {customerName}
                         </h2>
 
                         {customer.company_name &&
                           customer.company_name !== customerName && (
-                            <p className="mt-1 text-[#6b705c]">
+                            <p className="mt-0.5 truncate text-xs text-[#6b705c]">
                               {customer.company_name}
                             </p>
                           )}
                       </div>
 
-                      <div className="flex flex-col items-end gap-2">
-                        {isRecurring && (
-                          <span className="w-fit rounded-full bg-[#174734] px-3 py-1 text-xs font-bold text-white">
-                            {formatCategoryBadge(recurringCategories ?? [])}
-                          </span>
-                        )}
-
-                        <span className="rounded-full bg-[#f7f6f1] px-3 py-1 text-xs font-bold">
-                          Jobber
+                      {isRecurring && (
+                        <span className="w-fit shrink-0 rounded-full bg-[#174734] px-2 py-1 text-[10px] font-bold text-white">
+                          {formatCategoryBadge(recurringCategories ?? [])}
                         </span>
-                      </div>
+                      )}
                     </div>
 
-                    <div className="mt-6 space-y-4 text-sm">
+                    <div className="mt-3 space-y-2 text-xs">
                       <div>
                         <p className="font-bold">Email</p>
                         <p className="mt-1 break-words text-[#6b705c]">
@@ -585,20 +590,6 @@ export default async function CustomersPage({
                           </p>
                         </div>
                       )}
-                    </div>
-
-                    <div
-                      className={`mt-6 rounded-2xl p-4 ${
-                        isRecurring ? "bg-white" : "bg-[#f7f6f1]"
-                      }`}
-                    >
-                      <p className="font-semibold">
-                        View full customer details →
-                      </p>
-
-                      <p className="mt-1 text-xs text-[#6b705c]">
-                        Synced {formatDate(customer.last_synced_at)}
-                      </p>
                     </div>
                   </Link>
                 );
