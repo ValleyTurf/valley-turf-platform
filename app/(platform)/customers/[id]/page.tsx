@@ -108,6 +108,10 @@ type CustomerFinancials = {
   latest_invoice_date: string | null;
 };
 
+type CustomerProfile = {
+  turf_size_sqft: number | string | null;
+};
+
 async function getJobberClient(id: string): Promise<{
   client: JobberClient | null;
   error: string | null;
@@ -238,6 +242,23 @@ async function getCustomerFinancials(
   return data as CustomerFinancials | null;
 }
 
+async function getCustomerProfile(
+  jobberClientId: string
+): Promise<CustomerProfile | null> {
+  const { data, error } = await supabaseServer
+    .from("customers")
+    .select("turf_size_sqft")
+    .eq("jobber_client_id", jobberClientId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Customer profile query failed:", error.message);
+    return null;
+  }
+
+  return data as CustomerProfile | null;
+}
+
 function toNumber(
   value: number | string | null | undefined
 ): number {
@@ -326,6 +347,16 @@ function formatAddress(property: JobberProperty): string {
     .join(" ");
 }
 
+function formatTurfSize(value: number | string | null | undefined): string {
+  const amount = toNumber(value);
+
+  if (!amount) {
+    return "Not recorded";
+  }
+
+  return `${new Intl.NumberFormat("en-US").format(amount)} sq ft`;
+}
+
 function statusClasses(status: string | null): string {
   const normalized = (status ?? "").toUpperCase();
 
@@ -363,9 +394,10 @@ export default async function CustomerDetailPage({
   const { id } = await params;
   const decodedId = decodeURIComponent(id);
 
-  const [{ client, error }, financials] = await Promise.all([
+  const [{ client, error }, financials, profile] = await Promise.all([
     getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
+    getCustomerProfile(decodedId),
   ]);
 
   if (!client) {
@@ -414,16 +446,8 @@ export default async function CustomerDetailPage({
   const quotes = client.quotes?.nodes ?? [];
   const invoices = client.invoices?.nodes ?? [];
 
-  const recentJobValue = jobs.reduce(
-    (total, job) => total + toNumber(job.total),
-    0
-  );
-
-  const lifetimeInvoiced = toNumber(financials?.lifetime_invoiced);
   const lifetimeCollected = toNumber(financials?.lifetime_collected);
-  const outstandingBalance = toNumber(financials?.outstanding_balance);
-  const averageInvoice = toNumber(financials?.average_invoice);
-  const invoiceCount = toNumber(financials?.invoice_count);
+  const turfSize = profile?.turf_size_sqft ?? null;
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
@@ -470,123 +494,7 @@ export default async function CustomerDetailPage({
           </div>
         </header>
 
-        <section className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-          <article className="rounded-3xl bg-white p-6 shadow">
-            <p className="text-sm text-[#6b705c]">
-              Lifetime Invoiced
-            </p>
-
-            <p className="mt-2 text-3xl font-bold">
-              {formatCurrency(lifetimeInvoiced)}
-            </p>
-          </article>
-
-          <article className="rounded-3xl bg-white p-6 shadow">
-            <p className="text-sm text-[#6b705c]">
-              Lifetime Collected
-            </p>
-
-            <p className="mt-2 text-3xl font-bold">
-              {formatCurrency(lifetimeCollected)}
-            </p>
-          </article>
-
-          <article className="rounded-3xl bg-white p-6 shadow">
-            <p className="text-sm text-[#6b705c]">
-              Outstanding Balance
-            </p>
-
-            <p
-              className={`mt-2 text-3xl font-bold ${
-                outstandingBalance > 0
-                  ? "text-amber-700"
-                  : "text-green-700"
-              }`}
-            >
-              {formatCurrency(outstandingBalance)}
-            </p>
-          </article>
-
-          <article className="rounded-3xl bg-white p-6 shadow">
-            <p className="text-sm text-[#6b705c]">
-              Average Invoice
-            </p>
-
-            <p className="mt-2 text-3xl font-bold">
-              {formatCurrency(averageInvoice)}
-            </p>
-          </article>
-        </section>
-
-        <section className="mt-6 rounded-3xl bg-white p-8 shadow">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-2xl font-bold">
-                Financial Summary
-              </h2>
-
-              <p className="mt-1 text-[#6b705c]">
-                Customer lifetime invoice and payment performance.
-              </p>
-            </div>
-
-            <Link
-              href="/revenue"
-              className="text-sm font-bold text-[#9c7a20] hover:underline"
-            >
-              View Financial Dashboard
-            </Link>
-          </div>
-
-          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-2xl bg-[#f7f6f1] p-5">
-              <p className="text-sm text-[#6b705c]">
-                Invoice Count
-              </p>
-
-              <p className="mt-2 text-3xl font-bold">
-                {invoiceCount}
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-[#f7f6f1] p-5">
-              <p className="text-sm text-[#6b705c]">
-                First Invoice
-              </p>
-
-              <p className="mt-2 text-xl font-bold">
-                {formatDate(financials?.first_invoice_date ?? null)}
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-[#f7f6f1] p-5">
-              <p className="text-sm text-[#6b705c]">
-                Latest Invoice
-              </p>
-
-              <p className="mt-2 text-xl font-bold">
-                {formatDate(financials?.latest_invoice_date ?? null)}
-              </p>
-            </div>
-
-            <div className="rounded-2xl bg-[#f7f6f1] p-5">
-              <p className="text-sm text-[#6b705c]">
-                Collection Rate
-              </p>
-
-              <p className="mt-2 text-3xl font-bold">
-                {lifetimeInvoiced > 0
-                  ? `${Math.min(
-                      (lifetimeCollected / lifetimeInvoiced) * 100,
-                      100
-                    ).toFixed(1)}%`
-                  : "0.0%"}
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <div className="mt-6 grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
+        <div className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
           <div className="space-y-6">
             <section className="rounded-3xl bg-white p-8 shadow">
               <h2 className="text-2xl font-bold">
@@ -634,11 +542,11 @@ export default async function CustomerDetailPage({
 
                 <div>
                   <p className="text-sm font-bold text-[#9c7a20]">
-                    Jobber Balance
+                    Lifetime Collected
                   </p>
 
                   <p className="mt-1 text-lg font-semibold">
-                    {formatCurrency(client.balance)}
+                    {formatCurrency(lifetimeCollected)}
                   </p>
                 </div>
               </div>
@@ -646,6 +554,16 @@ export default async function CustomerDetailPage({
 
             <section className="rounded-3xl bg-white p-8 shadow">
               <h2 className="text-2xl font-bold">Properties</h2>
+
+              <div className="mt-5">
+                <p className="text-sm font-bold text-[#9c7a20]">
+                  Turf Size
+                </p>
+
+                <p className="mt-1 text-lg font-semibold">
+                  {formatTurfSize(turfSize)}
+                </p>
+              </div>
 
               <div className="mt-6 space-y-4">
                 {properties.length > 0 ? (
@@ -701,9 +619,9 @@ export default async function CustomerDetailPage({
               </h2>
 
               <div className="mt-6 rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
-                Turf size, gate code, pet count, pet names, odor level,
-                subscription status, service instructions, and internal notes
-                will be editable here.
+                Gate code, pet count, pet names, odor level, subscription
+                status, service instructions, and internal notes will be
+                editable here.
               </div>
             </section>
 
@@ -719,55 +637,42 @@ export default async function CustomerDetailPage({
             </section>
           </div>
 
-          <div className="space-y-6">
-            <section className="rounded-3xl bg-white p-8 shadow">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-2xl font-bold">
-                    Recent Jobs
-                  </h2>
+          <div className="space-y-4">
+            <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">
+                Recent Jobs
+              </h2>
 
-                  <p className="mt-1 text-sm text-[#6b705c]">
-                    {jobs.length} recent jobs totaling{" "}
-                    {formatCurrency(recentJobValue)}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-6 space-y-4">
+              <div className="mt-3 space-y-2">
                 {jobs.length > 0 ? (
                   jobs.map((job) => {
                     const content = (
                       <>
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div>
-                            <p className="font-bold">
+                        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-bold">
                               Job #{job.jobNumber ?? "—"}
                               {job.title ? ` — ${job.title}` : ""}
                             </p>
 
-                            <p className="mt-2 text-sm text-[#6b705c]">
+                            <p className="text-xs text-[#6b705c]">
                               {formatDate(job.startAt)}
                             </p>
                           </div>
 
-                          <span
-                            className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${statusClasses(
-                              job.jobStatus
-                            )}`}
-                          >
-                            {formatStatus(job.jobStatus)}
-                          </span>
-                        </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <span
+                              className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
+                                job.jobStatus
+                              )}`}
+                            >
+                              {formatStatus(job.jobStatus)}
+                            </span>
 
-                        <div className="mt-4 flex items-center justify-between gap-4">
-                          <p className="text-sm text-[#6b705c]">
-                            {formatStatus(job.jobType)}
-                          </p>
-
-                          <p className="font-bold">
-                            {formatCurrency(job.total)}
-                          </p>
+                            <p className="text-sm font-bold">
+                              {formatCurrency(job.total)}
+                            </p>
+                          </div>
                         </div>
                       </>
                     );
@@ -779,7 +684,7 @@ export default async function CustomerDetailPage({
                           href={job.jobberWebUri}
                           target="_blank"
                           rel="noreferrer"
-                          className="block rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
+                          className="block rounded-xl border border-[#e7e2d5] px-3 py-2 transition hover:border-[#d4af37]"
                         >
                           {content}
                         </a>
@@ -789,46 +694,43 @@ export default async function CustomerDetailPage({
                     return (
                       <div
                         key={job.id}
-                        className="rounded-2xl border border-[#e7e2d5] p-5"
+                        className="rounded-xl border border-[#e7e2d5] px-3 py-2"
                       >
                         {content}
                       </div>
                     );
                   })
                 ) : (
-                  <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
                     No jobs found.
                   </p>
                 )}
               </div>
             </section>
 
-            <section className="rounded-3xl bg-white p-8 shadow">
-              <h2 className="text-2xl font-bold">
+            <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">
                 Recent Quotes
               </h2>
 
-              <div className="mt-6 space-y-4">
+              <div className="mt-3 space-y-2">
                 {quotes.length > 0 ? (
                   quotes.map((quote) => {
                     const content = (
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                          <p className="font-bold">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold">
                             Quote #{quote.quoteNumber ?? "—"}
+                            {quote.title ? ` — ${quote.title}` : ""}
                           </p>
 
-                          <p className="mt-1 text-[#6b705c]">
-                            {quote.title || "No title"}
-                          </p>
-
-                          <p className="mt-2 text-sm text-[#6b705c]">
+                          <p className="text-xs text-[#6b705c]">
                             Created {formatDate(quote.createdAt)}
                           </p>
                         </div>
 
                         <span
-                          className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${statusClasses(
+                          className={`w-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
                             quote.quoteStatus
                           )}`}
                         >
@@ -844,7 +746,7 @@ export default async function CustomerDetailPage({
                           href={quote.jobberWebUri}
                           target="_blank"
                           rel="noreferrer"
-                          className="block rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
+                          className="block rounded-xl border border-[#e7e2d5] px-3 py-2 transition hover:border-[#d4af37]"
                         >
                           {content}
                         </a>
@@ -854,64 +756,55 @@ export default async function CustomerDetailPage({
                     return (
                       <div
                         key={quote.id}
-                        className="rounded-2xl border border-[#e7e2d5] p-5"
+                        className="rounded-xl border border-[#e7e2d5] px-3 py-2"
                       >
                         {content}
                       </div>
                     );
                   })
                 ) : (
-                  <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
                     No quotes found.
                   </p>
                 )}
               </div>
             </section>
 
-            <section className="rounded-3xl bg-white p-8 shadow">
-              <h2 className="text-2xl font-bold">
+            <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">
                 Recent Invoices
               </h2>
 
-              <div className="mt-6 space-y-4">
+              <div className="mt-3 space-y-2">
                 {invoices.length > 0 ? (
                   invoices.map((invoice) => {
                     const content = (
-                      <>
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div>
-                            <p className="font-bold">
-                              Invoice #{invoice.invoiceNumber ?? "—"}
-                            </p>
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold">
+                            Invoice #{invoice.invoiceNumber ?? "—"}
+                            {invoice.subject ? ` — ${invoice.subject}` : ""}
+                          </p>
 
-                            <p className="mt-1 text-[#6b705c]">
-                              {invoice.subject || "No subject"}
-                            </p>
+                          <p className="text-xs text-[#6b705c]">
+                            Issued {formatDate(invoice.issuedDate)}
+                          </p>
+                        </div>
 
-                            <p className="mt-2 text-sm text-[#6b705c]">
-                              Issued {formatDate(invoice.issuedDate)}
-                            </p>
-                          </div>
-
+                        <div className="flex shrink-0 items-center gap-2">
                           <span
-                            className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${statusClasses(
+                            className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
                               invoice.invoiceStatus
                             )}`}
                           >
                             {formatStatus(invoice.invoiceStatus)}
                           </span>
-                        </div>
 
-                        <div className="mt-4 flex items-center justify-between gap-4">
-                          <p className="text-sm text-[#6b705c]">
-                            Due {formatDate(invoice.dueDate)}
-                          </p>
-
-                          <p className="font-bold">
+                          <p className="text-sm font-bold">
                             {formatCurrency(invoice.total)}
                           </p>
                         </div>
-                      </>
+                      </div>
                     );
 
                     if (invoice.jobberWebUri) {
@@ -921,7 +814,7 @@ export default async function CustomerDetailPage({
                           href={invoice.jobberWebUri}
                           target="_blank"
                           rel="noreferrer"
-                          className="block rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
+                          className="block rounded-xl border border-[#e7e2d5] px-3 py-2 transition hover:border-[#d4af37]"
                         >
                           {content}
                         </a>
@@ -931,14 +824,14 @@ export default async function CustomerDetailPage({
                     return (
                       <div
                         key={invoice.id}
-                        className="rounded-2xl border border-[#e7e2d5] p-5"
+                        className="rounded-xl border border-[#e7e2d5] px-3 py-2"
                       >
                         {content}
                       </div>
                     );
                   })
                 ) : (
-                  <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
                     No invoices found.
                   </p>
                 )}
