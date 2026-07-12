@@ -546,25 +546,17 @@ export default async function CustomersPage({
                         : "border-transparent bg-white hover:border-[#d4af37]"
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <h2 className="truncate text-lg font-bold">
-                          {customerName}
-                        </h2>
+                    <div className="min-w-0">
+                      <h2 className="truncate text-xl font-bold">
+                        {customerName}
+                      </h2>
 
-                        {customer.company_name &&
-                          customer.company_name !== customerName && (
-                            <p className="mt-0.5 truncate text-xs text-[#6b705c]">
-                              {customer.company_name}
-                            </p>
-                          )}
-                      </div>
-
-                      {isRecurring && (
-                        <span className="w-fit shrink-0 rounded-full bg-[#174734] px-2 py-1 text-[10px] font-bold text-white">
-                          {formatCategoryBadge(recurringCategories ?? [])}
-                        </span>
-                      )}
+                      {customer.company_name &&
+                        customer.company_name !== customerName && (
+                          <p className="mt-0.5 truncate text-xs text-[#6b705c]">
+                            {customer.company_name}
+                          </p>
+                        )}
                     </div>
 
                     <div className="mt-3 space-y-2 text-xs">
@@ -591,6 +583,14 @@ export default async function CustomersPage({
                         </div>
                       )}
                     </div>
+
+                    {isRecurring && (
+                      <div className="mt-3 border-t border-[#d7e3d9] pt-3">
+                        <span className="w-fit rounded-full bg-[#174734] px-2 py-1 text-[10px] font-bold text-white">
+                          {formatCategoryBadge(recurringCategories ?? [])}
+                        </span>
+                      </div>
+                    )}
                   </Link>
                 );
               })}
