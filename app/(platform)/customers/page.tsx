@@ -32,12 +32,49 @@ type RecurringCustomer = {
   recurring_categories: string[] | null;
 };
 
-type RecurringFilter = "all" | "recurring" | "non-recurring";
+type RecurringFilter = "all" | "recurring" | "non-recurring" | string;
 
-const FILTER_OPTIONS: { key: RecurringFilter; label: string }[] = [
+const BASE_FILTER_OPTIONS: { key: RecurringFilter; label: string }[] = [
   { key: "all", label: "All Customers" },
   { key: "recurring", label: "Recurring Only" },
   { key: "non-recurring", label: "Non-Recurring Only" },
+];
+
+const CATEGORY_FILTER_OPTIONS: {
+  key: string;
+  label: string;
+  category: string;
+}[] = [
+  {
+    key: "monthly-maintenance",
+    label: "Monthly Maintenance",
+    category: "Monthly Maintenance",
+  },
+  {
+    key: "quarterly-cleaning",
+    label: "Quarterly Cleaning",
+    category: "Quarterly Cleaning",
+  },
+  {
+    key: "bimonthly-cleaning",
+    label: "Bimonthly Cleaning",
+    category: "Bimonthly Cleaning",
+  },
+  {
+    key: "semi-annual-cleaning",
+    label: "Semi-Annual Cleaning",
+    category: "Semi-Annual Cleaning",
+  },
+  {
+    key: "weekly-maintenance",
+    label: "Weekly Maintenance",
+    category: "Weekly Maintenance",
+  },
+];
+
+const VALID_FILTER_KEYS = [
+  ...BASE_FILTER_OPTIONS.map((option) => option.key),
+  ...CATEGORY_FILTER_OPTIONS.map((option) => option.key),
 ];
 
 const PAGE_SIZE = 30;
@@ -150,9 +187,7 @@ export default async function CustomersPage({
 
   const search = String(params.search ?? "").trim();
 
-  const filter = (["all", "recurring", "non-recurring"].includes(
-    params.filter ?? ""
-  )
+  const filter = (VALID_FILTER_KEYS.includes(params.filter ?? "")
     ? params.filter
     : "all") as RecurringFilter;
 
@@ -237,6 +272,24 @@ export default async function CustomersPage({
     if (recurringIds.length > 0) {
       const idList = recurringIds.map((id) => `"${id}"`).join(",");
       query = query.not("jobber_client_id", "in", `(${idList})`);
+    }
+  } else {
+    const matchedCategory = CATEGORY_FILTER_OPTIONS.find(
+      (option) => option.key === filter
+    );
+
+    if (matchedCategory) {
+      const categoryIds = recurringCustomers
+        .filter((row) =>
+          (row.recurring_categories ?? []).includes(matchedCategory.category)
+        )
+        .map((row) => row.jobber_client_id);
+
+      if (categoryIds.length === 0) {
+        noResultsForFilter = true;
+      } else {
+        query = query.in("jobber_client_id", categoryIds);
+      }
     }
   }
 
@@ -355,7 +408,7 @@ export default async function CustomersPage({
         </section>
 
         <section className="mt-6 flex flex-wrap gap-2">
-          {FILTER_OPTIONS.map((option) => (
+          {BASE_FILTER_OPTIONS.map((option) => (
             <Link
               key={option.key}
               href={buildCustomersUrl(1, search, option.key)}
@@ -363,6 +416,26 @@ export default async function CustomersPage({
                 filter === option.key
                   ? "bg-[#174734] text-white"
                   : "border border-[#d9d4c6] bg-white text-[#174734] hover:bg-[#f7f6f1]"
+              }`}
+            >
+              {option.label}
+            </Link>
+          ))}
+        </section>
+
+        <section className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="mr-1 text-sm font-semibold text-[#6b705c]">
+            By service:
+          </span>
+
+          {CATEGORY_FILTER_OPTIONS.map((option) => (
+            <Link
+              key={option.key}
+              href={buildCustomersUrl(1, search, option.key)}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                filter === option.key
+                  ? "bg-[#9c7a20] text-white"
+                  : "border border-[#e3ded1] bg-white text-[#9c7a20] hover:bg-[#faf4e3]"
               }`}
             >
               {option.label}
