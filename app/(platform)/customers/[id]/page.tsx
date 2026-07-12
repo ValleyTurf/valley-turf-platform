@@ -496,90 +496,80 @@ export default async function CustomerDetailPage({
 
         <div className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
           <div className="space-y-6">
-            <section className="rounded-3xl bg-white p-8 shadow">
-              <h2 className="text-2xl font-bold">
+            <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">
                 Contact Information
               </h2>
 
-              <div className="mt-6 space-y-5">
-                <div>
-                  <p className="text-sm font-bold text-[#9c7a20]">
-                    Email
-                  </p>
-
-                  {email ? (
-                    <a
-                      href={`mailto:${email}`}
-                      className="mt-1 block break-words text-lg font-semibold hover:underline"
-                    >
-                      {email}
-                    </a>
-                  ) : (
-                    <p className="mt-1 text-[#6b705c]">
-                      No email
+              <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-xs font-bold text-[#9c7a20]">
+                      Email
                     </p>
-                  )}
+
+                    {email ? (
+                      <a
+                        href={`mailto:${email}`}
+                        className="mt-0.5 block break-words text-sm font-semibold hover:underline"
+                      >
+                        {email}
+                      </a>
+                    ) : (
+                      <p className="mt-0.5 text-sm text-[#6b705c]">
+                        No email
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-bold text-[#9c7a20]">
+                      Phone
+                    </p>
+
+                    {phone ? (
+                      <a
+                        href={`tel:${phone.replace(/[^\d+]/g, "")}`}
+                        className="mt-0.5 block text-sm font-semibold hover:underline"
+                      >
+                        {formatPhone(phone)}
+                      </a>
+                    ) : (
+                      <p className="mt-0.5 text-sm text-[#6b705c]">
+                        No phone
+                      </p>
+                    )}
+                  </div>
                 </div>
 
-                <div>
-                  <p className="text-sm font-bold text-[#9c7a20]">
-                    Phone
-                  </p>
-
-                  {phone ? (
-                    <a
-                      href={`tel:${phone.replace(/[^\d+]/g, "")}`}
-                      className="mt-1 block text-lg font-semibold hover:underline"
-                    >
-                      {formatPhone(phone)}
-                    </a>
-                  ) : (
-                    <p className="mt-1 text-[#6b705c]">
-                      No phone
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <p className="text-sm font-bold text-[#9c7a20]">
+                <div className="sm:text-right">
+                  <p className="text-xs font-bold text-[#9c7a20]">
                     Lifetime Collected
                   </p>
 
-                  <p className="mt-1 text-lg font-semibold">
+                  <p className="mt-0.5 text-2xl font-bold">
                     {formatCurrency(lifetimeCollected)}
                   </p>
                 </div>
               </div>
-            </section>
 
-            <section className="rounded-3xl bg-white p-8 shadow">
-              <h2 className="text-2xl font-bold">Properties</h2>
-
-              <div className="mt-5">
-                <p className="text-sm font-bold text-[#9c7a20]">
+              <div className="mt-5 border-t border-[#e7e2d5] pt-4">
+                <p className="text-xs font-bold text-[#9c7a20]">
                   Turf Size
                 </p>
 
-                <p className="mt-1 text-lg font-semibold">
+                <p className="mt-0.5 text-sm font-semibold">
                   {formatTurfSize(turfSize)}
                 </p>
               </div>
 
-              <div className="mt-6 space-y-4">
+              <div className="mt-4 space-y-2">
                 {properties.length > 0 ? (
                   properties.map((property) => {
                     const content = (
-                      <>
-                        <p className="font-semibold">
-                          {formatAddress(property)}
-                        </p>
-
-                        {property.jobberWebUri && (
-                          <p className="mt-2 text-sm text-[#9c7a20]">
-                            Open property in Jobber →
-                          </p>
-                        )}
-                      </>
+                      <p className="text-sm font-semibold">
+                        {formatAddress(property)}
+                      </p>
                     );
 
                     if (property.jobberWebUri) {
@@ -589,7 +579,7 @@ export default async function CustomerDetailPage({
                           href={property.jobberWebUri}
                           target="_blank"
                           rel="noreferrer"
-                          className="block rounded-2xl bg-[#f7f6f1] p-5 transition hover:bg-[#efeadf]"
+                          className="block rounded-xl bg-[#f7f6f1] px-3 py-2 transition hover:bg-[#efeadf]"
                         >
                           {content}
                         </a>
@@ -599,38 +589,38 @@ export default async function CustomerDetailPage({
                     return (
                       <div
                         key={property.id}
-                        className="rounded-2xl bg-[#f7f6f1] p-5"
+                        className="rounded-xl bg-[#f7f6f1] px-3 py-2"
                       >
                         {content}
                       </div>
                     );
                   })
                 ) : (
-                  <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
                     No properties found.
                   </p>
                 )}
               </div>
             </section>
 
-            <section className="rounded-3xl bg-white p-8 shadow">
-              <h2 className="text-2xl font-bold">
+            <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">
                 Property Profile
               </h2>
 
-              <div className="mt-6 rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+              <div className="mt-4 rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
                 Gate code, pet count, pet names, odor level, subscription
                 status, service instructions, and internal notes will be
                 editable here.
               </div>
             </section>
 
-            <section className="rounded-3xl bg-white p-8 shadow">
-              <h2 className="text-2xl font-bold">
+            <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">
                 Marketing Attribution
               </h2>
 
-              <div className="mt-6 rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+              <div className="mt-4 rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
                 QR campaign, lead source, first scan, conversion history, and
                 campaign-generated revenue will be connected here.
               </div>
