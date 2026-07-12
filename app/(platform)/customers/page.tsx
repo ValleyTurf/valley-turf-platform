@@ -21,9 +21,11 @@ type Customer = {
   company_name: string | null;
   email: string | null;
   phone: string | null;
+  address_line_1: string | null;
+  address_line_2: string | null;
   city: string | null;
   state: string | null;
-  current_balance: number | string | null;
+  postal_code: string | null;
   last_synced_at: string | null;
 };
 
@@ -106,17 +108,27 @@ function formatPhone(phone: string | null): string {
   )}-${normalized.slice(6)}`;
 }
 
-function formatCurrency(value: number | string | null): string {
-  const amount = Number(value ?? 0);
+function formatAddress(customer: {
+  address_line_1: string | null;
+  address_line_2: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+}): string | null {
+  const street = [customer.address_line_1, customer.address_line_2]
+    .filter(Boolean)
+    .join(" ");
 
-  if (Number.isNaN(amount)) {
-    return "$0.00";
-  }
+  const cityStateZip = [
+    customer.city,
+    [customer.state, customer.postal_code].filter(Boolean).join(" "),
+  ]
+    .filter(Boolean)
+    .join(", ");
 
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(amount);
+  const full = [street, cityStateZip].filter(Boolean).join(", ");
+
+  return full || null;
 }
 
 function formatDate(value: string | null): string {
@@ -234,9 +246,11 @@ export default async function CustomersPage({
         company_name,
         email,
         phone,
+        address_line_1,
+        address_line_2,
         city,
         state,
-        current_balance,
+        postal_code,
         last_synced_at
       `,
       {
@@ -496,12 +510,7 @@ export default async function CustomersPage({
                   customer.company_name ||
                   "Unnamed Customer";
 
-                const location = [
-                  customer.city,
-                  customer.state,
-                ]
-                  .filter(Boolean)
-                  .join(", ");
+                const address = formatAddress(customer);
 
                 const recurringCategories = recurringMap.get(
                   customer.jobber_client_id
@@ -568,21 +577,14 @@ export default async function CustomersPage({
                         </p>
                       </div>
 
-                      {location && (
+                      {address && (
                         <div>
-                          <p className="font-bold">Location</p>
+                          <p className="font-bold">Address</p>
                           <p className="mt-1 text-[#6b705c]">
-                            {location}
+                            {address}
                           </p>
                         </div>
                       )}
-
-                      <div>
-                        <p className="font-bold">Current Balance</p>
-                        <p className="mt-1 text-[#6b705c]">
-                          {formatCurrency(customer.current_balance)}
-                        </p>
-                      </div>
                     </div>
 
                     <div
