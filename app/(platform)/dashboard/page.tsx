@@ -6,6 +6,8 @@ import KpiCard from "@/app/components/dashboard/KpiCard";
 import ActivityFeed from "@/app/components/dashboard/ActivityFeed";
 import { supabaseServer } from "@/lib/supabase-server";
 
+const PHOENIX_TIME_ZONE = "America/Phoenix";
+
 type ActivityItem = {
   id: string;
   scanned_at: string;
@@ -30,12 +32,43 @@ type DashboardData = {
   activity: ActivityItem[];
 };
 
-async function getDashboardData(): Promise<DashboardData> {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+function getPhoenixDateParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: PHOENIX_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
 
-  const weekStart = new Date(today);
-  weekStart.setDate(weekStart.getDate() - 7);
+  return {
+    year: Number(
+      parts.find((part) => part.type === "year")?.value ?? 0
+    ),
+    month: Number(
+      parts.find((part) => part.type === "month")?.value ?? 1
+    ),
+    day: Number(
+      parts.find((part) => part.type === "day")?.value ?? 1
+    ),
+  };
+}
+
+function getPhoenixStartOfDayUtc(date = new Date()): Date {
+  const { year, month, day } = getPhoenixDateParts(date);
+
+  return new Date(
+    Date.UTC(year, month - 1, day, 7, 0, 0, 0)
+  );
+}
+
+async function getDashboardData(): Promise<DashboardData> {
+  const phoenixTodayStart = getPhoenixStartOfDayUtc();
+
+  const phoenixWeekStart = new Date(phoenixTodayStart);
+
+  phoenixWeekStart.setUTCDate(
+    phoenixWeekStart.getUTCDate() - 7
+  );
 
   const [
     customersResult,
@@ -47,25 +80,46 @@ async function getDashboardData(): Promise<DashboardData> {
   ] = await Promise.all([
     supabaseServer
       .from("customers")
-      .select("*", { count: "exact", head: true }),
+      .select("*", {
+        count: "exact",
+        head: true,
+      }),
 
     supabaseServer
       .from("campaigns")
-      .select("*", { count: "exact", head: true }),
+      .select("*", {
+        count: "exact",
+        head: true,
+      }),
 
     supabaseServer
       .from("leads")
-      .select("*", { count: "exact", head: true }),
+      .select("*", {
+        count: "exact",
+        head: true,
+      }),
 
     supabaseServer
       .from("scans")
-      .select("*", { count: "exact", head: true })
-      .gte("scanned_at", today.toISOString()),
+      .select("*", {
+        count: "exact",
+        head: true,
+      })
+      .gte(
+        "scanned_at",
+        phoenixTodayStart.toISOString()
+      ),
 
     supabaseServer
       .from("scans")
-      .select("*", { count: "exact", head: true })
-      .gte("scanned_at", weekStart.toISOString()),
+      .select("*", {
+        count: "exact",
+        head: true,
+      })
+      .gte(
+        "scanned_at",
+        phoenixWeekStart.toISOString()
+      ),
 
     supabaseServer
       .from("scans")
@@ -81,7 +135,9 @@ async function getDashboardData(): Promise<DashboardData> {
           slug
         )
       `)
-      .order("scanned_at", { ascending: false })
+      .order("scanned_at", {
+        ascending: false,
+      })
       .limit(10),
   ]);
 
@@ -202,7 +258,7 @@ export default async function DashboardPage() {
             title="Scans Today"
             value={data.scansToday}
             icon="📱"
-            subtitle="Since midnight"
+            subtitle="Since midnight Arizona time"
           />
 
           <KpiCard
