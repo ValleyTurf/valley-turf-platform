@@ -467,8 +467,8 @@ async function fetchCompletedJobsCount(
     .from("jobber_jobs")
     .select("id", { count: "exact", head: true })
     .in("job_status", ["archived", "requires_invoicing"])
-    .gte("end_at", startTimestamp)
-    .lte("end_at", endTimestamp);
+    .gte("completed_at", startTimestamp)
+    .lte("completed_at", endTimestamp);
 
   if (error) throw error;
 

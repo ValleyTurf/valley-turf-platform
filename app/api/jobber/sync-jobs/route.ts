@@ -17,6 +17,7 @@ type JobberJob = {
   jobType: string | null;
   jobberWebUri: string | null;
   endAt: string | null;
+  completedAt: string | null;
   client: JobberClient | null;
 };
 
@@ -47,6 +48,7 @@ type JobUpsert = {
   job_type: string | null;
   jobber_web_uri: string | null;
   end_at: string | null;
+  completed_at: string | null;
   updated_at: string;
 };
 
@@ -69,6 +71,7 @@ function formatJob(job: JobberJob): JobUpsert {
     job_type: cleanText(job.jobType),
     jobber_web_uri: cleanText(job.jobberWebUri),
     end_at: job.endAt ?? null,
+    completed_at: job.completedAt ?? null,
     updated_at: new Date().toISOString(),
   };
 }
@@ -106,6 +109,7 @@ async function syncJobs() {
                 jobType
                 jobberWebUri
                 endAt
+                completedAt
 
                 client {
                   id
