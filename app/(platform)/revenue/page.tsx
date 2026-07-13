@@ -466,9 +466,9 @@ async function fetchCompletedJobsCount(
   const { count, error } = await supabaseServer
     .from("jobber_jobs")
     .select("id", { count: "exact", head: true })
-    .ilike("job_status", "%complete%")
-    .gte("updated_at", startTimestamp)
-    .lte("updated_at", endTimestamp);
+    .in("job_status", ["archived", "requires_invoicing"])
+    .gte("end_at", startTimestamp)
+    .lte("end_at", endTimestamp);
 
   if (error) throw error;
 
