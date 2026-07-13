@@ -456,25 +456,6 @@ async function fetchDashboardPayments(
   return rows;
 }
 
-async function fetchCompletedJobsCount(
-  startDate: string,
-  endDate: string,
-): Promise<number> {
-  const startTimestamp = `${startDate}T00:00:00.000Z`;
-  const endTimestamp = `${endDate}T23:59:59.999Z`;
-
-  const { count, error } = await supabaseServer
-    .from("jobber_jobs")
-    .select("id", { count: "exact", head: true })
-    .in("job_status", ["archived", "requires_invoicing"])
-    .gte("completed_at", startTimestamp)
-    .lte("completed_at", endTimestamp);
-
-  if (error) throw error;
-
-  return count ?? 0;
-}
-
 async function fetchMarketCustomers(): Promise<MarketCustomer[]> {
   const pageSize = 1000;
   const rows: MarketCustomer[] = [];
@@ -665,7 +646,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       previousMarketInvoices,
       marketCustomers,
       dashboardPayments,
-      jobsCompleted,
     ] = await Promise.all([
       supabaseServer
         .from("customer_financials")
@@ -734,7 +714,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       fetchMarketInvoices(previousStartDate, previousEndDate),
       fetchMarketCustomers(),
       fetchDashboardPayments(startDate, endDate),
-      fetchCompletedJobsCount(startDate, endDate),
     ]);
 
     const queryErrors = [
@@ -762,6 +741,12 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
     const customerValue =
       customerValueResult.data as CustomerValueSummary | null;
     const forecastMonths = (forecastResult.data ?? []) as ForecastMonth[];
+
+    // Each invoice represents a completed service visit, so invoice count
+    // in the selected range is used as the "jobs completed" proxy — this is
+    // more reliable than jobber_jobs' status/date fields, which don't
+    // consistently reflect actual completion in this account's workflow.
+    const jobsCompleted = marketInvoices.length;
 
     const totalOverheadForRange = calculateOverheadForRange(
       overheadCosts,
@@ -902,7 +887,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       {
         title: "Jobs Completed",
         value: formatNumber(jobsCompleted),
-        subtitle: `Completed-status jobs · ${marketDateLabel}`,
+        subtitle: `Invoiced service visits · ${marketDateLabel}`,
         icon: "✅",
       },
       {
@@ -1074,7 +1059,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
 
                 <p className="mt-1 text-sm text-[#6b705c]">
                   Overhead for {marketDateLabel}, prorated by day and divided
-                  across {formatNumber(jobsCompleted)} completed job
+                  across {formatNumber(jobsCompleted)} invoiced service visit
                   {jobsCompleted === 1 ? "" : "s"} in that period.{" "}
                   <Link
                     href="/costs"
@@ -1101,7 +1086,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                 </div>
               ) : (
                 <p className="shrink-0 text-sm text-[#6b705c]">
-                  No completed jobs in this period yet.
+                  No invoiced service visits in this period yet.
                 </p>
               )}
             </div>
