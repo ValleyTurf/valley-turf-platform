@@ -109,11 +109,11 @@ type ForecastMonth = {
   projected_total_revenue: number | string;
 };
 
-type OverheadPerJobMonth = {
-  month: string;
-  total_overhead: number | string;
-  job_count: number | string;
-  overhead_per_job: number | string | null;
+type OverheadCostRow = {
+  cost_type: string;
+  amount: number | string;
+  start_date: string;
+  end_date: string | null;
 };
 
 function formatDateInput(date: Date): string {
@@ -497,6 +497,67 @@ async function fetchMarketCustomers(): Promise<MarketCustomer[]> {
   return rows;
 }
 
+async function fetchOverheadCosts(): Promise<OverheadCostRow[]> {
+  const { data, error } = await supabaseServer
+    .from("overhead_costs")
+    .select("cost_type, amount, start_date, end_date");
+
+  if (error) throw error;
+
+  return (data ?? []) as OverheadCostRow[];
+}
+
+function daysBetweenInclusive(start: Date, end: Date): number {
+  return Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
+}
+
+function calculateOverheadForRange(
+  costs: OverheadCostRow[],
+  rangeStart: string,
+  rangeEnd: string,
+): number {
+  const rangeStartDate = new Date(`${rangeStart}T00:00:00Z`);
+  const rangeEndDate = new Date(`${rangeEnd}T00:00:00Z`);
+
+  let total = 0;
+
+  for (const cost of costs) {
+    const amount = toNumber(cost.amount);
+    const costStart = new Date(`${cost.start_date}T00:00:00Z`);
+    const costEnd = cost.end_date
+      ? new Date(`${cost.end_date}T00:00:00Z`)
+      : null;
+
+    if (cost.cost_type === "recurring") {
+      // Smooth a monthly amount into a daily burn rate so it can be
+      // prorated across any arbitrary date range, not just calendar months.
+      const dailyRate = (amount * 12) / 365.25;
+
+      const overlapStart =
+        costStart > rangeStartDate ? costStart : rangeStartDate;
+      const overlapEnd =
+        costEnd && costEnd < rangeEndDate ? costEnd : rangeEndDate;
+
+      if (overlapStart <= overlapEnd) {
+        total += dailyRate * daysBetweenInclusive(overlapStart, overlapEnd);
+      }
+    } else if (cost.cost_type === "amortized" && costEnd) {
+      const totalDays = daysBetweenInclusive(costStart, costEnd);
+      const dailyRate = totalDays > 0 ? amount / totalDays : 0;
+
+      const overlapStart =
+        costStart > rangeStartDate ? costStart : rangeStartDate;
+      const overlapEnd = costEnd < rangeEndDate ? costEnd : rangeEndDate;
+
+      if (overlapStart <= overlapEnd) {
+        total += dailyRate * daysBetweenInclusive(overlapStart, overlapEnd);
+      }
+    }
+  }
+
+  return total;
+}
+
 function toNumber(value: number | string | null | undefined): number {
   const parsed = Number(value ?? 0);
 
@@ -599,7 +660,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       serviceCategoryResult,
       customerValueResult,
       forecastResult,
-      overheadResult,
+      overheadCosts,
       marketInvoices,
       previousMarketInvoices,
       marketCustomers,
@@ -667,16 +728,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
         )
         .order("month", { ascending: true }),
 
-      supabaseServer
-        .from("overhead_per_job_by_month")
-        .select("month, total_overhead, job_count, overhead_per_job")
-        .eq(
-          "month",
-          `${getPhoenixToday().getUTCFullYear()}-${String(
-            getPhoenixToday().getUTCMonth() + 1,
-          ).padStart(2, "0")}`,
-        )
-        .maybeSingle(),
+      fetchOverheadCosts(),
 
       fetchMarketInvoices(startDate, endDate),
       fetchMarketInvoices(previousStartDate, previousEndDate),
@@ -691,7 +743,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       serviceCategoryResult.error,
       customerValueResult.error,
       forecastResult.error,
-      overheadResult.error,
     ].filter(Boolean);
 
     if (queryErrors.length > 0) {
@@ -711,8 +762,15 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
     const customerValue =
       customerValueResult.data as CustomerValueSummary | null;
     const forecastMonths = (forecastResult.data ?? []) as ForecastMonth[];
-    const overheadThisMonth =
-      overheadResult.data as OverheadPerJobMonth | null;
+
+    const totalOverheadForRange = calculateOverheadForRange(
+      overheadCosts,
+      startDate,
+      endDate,
+    );
+
+    const overheadPerJob =
+      jobsCompleted > 0 ? totalOverheadForRange / jobsCompleted : null;
 
     const maxForecastValue = Math.max(
       1,
@@ -1015,8 +1073,9 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                 </h2>
 
                 <p className="mt-1 text-sm text-[#6b705c]">
-                  Current-month recurring and amortized overhead divided across
-                  the current month's job count.{" "}
+                  Overhead for {marketDateLabel}, prorated by day and divided
+                  across {formatNumber(jobsCompleted)} completed job
+                  {jobsCompleted === 1 ? "" : "s"} in that period.{" "}
                   <Link
                     href="/costs"
                     className="font-semibold text-[#9c7a20] hover:underline"
@@ -1026,29 +1085,23 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                 </p>
               </div>
 
-              {overheadThisMonth &&
-              overheadThisMonth.overhead_per_job !== null ? (
+              {overheadPerJob !== null ? (
                 <div className="shrink-0 sm:text-right">
                   <p className="text-3xl font-bold">
-                    {formatCurrency(
-                      toNumber(overheadThisMonth.overhead_per_job),
-                    )}
+                    {formatCurrency(overheadPerJob)}
                     <span className="ml-1 text-base font-normal text-[#6b705c]">
                       / job
                     </span>
                   </p>
 
                   <p className="mt-1 text-sm text-[#6b705c]">
-                    {formatCurrency(
-                      toNumber(overheadThisMonth.total_overhead),
-                    )}{" "}
-                    total ÷{" "}
-                    {formatNumber(toNumber(overheadThisMonth.job_count))} jobs
+                    {formatCurrency(totalOverheadForRange)} total ÷{" "}
+                    {formatNumber(jobsCompleted)} jobs
                   </p>
                 </div>
               ) : (
                 <p className="shrink-0 text-sm text-[#6b705c]">
-                  Not available yet — add costs to get started.
+                  No completed jobs in this period yet.
                 </p>
               )}
             </div>
