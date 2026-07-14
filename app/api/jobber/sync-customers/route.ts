@@ -80,6 +80,19 @@ type CustomerUpsert = {
   last_synced_at: string;
 };
 
+type SyncResult = {
+  customersReceived: number;
+  customersSaved: number;
+  customersWithAddress: number;
+  customersWithCity: number;
+  customersWithPostalCode: number;
+  pagesProcessed: number;
+  throttleRetries: number;
+  warnings: string[];
+};
+
+const SYNC_TYPE = "customers";
+
 const CLIENT_BATCH_SIZE = 25;
 const PAGE_DELAY_MS = 750;
 const THROTTLE_RETRY_DELAY_MS = 3000;
@@ -264,7 +277,10 @@ function isThrottled<T>(
 async function getClientsPage(
   cursor: string | null,
   pageNumber: number
-): Promise<JobberGraphQLResponse<ClientsPage>> {
+): Promise<{
+  response: JobberGraphQLResponse<ClientsPage>;
+  throttleRetries: number;
+}> {
   let retryNumber = 0;
 
   while (retryNumber <= MAX_THROTTLE_RETRIES) {
@@ -278,7 +294,10 @@ async function getClientsPage(
       );
 
     if (!isThrottled(response)) {
-      return response;
+      return {
+        response,
+        throttleRetries: retryNumber,
+      };
     }
 
     retryNumber += 1;
@@ -303,7 +322,181 @@ async function getClientsPage(
   );
 }
 
-async function syncCustomers() {
+async function startSyncRun(): Promise<string> {
+  const startedAt = new Date().toISOString();
+
+  const { data: syncRun, error: syncRunError } =
+    await supabaseServer
+      .from("jobber_sync_runs")
+      .insert({
+        sync_type: SYNC_TYPE,
+        sync_mode: "manual",
+        status: "running",
+        started_at: startedAt,
+      })
+      .select("id")
+      .single();
+
+  if (syncRunError || !syncRun) {
+    throw new Error(
+      `Unable to start sync tracking: ${
+        syncRunError?.message ??
+        "No sync run was created."
+      }`
+    );
+  }
+
+  const { error: statusError } =
+    await supabaseServer
+      .from("jobber_sync_status")
+      .upsert(
+        {
+          sync_type: SYNC_TYPE,
+          status: "running",
+          last_started_at: startedAt,
+          last_error: null,
+          updated_at: startedAt,
+        },
+        {
+          onConflict: "sync_type",
+          ignoreDuplicates: false,
+        }
+      );
+
+  if (statusError) {
+    console.error(
+      "Unable to update customer sync status to running:",
+      statusError
+    );
+  }
+
+  return syncRun.id as string;
+}
+
+async function completeSyncRun(
+  syncRunId: string,
+  result: SyncResult
+): Promise<void> {
+  const completedAt = new Date().toISOString();
+
+  const metadata = {
+    customersWithAddress:
+      result.customersWithAddress,
+    customersWithCity:
+      result.customersWithCity,
+    customersWithPostalCode:
+      result.customersWithPostalCode,
+    warnings: result.warnings,
+  };
+
+  const { error: syncRunError } =
+    await supabaseServer
+      .from("jobber_sync_runs")
+      .update({
+        status: "success",
+        completed_at: completedAt,
+        records_received:
+          result.customersReceived,
+        records_saved:
+          result.customersSaved,
+        pages_processed:
+          result.pagesProcessed,
+        throttle_retries:
+          result.throttleRetries,
+        metadata,
+      })
+      .eq("id", syncRunId);
+
+  if (syncRunError) {
+    console.error(
+      "Unable to mark customer sync run successful:",
+      syncRunError
+    );
+  }
+
+  const { error: statusError } =
+    await supabaseServer
+      .from("jobber_sync_status")
+      .upsert(
+        {
+          sync_type: SYNC_TYPE,
+          status: "healthy",
+          last_completed_at: completedAt,
+          last_success_at: completedAt,
+          records_received:
+            result.customersReceived,
+          records_saved:
+            result.customersSaved,
+          pages_processed:
+            result.pagesProcessed,
+          throttle_retries:
+            result.throttleRetries,
+          last_error: null,
+          updated_at: completedAt,
+        },
+        {
+          onConflict: "sync_type",
+          ignoreDuplicates: false,
+        }
+      );
+
+  if (statusError) {
+    console.error(
+      "Unable to update customer sync status to healthy:",
+      statusError
+    );
+  }
+}
+
+async function failSyncRun(
+  syncRunId: string,
+  errorMessage: string
+): Promise<void> {
+  const failedAt = new Date().toISOString();
+
+  const { error: syncRunError } =
+    await supabaseServer
+      .from("jobber_sync_runs")
+      .update({
+        status: "failed",
+        completed_at: failedAt,
+        error_message: errorMessage,
+      })
+      .eq("id", syncRunId);
+
+  if (syncRunError) {
+    console.error(
+      "Unable to mark customer sync run failed:",
+      syncRunError
+    );
+  }
+
+  const { error: statusError } =
+    await supabaseServer
+      .from("jobber_sync_status")
+      .upsert(
+        {
+          sync_type: SYNC_TYPE,
+          status: "failed",
+          last_failed_at: failedAt,
+          last_error: errorMessage,
+          updated_at: failedAt,
+        },
+        {
+          onConflict: "sync_type",
+          ignoreDuplicates: false,
+        }
+      );
+
+  if (statusError) {
+    console.error(
+      "Unable to update customer sync status to failed:",
+      statusError
+    );
+  }
+}
+
+async function syncCustomers(): Promise<SyncResult> {
   let cursor: string | null = null;
   let hasNextPage = true;
   let pageNumber = 0;
@@ -313,6 +506,7 @@ async function syncCustomers() {
   let customersWithAddress = 0;
   let customersWithCity = 0;
   let customersWithPostalCode = 0;
+  let throttleRetries = 0;
 
   const warnings: string[] = [];
 
@@ -331,10 +525,16 @@ async function syncCustomers() {
       `Syncing Jobber customer page ${pageNumber}...`
     );
 
-    const jobberResponse = await getClientsPage(
+    const pageResult = await getClientsPage(
       cursor,
       pageNumber
     );
+
+    const jobberResponse =
+      pageResult.response;
+
+    throttleRetries +=
+      pageResult.throttleRetries;
 
     if (jobberResponse.errors?.length) {
       const message = jobberResponse.errors
@@ -425,13 +625,54 @@ async function syncCustomers() {
     customersWithCity,
     customersWithPostalCode,
     pagesProcessed: pageNumber,
+    throttleRetries,
     warnings,
   };
 }
 
 export async function GET() {
+  let syncRunId: string | null = null;
+
   try {
+    const {
+      data: currentStatus,
+      error: currentStatusError,
+    } = await supabaseServer
+      .from("jobber_sync_status")
+      .select("status, last_started_at")
+      .eq("sync_type", SYNC_TYPE)
+      .maybeSingle();
+
+    if (currentStatusError) {
+      throw new Error(
+        `Unable to check current customer sync status: ${currentStatusError.message}`
+      );
+    }
+
+    if (currentStatus?.status === "running") {
+      return NextResponse.json(
+        {
+          success: false,
+          alreadyRunning: true,
+          message:
+            "A Jobber customer sync is already running.",
+          lastStartedAt:
+            currentStatus.last_started_at,
+        },
+        {
+          status: 409,
+        }
+      );
+    }
+
+    syncRunId = await startSyncRun();
+
     const syncResult = await syncCustomers();
+
+    await completeSyncRun(
+      syncRunId,
+      syncResult
+    );
 
     return NextResponse.json({
       success: true,
@@ -445,15 +686,26 @@ export async function GET() {
       error
     );
 
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : "An unknown customer sync error occurred.";
+
+    if (syncRunId) {
+      await failSyncRun(
+        syncRunId,
+        errorMessage
+      );
+    }
+
     return NextResponse.json(
       {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "An unknown customer sync error occurred.",
+        error: errorMessage,
       },
-      { status: 500 }
+      {
+        status: 500,
+      }
     );
   }
 }
