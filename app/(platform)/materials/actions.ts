@@ -73,9 +73,11 @@ export async function deleteMaterial(id: string): Promise<void> {
   revalidatePath("/job-costs");
 }
 
-export async function saveJobMaterialUsage(formData: FormData): Promise<void> {
+export async function saveInvoiceMaterialUsage(
+  formData: FormData
+): Promise<void> {
   const rows: {
-    jobber_job_id: string;
+    jobber_invoice_id: string;
     material_id: string;
     quantity_used: number;
   }[] = [];
@@ -87,7 +89,7 @@ export async function saveJobMaterialUsage(formData: FormData): Promise<void> {
       continue;
     }
 
-    const [, jobberJobId, materialId] = match;
+    const [, jobberInvoiceId, materialId] = match;
     const quantity = typeof value === "string" ? Number(value) : NaN;
 
     if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -95,7 +97,7 @@ export async function saveJobMaterialUsage(formData: FormData): Promise<void> {
     }
 
     rows.push({
-      jobber_job_id: jobberJobId,
+      jobber_invoice_id: jobberInvoiceId,
       material_id: materialId,
       quantity_used: quantity,
     });
@@ -107,11 +109,13 @@ export async function saveJobMaterialUsage(formData: FormData): Promise<void> {
   }
 
   const { error } = await supabaseServer
-    .from("job_material_usage")
-    .upsert(rows, { onConflict: "jobber_job_id,material_id" });
+    .from("invoice_material_usage")
+    .upsert(rows, { onConflict: "jobber_invoice_id,material_id" });
 
   if (error) {
-    throw new Error(`Failed to save job material usage: ${error.message}`);
+    throw new Error(
+      `Failed to save invoice material usage: ${error.message}`
+    );
   }
 
   revalidatePath("/job-costs");

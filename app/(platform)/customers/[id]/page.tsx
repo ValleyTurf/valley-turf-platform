@@ -493,6 +493,15 @@ export default async function CustomerDetailPage({
               </a>
             )}
 
+            {client.name && (
+              <Link
+                href={`/job-costs?q=${encodeURIComponent(client.name)}`}
+                className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold transition hover:bg-white"
+              >
+                Log Material Usage
+              </Link>
+            )}
+
             <Link
               href="/customers"
               className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
