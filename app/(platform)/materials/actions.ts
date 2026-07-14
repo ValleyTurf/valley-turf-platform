@@ -76,7 +76,7 @@ export async function deleteMaterial(id: string): Promise<void> {
 export async function saveInvoiceMaterialUsage(
   formData: FormData
 ): Promise<void> {
-  const rows: {
+  const parsedRows: {
     jobber_invoice_id: string;
     material_id: string;
     quantity_used: number;
@@ -96,17 +96,47 @@ export async function saveInvoiceMaterialUsage(
       continue;
     }
 
-    rows.push({
+    parsedRows.push({
       jobber_invoice_id: jobberInvoiceId,
       material_id: materialId,
       quantity_used: quantity,
     });
   }
 
-  if (rows.length === 0) {
+  if (parsedRows.length === 0) {
     revalidatePath("/job-costs");
     return;
   }
+
+  // Snapshot each material's current rate so historical entries keep the
+  // price that was actually in effect when the usage was logged, even if
+  // the rate (e.g. fuel price) changes later.
+  const materialIds = Array.from(
+    new Set(parsedRows.map((row) => row.material_id))
+  );
+
+  const { data: materialsData, error: materialsError } = await supabaseServer
+    .from("materials")
+    .select("id, unit_cost")
+    .in("id", materialIds);
+
+  if (materialsError) {
+    throw new Error(
+      `Failed to load material rates: ${materialsError.message}`
+    );
+  }
+
+  const unitCostMap = new Map<string, number>(
+    (materialsData ?? []).map((material) => [
+      material.id as string,
+      Number(material.unit_cost ?? 0),
+    ])
+  );
+
+  const rows = parsedRows.map((row) => ({
+    ...row,
+    unit_cost_at_time: unitCostMap.get(row.material_id) ?? 0,
+  }));
 
   const { error } = await supabaseServer
     .from("invoice_material_usage")
