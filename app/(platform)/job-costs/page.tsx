@@ -301,7 +301,7 @@ export default async function JobCostsPage({
                             </span>
                           </th>
                         ))}
-                        <th className="py-2 pr-3">Material Cost</th>
+                        <th className="py-2 pr-3">Direct Cost</th>
                       </tr>
                     </thead>
 

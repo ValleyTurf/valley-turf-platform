@@ -109,6 +109,20 @@ type CustomerFinancials = {
   latest_invoice_date: string | null;
 };
 
+type CustomerProfitSummary = {
+  total_revenue: number | string | null;
+  total_direct_cost: number | string | null;
+  total_overhead_allocated: number | string | null;
+  total_estimated_profit: number | string | null;
+};
+
+type InvoiceCostBreakdown = {
+  jobber_invoice_id: string;
+  direct_cost: number | string;
+  overhead_allocated: number | string;
+  estimated_profit: number | string;
+};
+
 async function getJobberClient(id: string): Promise<{
   client: JobberClient | null;
   error: string | null;
@@ -239,6 +253,43 @@ async function getCustomerFinancials(
   return data as CustomerFinancials | null;
 }
 
+async function getCustomerProfitSummary(
+  jobberClientId: string
+): Promise<CustomerProfitSummary | null> {
+  const { data, error } = await supabaseServer
+    .from("customer_profit_summary")
+    .select(
+      "total_revenue, total_direct_cost, total_overhead_allocated, total_estimated_profit"
+    )
+    .eq("jobber_client_id", jobberClientId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Customer profit summary query failed:", error.message);
+    return null;
+  }
+
+  return data as CustomerProfitSummary | null;
+}
+
+async function getInvoiceCostBreakdowns(
+  jobberClientId: string
+): Promise<Map<string, InvoiceCostBreakdown>> {
+  const { data, error } = await supabaseServer
+    .from("invoice_cost_breakdown")
+    .select("jobber_invoice_id, direct_cost, overhead_allocated, estimated_profit")
+    .eq("jobber_client_id", jobberClientId);
+
+  if (error) {
+    console.error("Invoice cost breakdown query failed:", error.message);
+    return new Map();
+  }
+
+  const rows = (data ?? []) as InvoiceCostBreakdown[];
+
+  return new Map(rows.map((row) => [row.jobber_invoice_id, row]));
+}
+
 type CustomerProfile = {
   turf_size_sqft: number | string | null;
   gate_code: string | null;
@@ -311,6 +362,17 @@ function formatCurrency(
     style: "currency",
     currency: "USD",
     maximumFractionDigits: 0,
+  }).format(toNumber(value));
+}
+
+function formatCurrencyPrecise(
+  value: number | string | null | undefined
+): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(toNumber(value));
 }
 
@@ -403,11 +465,14 @@ export default async function CustomerDetailPage({
   const { id } = await params;
   const decodedId = decodeURIComponent(id);
 
-  const [{ client, error }, financials, profile] = await Promise.all([
-    getJobberClient(decodedId),
-    getCustomerFinancials(decodedId),
-    getCustomerProfile(decodedId),
-  ]);
+  const [{ client, error }, financials, profile, profitSummary, invoiceCosts] =
+    await Promise.all([
+      getJobberClient(decodedId),
+      getCustomerFinancials(decodedId),
+      getCustomerProfile(decodedId),
+      getCustomerProfitSummary(decodedId),
+      getInvoiceCostBreakdowns(decodedId),
+    ]);
 
   if (!client) {
     return (
@@ -456,6 +521,9 @@ export default async function CustomerDetailPage({
   const invoices = client.invoices?.nodes ?? [];
 
   const lifetimeCollected = toNumber(financials?.lifetime_collected);
+  const estimatedProfit = profitSummary
+    ? toNumber(profitSummary.total_estimated_profit)
+    : null;
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
@@ -567,6 +635,24 @@ export default async function CustomerDetailPage({
                   <p className="mt-0.5 text-2xl font-bold">
                     {formatCurrency(lifetimeCollected)}
                   </p>
+
+                  {estimatedProfit !== null && (
+                    <>
+                      <p className="mt-3 text-xs font-bold text-[#9c7a20]">
+                        Estimated Profit
+                      </p>
+
+                      <p
+                        className={`mt-0.5 text-lg font-bold ${
+                          estimatedProfit >= 0
+                            ? "text-green-700"
+                            : "text-red-600"
+                        }`}
+                      >
+                        {formatCurrency(estimatedProfit)}
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -933,6 +1019,11 @@ export default async function CustomerDetailPage({
               <div className="mt-3 space-y-2">
                 {invoices.length > 0 ? (
                   invoices.map((invoice) => {
+                    const cost = invoiceCosts.get(invoice.id);
+                    const profit = cost
+                      ? toNumber(cost.estimated_profit)
+                      : null;
+
                     const content = (
                       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                         <div className="min-w-0">
@@ -944,20 +1035,43 @@ export default async function CustomerDetailPage({
                           <p className="text-xs text-[#6b705c]">
                             Issued {formatDate(invoice.issuedDate)}
                           </p>
+
+                          {cost && (
+                            <p className="mt-1 text-xs text-[#6b705c]">
+                              {formatCurrencyPrecise(cost.direct_cost)} direct
+                              {" + "}
+                              {formatCurrencyPrecise(cost.overhead_allocated)}{" "}
+                              overhead
+                            </p>
+                          )}
                         </div>
 
-                        <div className="flex shrink-0 items-center gap-2">
-                          <span
-                            className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
-                              invoice.invoiceStatus
-                            )}`}
-                          >
-                            {formatStatus(invoice.invoiceStatus)}
-                          </span>
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
+                                invoice.invoiceStatus
+                              )}`}
+                            >
+                              {formatStatus(invoice.invoiceStatus)}
+                            </span>
 
-                          <p className="text-sm font-bold">
-                            {formatCurrency(invoice.total)}
-                          </p>
+                            <p className="text-sm font-bold">
+                              {formatCurrency(invoice.total)}
+                            </p>
+                          </div>
+
+                          {profit !== null && (
+                            <p
+                              className={`text-xs font-bold ${
+                                profit >= 0
+                                  ? "text-green-700"
+                                  : "text-red-600"
+                              }`}
+                            >
+                              {formatCurrencyPrecise(profit)} profit
+                            </p>
+                          )}
                         </div>
                       </div>
                     );

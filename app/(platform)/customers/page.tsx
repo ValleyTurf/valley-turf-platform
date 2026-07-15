@@ -34,6 +34,11 @@ type RecurringCustomer = {
   recurring_categories: string[] | null;
 };
 
+type ProfitSummary = {
+  jobber_client_id: string;
+  total_estimated_profit: number | string | null;
+};
+
 type RecurringFilter = "all" | "recurring" | "non-recurring" | string;
 
 const BASE_FILTER_OPTIONS: { key: RecurringFilter; label: string }[] = [
@@ -218,9 +223,14 @@ export default async function CustomersPage({
   const from = (currentPage - 1) * PAGE_SIZE;
   const to = from + PAGE_SIZE - 1;
 
-  const recurringResult = await supabaseServer
-    .from("recurring_customers")
-    .select("jobber_client_id, recurring_categories");
+  const [recurringResult, profitResult] = await Promise.all([
+    supabaseServer
+      .from("recurring_customers")
+      .select("jobber_client_id, recurring_categories"),
+    supabaseServer
+      .from("customer_profit_summary")
+      .select("jobber_client_id, total_estimated_profit"),
+  ]);
 
   const recurringCustomers = (recurringResult.data ??
     []) as RecurringCustomer[];
@@ -233,6 +243,13 @@ export default async function CustomersPage({
   );
 
   const recurringIds = recurringCustomers.map((row) => row.jobber_client_id);
+
+  const profitMap = new Map<string, number>(
+    ((profitResult.data ?? []) as ProfitSummary[]).map((row) => [
+      row.jobber_client_id,
+      Number(row.total_estimated_profit ?? 0),
+    ])
+  );
 
   let query = supabaseServer
     .from("customers")
@@ -534,6 +551,10 @@ export default async function CustomersPage({
                   recurringCategories && recurringCategories.length > 0
                 );
 
+                const estimatedProfit = profitMap.get(
+                  customer.jobber_client_id
+                );
+
                 return (
                   <Link
                     key={customer.id}
@@ -584,11 +605,32 @@ export default async function CustomersPage({
                       )}
                     </div>
 
-                    {isRecurring && (
-                      <div className="mt-3 border-t border-[#d7e3d9] pt-3">
-                        <span className="w-fit rounded-full bg-[#174734] px-2 py-1 text-[10px] font-bold text-white">
-                          {formatCategoryBadge(recurringCategories ?? [])}
-                        </span>
+                    {(isRecurring || estimatedProfit !== undefined) && (
+                      <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#d7e3d9] pt-3">
+                        {isRecurring ? (
+                          <span className="w-fit rounded-full bg-[#174734] px-2 py-1 text-[10px] font-bold text-white">
+                            {formatCategoryBadge(recurringCategories ?? [])}
+                          </span>
+                        ) : (
+                          <span />
+                        )}
+
+                        {estimatedProfit !== undefined && (
+                          <span
+                            className={`text-xs font-bold ${
+                              estimatedProfit >= 0
+                                ? "text-green-700"
+                                : "text-red-600"
+                            }`}
+                          >
+                            {new Intl.NumberFormat("en-US", {
+                              style: "currency",
+                              currency: "USD",
+                              maximumFractionDigits: 0,
+                            }).format(estimatedProfit)}{" "}
+                            profit
+                          </span>
+                        )}
                       </div>
                     )}
                   </Link>
