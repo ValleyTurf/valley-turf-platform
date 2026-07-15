@@ -45,6 +45,21 @@ const navigation = [
     icon: "💰",
   },
   {
+    name: "Job Costing",
+    href: "/job-costs",
+    icon: "🧾",
+  },
+  {
+    name: "Materials",
+    href: "/materials",
+    icon: "🧪",
+  },
+  {
+    name: "Overhead Costs",
+    href: "/costs",
+    icon: "💵",
+  },
+  {
     name: "Settings",
     href: "/settings",
     icon: "⚙️",
