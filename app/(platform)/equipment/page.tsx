@@ -10,9 +10,18 @@ type EquipmentSummary = {
   name: string;
   total_cost: number | string;
   in_service_date: string;
+  retired_date: string | null;
   uses_logged: number | string;
   next_use_cost: number | string;
 };
+
+function isRetired(retiredDate: string | null): boolean {
+  if (!retiredDate) {
+    return false;
+  }
+
+  return new Date(`${retiredDate}T00:00:00`) <= new Date();
+}
 
 function toNumber(value: number | string | null | undefined): number {
   const parsed = Number(value ?? 0);
@@ -50,7 +59,7 @@ export default async function EquipmentPage() {
   const { data, error } = await supabaseServer
     .from("equipment_usage_summary")
     .select(
-      "equipment_id, name, total_cost, in_service_date, uses_logged, next_use_cost"
+      "equipment_id, name, total_cost, in_service_date, retired_date, uses_logged, next_use_cost"
     )
     .order("name", { ascending: true });
 
@@ -103,7 +112,7 @@ export default async function EquipmentPage() {
           <h2 className="text-lg font-bold">Add Equipment</h2>
 
           <form action={addEquipment} className="mt-4 space-y-4">
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div>
                 <label
                   htmlFor="name"
@@ -151,6 +160,24 @@ export default async function EquipmentPage() {
                   name="in_service_date"
                   type="date"
                   required
+                  className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="retired_date"
+                  className="text-xs font-bold text-[#9c7a20]"
+                >
+                  Retirement Date{" "}
+                  <span className="font-normal text-[#6b705c]">
+                    (optional)
+                  </span>
+                </label>
+                <input
+                  id="retired_date"
+                  name="retired_date"
+                  type="date"
                   className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
                 />
               </div>
@@ -202,11 +229,20 @@ export default async function EquipmentPage() {
 }
 
 function EquipmentRow({ item }: { item: EquipmentSummary }) {
+  const retired = isRetired(item.retired_date);
+
   return (
     <details className="rounded-xl border border-[#e7e2d5] px-3 py-2">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-bold">{item.name}</p>
+          <div className="flex items-center gap-2">
+            <p className="truncate text-sm font-bold">{item.name}</p>
+            {retired && (
+              <span className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">
+                Retired {formatDate(item.retired_date)}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-[#6b705c]">
             {formatCurrency(item.total_cost)} · in service{" "}
             {formatDate(item.in_service_date)} ·{" "}
@@ -216,10 +252,14 @@ function EquipmentRow({ item }: { item: EquipmentSummary }) {
         </div>
 
         <div className="shrink-0 text-right">
-          <p className="text-sm font-bold">
-            {formatCurrency(item.next_use_cost)}
-          </p>
-          <p className="text-xs text-[#6b705c]">next use</p>
+          {!retired && (
+            <>
+              <p className="text-sm font-bold">
+                {formatCurrency(item.next_use_cost)}
+              </p>
+              <p className="text-xs text-[#6b705c]">next use</p>
+            </>
+          )}
         </div>
       </summary>
 
@@ -228,7 +268,7 @@ function EquipmentRow({ item }: { item: EquipmentSummary }) {
           action={updateEquipment.bind(null, item.equipment_id)}
           className="space-y-3"
         >
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <label className="text-xs font-bold text-[#9c7a20]">
                 Name
@@ -266,6 +306,21 @@ function EquipmentRow({ item }: { item: EquipmentSummary }) {
                 type="date"
                 defaultValue={item.in_service_date}
                 required
+                className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-[#9c7a20]">
+                Retirement Date{" "}
+                <span className="font-normal text-[#6b705c]">
+                  (optional)
+                </span>
+              </label>
+              <input
+                name="retired_date"
+                type="date"
+                defaultValue={item.retired_date ?? ""}
                 className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
               />
             </div>

@@ -161,9 +161,12 @@ async function getMaterialsList(): Promise<MaterialOption[]> {
 }
 
 async function getEquipmentList(): Promise<EquipmentOption[]> {
+  const today = new Date().toISOString().slice(0, 10);
+
   const { data, error } = await supabaseServer
     .from("equipment")
     .select("id, name")
+    .or(`retired_date.is.null,retired_date.gt.${today}`)
     .order("name", { ascending: true });
 
   if (error) {

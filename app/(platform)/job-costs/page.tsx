@@ -154,14 +154,18 @@ export default async function JobCostsPage({
   const from = (currentPage - 1) * PAGE_SIZE;
   const to = from + PAGE_SIZE - 1;
 
+  const today = new Date().toISOString().slice(0, 10);
+
   const [materialsResult, equipmentResult] = await Promise.all([
     supabaseServer
       .from("materials")
       .select("id, name, unit_label, unit_cost")
       .order("name", { ascending: true }),
-    supabaseServer.from("equipment").select("id, name").order("name", {
-      ascending: true,
-    }),
+    supabaseServer
+      .from("equipment")
+      .select("id, name")
+      .or(`retired_date.is.null,retired_date.gt.${today}`)
+      .order("name", { ascending: true }),
   ]);
 
   const materials = (materialsResult.data ?? []) as Material[];

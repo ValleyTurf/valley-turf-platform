@@ -112,6 +112,7 @@ export async function addEquipment(formData: FormData): Promise<void> {
     name: cleanText(formData.get("name")),
     total_cost: cleanNumber(formData.get("total_cost")),
     in_service_date: cleanDate(formData.get("in_service_date")),
+    retired_date: cleanDate(formData.get("retired_date")),
     notes: cleanText(formData.get("notes")),
   });
 
@@ -133,6 +134,7 @@ export async function updateEquipment(
       name: cleanText(formData.get("name")),
       total_cost: cleanNumber(formData.get("total_cost")),
       in_service_date: cleanDate(formData.get("in_service_date")),
+      retired_date: cleanDate(formData.get("retired_date")),
       notes: cleanText(formData.get("notes")),
       updated_at: new Date().toISOString(),
     })
