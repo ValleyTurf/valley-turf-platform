@@ -1,0 +1,28 @@
+{
+  "crons": [
+    {
+      "path": "/api/jobber/process-webhooks",
+      "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/jobber/process-webhooks",
+      "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/jobber/sync-customers",
+      "schedule": "5 13 * * *"
+    },
+    {
+      "path": "/api/jobber/sync-invoices",
+      "schedule": "15 13 * * *"
+    },
+    {
+      "path": "/api/jobber/sync-jobs",
+      "schedule": "25 13 * * *"
+    },
+    {
+      "path": "/api/jobber/sync-payments",
+      "schedule": "35 13 * * *"
+    }
+  ]
+}
