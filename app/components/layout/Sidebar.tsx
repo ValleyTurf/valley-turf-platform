@@ -45,9 +45,14 @@ const navigation = [
     icon: "💰",
   },
   {
-    name: "Job Costing",
+    name: "Log Job Costs",
     href: "/job-costs",
     icon: "🧾",
+  },
+  {
+    name: "Job Costing Analytics",
+    href: "/job-costing-analytics",
+    icon: "📈",
   },
   {
     name: "Materials",
@@ -58,6 +63,11 @@ const navigation = [
     name: "Overhead Costs",
     href: "/costs",
     icon: "💵",
+  },
+  {
+    name: "System Health",
+    href: "/health",
+    icon: "🩺",
   },
   {
     name: "Settings",
