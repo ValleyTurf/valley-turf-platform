@@ -60,6 +60,11 @@ const navigation = [
     icon: "💵",
   },
   {
+    name: "System Health",
+    href: "/health",
+    icon: "🩺",
+  },
+  {
     name: "Settings",
     href: "/settings",
     icon: "⚙️",
