@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
 
 export const dynamic = "force-dynamic";
@@ -13,11 +14,224 @@ type WebhookEvent = {
   payload: Record<string, unknown>;
 };
 
+type JobberEmail = {
+  address: string;
+};
+
+type JobberPhone = {
+  number: string;
+};
+
+type JobberAddress = {
+  city: string | null;
+  country: string | null;
+  postalCode: string | null;
+  province: string | null;
+  street: string | null;
+  street1: string | null;
+  street2: string | null;
+};
+
+type JobberProperty = {
+  address: JobberAddress | null;
+};
+
+type JobberClient = {
+  id: string;
+  name: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  companyName: string | null;
+  balance: number | string | null;
+  emails: JobberEmail[];
+  phones: JobberPhone[];
+  billingAddress: JobberAddress | null;
+  clientProperties: {
+    nodes: JobberProperty[];
+  };
+};
+
+type ClientQueryResponse = {
+  client: JobberClient | null;
+};
+
+type JobberGraphQLResponse<T> = {
+  data: T | null;
+  errors: Array<{
+    message: string;
+    extensions?: {
+      code?: string;
+    };
+  }> | null;
+};
+
+type CustomerUpsert = {
+  jobber_client_id: string;
+  first_name: string | null;
+  last_name: string | null;
+  full_name: string | null;
+  company_name: string | null;
+  email: string | null;
+  phone: string | null;
+  address_line_1: string | null;
+  address_line_2: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+  country: string | null;
+  current_balance: number;
+  last_synced_at: string;
+};
+
 const EVENT_BATCH_SIZE = 25;
 const MAX_ATTEMPTS = 5;
 
+const CLIENT_QUERY = `
+  query GetClient($id: EncodedId!) {
+    client(id: $id) {
+      id
+      name
+      firstName
+      lastName
+      companyName
+      balance
+
+      emails {
+        address
+      }
+
+      phones {
+        number
+      }
+
+      billingAddress {
+        city
+        country
+        postalCode
+        province
+        street
+        street1
+        street2
+      }
+
+      clientProperties(first: 1) {
+        nodes {
+          address {
+            city
+            country
+            postalCode
+            province
+            street
+            street1
+            street2
+          }
+        }
+      }
+    }
+  }
+`;
+
 function normalizeTopic(value: string): string {
   return value.trim().toUpperCase();
+}
+
+function cleanText(
+  value: string | null | undefined
+): string | null {
+  const cleaned = value?.trim();
+
+  return cleaned ? cleaned : null;
+}
+
+function cleanPhone(
+  value: string | null | undefined
+): string | null {
+  const cleaned = value?.trim();
+
+  return cleaned ? cleaned : null;
+}
+
+function hasUsableAddress(
+  address: JobberAddress | null | undefined
+): address is JobberAddress {
+  if (!address) {
+    return false;
+  }
+
+  return Boolean(
+    cleanText(address.street1) ||
+      cleanText(address.street) ||
+      cleanText(address.city) ||
+      cleanText(address.province) ||
+      cleanText(address.postalCode)
+  );
+}
+
+function getCustomerAddress(
+  client: JobberClient
+): JobberAddress | null {
+  const properties =
+    client.clientProperties?.nodes ?? [];
+
+  const servicePropertyAddress = properties
+    .map((property) => property.address)
+    .find(hasUsableAddress);
+
+  if (servicePropertyAddress) {
+    return servicePropertyAddress;
+  }
+
+  if (hasUsableAddress(client.billingAddress)) {
+    return client.billingAddress;
+  }
+
+  return null;
+}
+
+function formatCustomer(
+  client: JobberClient
+): CustomerUpsert {
+  const firstName = cleanText(client.firstName);
+  const lastName = cleanText(client.lastName);
+
+  const calculatedName = [firstName, lastName]
+    .filter(Boolean)
+    .join(" ");
+
+  const fullName =
+    cleanText(client.name) ||
+    cleanText(calculatedName) ||
+    cleanText(client.companyName) ||
+    "Unnamed Customer";
+
+  const balance = Number(client.balance ?? 0);
+
+  const address = getCustomerAddress(client);
+
+  const addressLine1 =
+    cleanText(address?.street1) ||
+    cleanText(address?.street) ||
+    null;
+
+  return {
+    jobber_client_id: client.id,
+    first_name: firstName,
+    last_name: lastName,
+    full_name: fullName,
+    company_name: cleanText(client.companyName),
+    email: cleanText(client.emails?.[0]?.address),
+    phone: cleanPhone(client.phones?.[0]?.number),
+    address_line_1: addressLine1,
+    address_line_2: cleanText(address?.street2),
+    city: cleanText(address?.city),
+    state: cleanText(address?.province),
+    postal_code: cleanText(address?.postalCode),
+    country: cleanText(address?.country),
+    current_balance: Number.isNaN(balance)
+      ? 0
+      : balance,
+    last_synced_at: new Date().toISOString(),
+  };
 }
 
 function isAuthorized(
@@ -41,12 +255,97 @@ function isAuthorized(
     return false;
   }
 
-  const expectedAuthorization =
-    `Bearer ${expectedSecret}`;
-
   return (
-    authorization === expectedAuthorization
+    authorization ===
+    `Bearer ${expectedSecret}`
   );
+}
+
+async function syncSingleCustomer(
+  jobberClientId: string
+): Promise<void> {
+  console.log(
+    `Incrementally syncing Jobber customer ${jobberClientId}...`
+  );
+
+  const response =
+    await jobberGraphQL<ClientQueryResponse>(
+      CLIENT_QUERY,
+      {
+        id: jobberClientId,
+      }
+    );
+
+  if (response.errors?.length) {
+    const message = response.errors
+      .map((error) => error.message)
+      .filter(Boolean)
+      .join(", ");
+
+    throw new Error(
+      message ||
+        `Unable to load Jobber customer ${jobberClientId}.`
+    );
+  }
+
+  const client = response.data?.client;
+
+  if (!client) {
+    throw new Error(
+      `Jobber customer ${jobberClientId} was not found.`
+    );
+  }
+
+  const customerRow =
+    formatCustomer(client);
+
+  const { error: upsertError } =
+    await supabaseServer
+      .from("customers")
+      .upsert(customerRow, {
+        onConflict: "jobber_client_id",
+        ignoreDuplicates: false,
+      });
+
+  if (upsertError) {
+    throw new Error(
+      `Unable to save Jobber customer ${jobberClientId}: ${upsertError.message}`
+    );
+  }
+
+  console.log(
+    `Incremental customer sync completed for ${jobberClientId}.`
+  );
+}
+
+async function handleDestroyedCustomer(
+  jobberClientId: string
+): Promise<void> {
+  console.log(
+    `Jobber reported deleted customer ${jobberClientId}. Historical customer data was retained.`
+  );
+
+  /*
+   * We intentionally do not delete the customer row here.
+   *
+   * Your OS may contain:
+   * - historical jobs
+   * - invoices
+   * - revenue
+   * - reactivation history
+   *
+   * Deleting the customer could damage historical reporting.
+   *
+   * Later, we can add a dedicated field such as:
+   *
+   * jobber_deleted_at
+   *
+   * or:
+   *
+   * is_active_in_jobber
+   *
+   * if you want deleted Jobber clients visibly marked.
+   */
 }
 
 async function processWebhookEvent(
@@ -60,23 +359,41 @@ async function processWebhookEvent(
 
   switch (topic) {
     case "CLIENT_CREATE":
-    case "CLIENT_UPDATE":
-    case "CLIENT_DESTROY":
-      console.log(
-        `Customer webhook queued for item ${
-          event.jobber_item_id ?? "unknown"
-        }`
+    case "CLIENT_UPDATE": {
+      if (!event.jobber_item_id) {
+        throw new Error(
+          `${topic} webhook did not contain a Jobber client ID.`
+        );
+      }
+
+      await syncSingleCustomer(
+        event.jobber_item_id
       );
 
       return;
+    }
+
+    case "CLIENT_DESTROY": {
+      if (!event.jobber_item_id) {
+        throw new Error(
+          "CLIENT_DESTROY webhook did not contain a Jobber client ID."
+        );
+      }
+
+      await handleDestroyedCustomer(
+        event.jobber_item_id
+      );
+
+      return;
+    }
 
     case "JOB_CREATE":
     case "JOB_UPDATE":
     case "JOB_DESTROY":
       console.log(
-        `Job webhook queued for item ${
+        `Job webhook received for item ${
           event.jobber_item_id ?? "unknown"
-        }`
+        }. Incremental job sync is coming next.`
       );
 
       return;
@@ -85,9 +402,9 @@ async function processWebhookEvent(
     case "INVOICE_UPDATE":
     case "INVOICE_DESTROY":
       console.log(
-        `Invoice webhook queued for item ${
+        `Invoice webhook received for item ${
           event.jobber_item_id ?? "unknown"
-        }`
+        }. Incremental invoice sync is coming next.`
       );
 
       return;
