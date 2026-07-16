@@ -23,6 +23,38 @@ function cleanNumber(value: FormDataEntryValue | null): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function cleanDate(value: FormDataEntryValue | null): string | null {
+  if (typeof value !== "string" || value.trim() === "") {
+    return null;
+  }
+
+  return value;
+}
+
+function parseQuantity(value: FormDataEntryValue | null): number {
+  if (typeof value !== "string") {
+    return NaN;
+  }
+
+  const trimmed = value.trim();
+
+  if (trimmed.includes(":")) {
+    const parts = trimmed.split(":");
+    const hours = Number(parts[0]);
+    const minutes = Number(parts[1]);
+
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+      return NaN;
+    }
+
+    return hours + minutes / 60;
+  }
+
+  return Number(trimmed);
+}
+
+// ---------- Materials ----------
+
 export async function addMaterial(formData: FormData): Promise<void> {
   const { error } = await supabaseServer.from("materials").insert({
     name: cleanText(formData.get("name")),
@@ -73,10 +105,62 @@ export async function deleteMaterial(id: string): Promise<void> {
   revalidatePath("/job-costs");
 }
 
-export async function saveInvoiceMaterialUsage(
+// ---------- Equipment ----------
+
+export async function addEquipment(formData: FormData): Promise<void> {
+  const { error } = await supabaseServer.from("equipment").insert({
+    name: cleanText(formData.get("name")),
+    total_cost: cleanNumber(formData.get("total_cost")),
+    in_service_date: cleanDate(formData.get("in_service_date")),
+    notes: cleanText(formData.get("notes")),
+  });
+
+  if (error) {
+    throw new Error(`Failed to add equipment: ${error.message}`);
+  }
+
+  revalidatePath("/equipment");
+  revalidatePath("/job-costs");
+}
+
+export async function updateEquipment(
+  id: string,
   formData: FormData
 ): Promise<void> {
-  const parsedRows: {
+  const { error } = await supabaseServer
+    .from("equipment")
+    .update({
+      name: cleanText(formData.get("name")),
+      total_cost: cleanNumber(formData.get("total_cost")),
+      in_service_date: cleanDate(formData.get("in_service_date")),
+      notes: cleanText(formData.get("notes")),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(`Failed to update equipment: ${error.message}`);
+  }
+
+  revalidatePath("/equipment");
+  revalidatePath("/job-costs");
+}
+
+export async function deleteEquipment(id: string): Promise<void> {
+  const { error } = await supabaseServer.from("equipment").delete().eq("id", id);
+
+  if (error) {
+    throw new Error(`Failed to delete equipment: ${error.message}`);
+  }
+
+  revalidatePath("/equipment");
+  revalidatePath("/job-costs");
+}
+
+// ---------- Combined job cost entry (materials + labor + fuel + equipment) ----------
+
+export async function saveJobCosts(formData: FormData): Promise<void> {
+  const parsedUsageRows: {
     jobber_invoice_id: string;
     material_id: string;
     quantity_used: number;
@@ -89,63 +173,117 @@ export async function saveInvoiceMaterialUsage(
       continue;
     }
 
-    const [, jobberInvoiceId, materialId] = match;
-    const quantity = typeof value === "string" ? Number(value) : NaN;
+    const jobberInvoiceId = match[1];
+    const materialId = match[2];
+    const quantity = parseQuantity(value);
 
     if (!Number.isFinite(quantity) || quantity <= 0) {
       continue;
     }
 
-    parsedRows.push({
+    parsedUsageRows.push({
       jobber_invoice_id: jobberInvoiceId,
       material_id: materialId,
       quantity_used: quantity,
     });
   }
 
-  if (parsedRows.length === 0) {
-    revalidatePath("/job-costs");
-    return;
+  if (parsedUsageRows.length > 0) {
+    const materialIds = Array.from(
+      new Set(parsedUsageRows.map((row) => row.material_id))
+    );
+
+    const materialsResult = await supabaseServer
+      .from("materials")
+      .select("id, unit_cost")
+      .in("id", materialIds);
+
+    if (materialsResult.error) {
+      throw new Error(
+        `Failed to load material rates: ${materialsResult.error.message}`
+      );
+    }
+
+    const unitCostMap = new Map<string, number>(
+      (materialsResult.data ?? []).map((material) => [
+        material.id as string,
+        Number(material.unit_cost ?? 0),
+      ])
+    );
+
+    const usageRows = parsedUsageRows.map((row) => ({
+      jobber_invoice_id: row.jobber_invoice_id,
+      material_id: row.material_id,
+      quantity_used: row.quantity_used,
+      unit_cost_at_time: unitCostMap.get(row.material_id) ?? 0,
+    }));
+
+    const usageResult = await supabaseServer
+      .from("invoice_material_usage")
+      .upsert(usageRows, { onConflict: "jobber_invoice_id,material_id" });
+
+    if (usageResult.error) {
+      throw new Error(
+        `Failed to save invoice material usage: ${usageResult.error.message}`
+      );
+    }
   }
 
-  // Snapshot each material's current rate so historical entries keep the
-  // price that was actually in effect when the usage was logged, even if
-  // the rate (e.g. fuel price) changes later.
-  const materialIds = Array.from(
-    new Set(parsedRows.map((row) => row.material_id))
-  );
+  const pageInvoiceIdsRaw = formData.get("page_invoice_ids");
+  const pageInvoiceIds =
+    typeof pageInvoiceIdsRaw === "string" && pageInvoiceIdsRaw
+      ? pageInvoiceIdsRaw.split(",").filter(Boolean)
+      : [];
 
-  const { data: materialsData, error: materialsError } = await supabaseServer
-    .from("materials")
-    .select("id, unit_cost")
-    .in("id", materialIds);
+  const pageEquipmentIdsRaw = formData.get("page_equipment_ids");
+  const pageEquipmentIds =
+    typeof pageEquipmentIdsRaw === "string" && pageEquipmentIdsRaw
+      ? pageEquipmentIdsRaw.split(",").filter(Boolean)
+      : [];
 
-  if (materialsError) {
-    throw new Error(
-      `Failed to load material rates: ${materialsError.message}`
-    );
-  }
+  if (pageInvoiceIds.length > 0 && pageEquipmentIds.length > 0) {
+    const checkedRows: { jobber_invoice_id: string; equipment_id: string }[] = [];
 
-  const unitCostMap = new Map<string, number>(
-    (materialsData ?? []).map((material) => [
-      material.id as string,
-      Number(material.unit_cost ?? 0),
-    ])
-  );
+    for (const [key, value] of formData.entries()) {
+      const match = key.match(/^equipment\[(.+?)\]\[(.+?)\]$/);
 
-  const rows = parsedRows.map((row) => ({
-    ...row,
-    unit_cost_at_time: unitCostMap.get(row.material_id) ?? 0,
-  }));
+      if (!match) {
+        continue;
+      }
 
-  const { error } = await supabaseServer
-    .from("invoice_material_usage")
-    .upsert(rows, { onConflict: "jobber_invoice_id,material_id" });
+      if (value !== "1") {
+        continue;
+      }
 
-  if (error) {
-    throw new Error(
-      `Failed to save invoice material usage: ${error.message}`
-    );
+      checkedRows.push({
+        jobber_invoice_id: match[1],
+        equipment_id: match[2],
+      });
+    }
+
+    const deleteResult = await supabaseServer
+      .from("equipment_usage")
+      .delete()
+      .in("jobber_invoice_id", pageInvoiceIds)
+      .in("equipment_id", pageEquipmentIds);
+
+    if (deleteResult.error) {
+      throw new Error(
+        `Failed to update equipment usage: ${deleteResult.error.message}`
+      );
+    }
+
+    if (checkedRows.length > 0) {
+      const insertResult = await supabaseServer
+        .from("equipment_usage")
+        .insert(checkedRows);
+
+      if (insertResult.error) {
+        throw new Error(
+          `Failed to save equipment usage: ${insertResult.error.message}`
+        );
+      }
+    }
   }
 
   revalidatePath("/job-costs");

@@ -60,6 +60,11 @@ const navigation = [
     icon: "🧪",
   },
   {
+    name: "Equipment",
+    href: "/equipment",
+    icon: "🧹",
+  },
+  {
     name: "Overhead Costs",
     href: "/costs",
     icon: "💵",
