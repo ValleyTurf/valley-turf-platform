@@ -5,6 +5,7 @@ import Link from "next/link";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
 import { updateCustomerProfile } from "./actions";
+import { saveJobCosts } from "../../materials/actions";
 
 type CustomerDetailPageProps = {
   params: Promise<{
@@ -122,6 +123,92 @@ type InvoiceCostBreakdown = {
   overhead_allocated: number | string;
   estimated_profit: number | string;
 };
+
+type MaterialOption = {
+  id: string;
+  name: string;
+  unit_label: string;
+};
+
+type EquipmentOption = {
+  id: string;
+  name: string;
+};
+
+type InvoiceUsageRow = {
+  jobber_invoice_id: string;
+  material_id: string;
+  quantity_used: number | string;
+};
+
+type InvoiceEquipmentUsageRow = {
+  jobber_invoice_id: string;
+  equipment_id: string;
+};
+
+async function getMaterialsList(): Promise<MaterialOption[]> {
+  const { data, error } = await supabaseServer
+    .from("materials")
+    .select("id, name, unit_label")
+    .order("name", { ascending: true });
+
+  if (error) {
+    console.error("Materials query failed:", error.message);
+    return [];
+  }
+
+  return (data ?? []) as MaterialOption[];
+}
+
+async function getEquipmentList(): Promise<EquipmentOption[]> {
+  const { data, error } = await supabaseServer
+    .from("equipment")
+    .select("id, name")
+    .order("name", { ascending: true });
+
+  if (error) {
+    console.error("Equipment query failed:", error.message);
+    return [];
+  }
+
+  return (data ?? []) as EquipmentOption[];
+}
+
+async function getInvoiceUsageMaps(invoiceIds: string[]): Promise<{
+  usageMap: Map<string, number>;
+  equipmentUsageSet: Set<string>;
+}> {
+  if (invoiceIds.length === 0) {
+    return { usageMap: new Map(), equipmentUsageSet: new Set() };
+  }
+
+  const [usageResult, equipmentUsageResult] = await Promise.all([
+    supabaseServer
+      .from("invoice_material_usage")
+      .select("jobber_invoice_id, material_id, quantity_used")
+      .in("jobber_invoice_id", invoiceIds),
+    supabaseServer
+      .from("equipment_usage")
+      .select("jobber_invoice_id, equipment_id")
+      .in("jobber_invoice_id", invoiceIds),
+  ]);
+
+  const usageMap = new Map<string, number>();
+  for (const row of (usageResult.data ?? []) as InvoiceUsageRow[]) {
+    usageMap.set(
+      `${row.jobber_invoice_id}:${row.material_id}`,
+      Number(row.quantity_used ?? 0)
+    );
+  }
+
+  const equipmentUsageSet = new Set<string>();
+  for (const row of (equipmentUsageResult.data ??
+    []) as InvoiceEquipmentUsageRow[]) {
+    equipmentUsageSet.add(`${row.jobber_invoice_id}:${row.equipment_id}`);
+  }
+
+  return { usageMap, equipmentUsageSet };
+}
 
 async function getJobberClient(id: string): Promise<{
   client: JobberClient | null;
@@ -376,6 +463,18 @@ function formatCurrencyPrecise(
   }).format(toNumber(value));
 }
 
+function decimalHoursToHMM(decimalHours: number): string {
+  if (!decimalHours) {
+    return "";
+  }
+
+  const totalMinutes = Math.round(decimalHours * 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  return `${hours}:${String(minutes).padStart(2, "0")}`;
+}
+
 function formatDate(value: string | null): string {
   if (!value) {
     return "—";
@@ -465,14 +564,23 @@ export default async function CustomerDetailPage({
   const { id } = await params;
   const decodedId = decodeURIComponent(id);
 
-  const [{ client, error }, financials, profile, profitSummary, invoiceCosts] =
-    await Promise.all([
-      getJobberClient(decodedId),
-      getCustomerFinancials(decodedId),
-      getCustomerProfile(decodedId),
-      getCustomerProfitSummary(decodedId),
-      getInvoiceCostBreakdowns(decodedId),
-    ]);
+  const [
+    { client, error },
+    financials,
+    profile,
+    profitSummary,
+    invoiceCosts,
+    materialsList,
+    equipmentList,
+  ] = await Promise.all([
+    getJobberClient(decodedId),
+    getCustomerFinancials(decodedId),
+    getCustomerProfile(decodedId),
+    getCustomerProfitSummary(decodedId),
+    getInvoiceCostBreakdowns(decodedId),
+    getMaterialsList(),
+    getEquipmentList(),
+  ]);
 
   if (!client) {
     return (
@@ -519,6 +627,12 @@ export default async function CustomerDetailPage({
   const jobs = client.jobs?.nodes ?? [];
   const quotes = client.quotes?.nodes ?? [];
   const invoices = client.invoices?.nodes ?? [];
+
+  const { usageMap, equipmentUsageSet } = await getInvoiceUsageMaps(
+    invoices.map((invoice) => invoice.id)
+  );
+
+  const pageEquipmentIds = equipmentList.map((item) => item.id).join(",");
 
   const lifetimeCollected = toNumber(financials?.lifetime_collected);
   const estimatedProfit = profitSummary
@@ -1076,26 +1190,117 @@ export default async function CustomerDetailPage({
                       </div>
                     );
 
-                    if (invoice.jobberWebUri) {
-                      return (
-                        <a
-                          key={invoice.id}
-                          href={invoice.jobberWebUri}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="block rounded-xl border border-[#e7e2d5] px-3 py-2 transition hover:border-[#d4af37]"
-                        >
-                          {content}
-                        </a>
-                      );
-                    }
+                    const editForm = materialsList.length > 0 && (
+                      <details className="border-t border-[#f0eee6] px-3 py-2">
+                        <summary className="cursor-pointer text-xs font-bold text-[#9c7a20]">
+                          Edit costs
+                        </summary>
+
+                        <form action={saveJobCosts} className="mt-3 space-y-3">
+                          <input
+                            type="hidden"
+                            name="page_invoice_ids"
+                            value={invoice.id}
+                          />
+                          <input
+                            type="hidden"
+                            name="page_equipment_ids"
+                            value={pageEquipmentIds}
+                          />
+
+                          <div className="grid grid-cols-2 gap-2">
+                            {materialsList.map((material) => {
+                              const isTime =
+                                material.unit_label.toLowerCase() === "hour";
+                              const raw =
+                                usageMap.get(
+                                  `${invoice.id}:${material.id}`
+                                ) || 0;
+
+                              return (
+                                <label key={material.id} className="block">
+                                  <span className="text-[10px] font-bold text-[#9c7a20]">
+                                    {material.name}
+                                  </span>
+                                  <input
+                                    type={isTime ? "text" : "number"}
+                                    inputMode={isTime ? "text" : "decimal"}
+                                    step={isTime ? undefined : "0.01"}
+                                    min={isTime ? undefined : "0"}
+                                    pattern={
+                                      isTime ? "[0-9]{1,2}:[0-5][0-9]" : undefined
+                                    }
+                                    name={`usage[${invoice.id}][${material.id}]`}
+                                    defaultValue={
+                                      isTime
+                                        ? decimalHoursToHMM(raw)
+                                        : raw || ""
+                                    }
+                                    placeholder={isTime ? "1:30" : "0"}
+                                    className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-2 py-1.5 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                                  />
+                                </label>
+                              );
+                            })}
+                          </div>
+
+                          {equipmentList.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {equipmentList.map((item) => {
+                                const checked = equipmentUsageSet.has(
+                                  `${invoice.id}:${item.id}`
+                                );
+
+                                return (
+                                  <label
+                                    key={item.id}
+                                    className="flex items-center gap-1.5 rounded-lg bg-[#f7f6f1] px-2 py-1.5"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      name={`equipment[${invoice.id}][${item.id}]`}
+                                      value="1"
+                                      defaultChecked={checked}
+                                      className="h-4 w-4 rounded border-[#d9d4c6] text-[#174734] focus:ring-[#d4af37]"
+                                    />
+                                    <span className="text-xs font-semibold">
+                                      {item.name}
+                                    </span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          <button
+                            type="submit"
+                            className="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246]"
+                          >
+                            Save Changes
+                          </button>
+                        </form>
+                      </details>
+                    );
 
                     return (
                       <div
                         key={invoice.id}
-                        className="rounded-xl border border-[#e7e2d5] px-3 py-2"
+                        className="overflow-hidden rounded-xl border border-[#e7e2d5]"
                       >
-                        {content}
+                        {invoice.jobberWebUri ? (
+                          <a
+                            href={invoice.jobberWebUri}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block px-3 py-2 transition hover:bg-[#f7f6f1]"
+                          >
+                            {content}
+                          </a>
+                        ) : (
+                          <div className="px-3 py-2">{content}</div>
+                        )}
+
+                        {editForm}
                       </div>
                     );
                   })

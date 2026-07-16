@@ -9,6 +9,7 @@ type JobCostsPageProps = {
   searchParams: Promise<{
     q?: string;
     page?: string;
+    show?: string;
   }>;
 };
 
@@ -32,6 +33,7 @@ type InvoiceRow = {
   issue_date: string | null;
   total: number | string;
   service_category: string | null;
+  has_logged_cost: boolean | null;
 };
 
 type UsageRow = {
@@ -105,7 +107,11 @@ function escapeSearchValue(value: string): string {
     .replace(/\)/g, "\\)");
 }
 
-function buildJobCostsUrl(page: number, search: string): string {
+function buildJobCostsUrl(
+  page: number,
+  search: string,
+  showAll: boolean
+): string {
   const params = new URLSearchParams();
 
   if (search) {
@@ -114,6 +120,10 @@ function buildJobCostsUrl(page: number, search: string): string {
 
   if (page > 1) {
     params.set("page", String(page));
+  }
+
+  if (showAll) {
+    params.set("show", "all");
   }
 
   const query = params.toString();
@@ -135,6 +145,7 @@ export default async function JobCostsPage({
 }: JobCostsPageProps) {
   const params = await searchParams;
   const search = String(params.q ?? "").trim();
+  const showAll = params.show === "all";
 
   const requestedPage = Number.parseInt(params.page ?? "1", 10);
   const currentPage =
@@ -159,11 +170,15 @@ export default async function JobCostsPage({
   let invoicesQuery = supabaseServer
     .from("invoice_costing_list")
     .select(
-      "jobber_invoice_id, invoice_number, subject, customer_name, issue_date, total, service_category",
+      "jobber_invoice_id, invoice_number, subject, customer_name, issue_date, total, service_category, has_logged_cost",
       { count: "exact" }
     )
     .order("issue_date", { ascending: false, nullsFirst: false })
     .range(from, to);
+
+  if (!showAll) {
+    invoicesQuery = invoicesQuery.eq("has_logged_cost", false);
+  }
 
   if (search) {
     const safeSearch = escapeSearchValue(search);
@@ -223,11 +238,17 @@ export default async function JobCostsPage({
     costMap.set(row.jobber_invoice_id, toNumber(row.material_cost));
   }
 
-  const previousPageUrl = buildJobCostsUrl(Math.max(1, currentPage - 1), search);
+  const previousPageUrl = buildJobCostsUrl(
+    Math.max(1, currentPage - 1),
+    search,
+    showAll
+  );
   const nextPageUrl = buildJobCostsUrl(
     Math.min(totalPages, currentPage + 1),
-    search
+    search,
+    showAll
   );
+  const toggleShowUrl = buildJobCostsUrl(1, search, !showAll);
 
   const pageInvoiceIds = invoiceIds.join(",");
   const pageEquipmentIds = equipmentList.map((e) => e.id).join(",");
@@ -246,8 +267,9 @@ export default async function JobCostsPage({
             </h1>
 
             <p className="mt-2 text-sm text-[#6b705c]">
-              Enter materials, labor, fuel, and equipment usage per job. Save
-              several at once — leave fields blank or unchecked to skip.
+              {showAll
+                ? "Showing every job, logged or not. Save several at once — leave fields blank or unchecked to skip."
+                : "Working through jobs that still need costs logged — save one and it drops off the list."}
             </p>
           </div>
 
@@ -271,6 +293,17 @@ export default async function JobCostsPage({
               className="rounded-xl border border-[#174734] px-4 py-2 text-center text-sm font-bold transition hover:bg-white"
             >
               Analytics
+            </Link>
+
+            <Link
+              href={toggleShowUrl}
+              className={`rounded-xl px-4 py-2 text-center text-sm font-bold transition ${
+                showAll
+                  ? "bg-[#174734] text-white"
+                  : "border border-[#d4af37] bg-[#faf4e3] text-[#9c7a20] hover:bg-[#f5ecd3]"
+              }`}
+            >
+              {showAll ? "Show Unlogged Only" : "Show All Jobs"}
             </Link>
           </div>
         </header>
@@ -328,8 +361,20 @@ export default async function JobCostsPage({
             ) : invoices.length === 0 ? (
               <section className="mt-5 rounded-2xl bg-white p-5 shadow">
                 <p className="text-sm text-[#6b705c]">
-                  No invoices found{search ? " for that search" : ""}.
+                  {search
+                    ? "No invoices found for that search."
+                    : showAll
+                      ? "No invoices found."
+                      : "All caught up — no unlogged jobs right now."}
                 </p>
+                {!showAll && !search && (
+                  <Link
+                    href={toggleShowUrl}
+                    className="mt-2 inline-block text-sm font-semibold text-[#9c7a20] hover:underline"
+                  >
+                    Show all jobs anyway →
+                  </Link>
+                )}
               </section>
             ) : (
               <form action={saveJobCosts}>
