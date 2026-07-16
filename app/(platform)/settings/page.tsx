@@ -12,6 +12,14 @@ const settingsSections = [
     icon: "🔄",
     status: "Connected",
   },
+  {
+    title: "System Health",
+    description:
+      "Diagnostic checks on synced data — subject/status field integrity, cost snapshot accuracy, and sync freshness.",
+    href: "/health",
+    icon: "🩺",
+    status: "Monitor",
+  },
 ];
 
 export default function SettingsPage() {
