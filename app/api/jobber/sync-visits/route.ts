@@ -122,8 +122,8 @@ async function syncVisits() {
   while (hasNextPage) {
     pageNumber += 1;
 
-    if (pageNumber > 100) {
-      warnings.push("Sync stopped after 100 pages for safety.");
+    if (pageNumber > 150) {
+      warnings.push("Sync stopped after 150 pages for safety.");
       break;
     }
 
@@ -211,6 +211,13 @@ async function syncVisits() {
         `Jobber reported another page after page ${pageNumber}, but no cursor was returned.`
       );
       break;
+    }
+
+    // Visits are a much more expensive query than jobs/invoices/customers
+    // (nested client/job/invoice sub-objects on every node), so pace
+    // requests to avoid burning through the throttle budget mid-sync.
+    if (hasNextPage) {
+      await new Promise((resolve) => setTimeout(resolve, 1800));
     }
   }
 
