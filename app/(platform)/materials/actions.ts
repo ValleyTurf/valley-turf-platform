@@ -1,4 +1,4 @@
-"use server";
+ï»¿"use server";
 
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
@@ -302,7 +302,7 @@ export async function addEmployee(formData: FormData): Promise<void> {
   }
 
   const { error } = await supabaseServer.from("materials").insert({
-    name: `Labor — ${employeeName}`,
+    name: `Labor - ${employeeName}`,
     unit_label: "hour",
     unit_cost: hourlyRate,
   });
@@ -329,7 +329,7 @@ export async function updateEmployee(
   const { error } = await supabaseServer
     .from("materials")
     .update({
-      name: `Labor — ${employeeName}`,
+      name: `Labor - ${employeeName}`,
       unit_cost: hourlyRate,
       updated_at: new Date().toISOString(),
     })
@@ -353,3 +353,4 @@ export async function deleteEmployee(id: string): Promise<void> {
   revalidatePath("/employees");
   revalidatePath("/job-costs");
 }
+
