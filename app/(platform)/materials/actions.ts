@@ -354,3 +354,136 @@ export async function deleteEmployee(id: string): Promise<void> {
   revalidatePath("/job-costs");
 }
 
+
+// ---------- Visit-based job cost entry (Phase 2: replaces invoice-based entry) ----------
+
+export async function saveVisitCosts(formData: FormData): Promise<void> {
+  const parsedUsageRows: {
+    jobber_visit_id: string;
+    material_id: string;
+    quantity_used: number;
+  }[] = [];
+
+  for (const [key, value] of formData.entries()) {
+    const match = key.match(/^usage\[(.+?)\]\[(.+?)\]$/);
+
+    if (!match) {
+      continue;
+    }
+
+    const jobberVisitId = match[1];
+    const materialId = match[2];
+    const quantity = parseQuantity(value);
+
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      continue;
+    }
+
+    parsedUsageRows.push({
+      jobber_visit_id: jobberVisitId,
+      material_id: materialId,
+      quantity_used: quantity,
+    });
+  }
+
+  if (parsedUsageRows.length > 0) {
+    const materialIds = Array.from(
+      new Set(parsedUsageRows.map((row) => row.material_id))
+    );
+
+    const materialsResult = await supabaseServer
+      .from("materials")
+      .select("id, unit_cost")
+      .in("id", materialIds);
+
+    if (materialsResult.error) {
+      throw new Error(
+        `Failed to load material rates: ${materialsResult.error.message}`
+      );
+    }
+
+    const unitCostMap = new Map<string, number>(
+      (materialsResult.data ?? []).map((material) => [
+        material.id as string,
+        Number(material.unit_cost ?? 0),
+      ])
+    );
+
+    const usageRows = parsedUsageRows.map((row) => ({
+      jobber_visit_id: row.jobber_visit_id,
+      material_id: row.material_id,
+      quantity_used: row.quantity_used,
+      unit_cost_at_time: unitCostMap.get(row.material_id) ?? 0,
+    }));
+
+    const usageResult = await supabaseServer
+      .from("visit_material_usage")
+      .upsert(usageRows, { onConflict: "jobber_visit_id,material_id" });
+
+    if (usageResult.error) {
+      throw new Error(
+        `Failed to save visit material usage: ${usageResult.error.message}`
+      );
+    }
+  }
+
+  const pageVisitIdsRaw = formData.get("page_visit_ids");
+  const pageVisitIds =
+    typeof pageVisitIdsRaw === "string" && pageVisitIdsRaw
+      ? pageVisitIdsRaw.split(",").filter(Boolean)
+      : [];
+
+  const pageEquipmentIdsRaw = formData.get("page_equipment_ids");
+  const pageEquipmentIds =
+    typeof pageEquipmentIdsRaw === "string" && pageEquipmentIdsRaw
+      ? pageEquipmentIdsRaw.split(",").filter(Boolean)
+      : [];
+
+  if (pageVisitIds.length > 0 && pageEquipmentIds.length > 0) {
+    const checkedRows: { jobber_visit_id: string; equipment_id: string }[] = [];
+
+    for (const [key, value] of formData.entries()) {
+      const match = key.match(/^equipment\[(.+?)\]\[(.+?)\]$/);
+
+      if (!match) {
+        continue;
+      }
+
+      if (value !== "1") {
+        continue;
+      }
+
+      checkedRows.push({
+        jobber_visit_id: match[1],
+        equipment_id: match[2],
+      });
+    }
+
+    const deleteResult = await supabaseServer
+      .from("visit_equipment_usage")
+      .delete()
+      .in("jobber_visit_id", pageVisitIds)
+      .in("equipment_id", pageEquipmentIds);
+
+    if (deleteResult.error) {
+      throw new Error(
+        `Failed to update equipment usage: ${deleteResult.error.message}`
+      );
+    }
+
+    if (checkedRows.length > 0) {
+      const insertResult = await supabaseServer
+        .from("visit_equipment_usage")
+        .insert(checkedRows);
+
+      if (insertResult.error) {
+        throw new Error(
+          `Failed to save equipment usage: ${insertResult.error.message}`
+        );
+      }
+    }
+  }
+
+  revalidatePath("/job-costs");
+  revalidatePath("/schedule");
+}
