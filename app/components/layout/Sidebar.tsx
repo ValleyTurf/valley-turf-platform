@@ -16,6 +16,11 @@ const topLevelItems: NavItem[] = [
     href: "/dashboard",
     icon: "🏠",
   },
+  {
+    name: "Schedule",
+    href: "/schedule",
+    icon: "📅",
+  },
 ];
 
 const groups: { title: string; icon: string; items: NavItem[] }[] = [
