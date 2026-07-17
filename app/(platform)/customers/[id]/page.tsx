@@ -5,7 +5,7 @@ import Link from "next/link";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
 import { updateCustomerProfile } from "./actions";
-import { saveJobCosts } from "../../materials/actions";
+import { saveVisitCosts } from "../../materials/actions";
 
 type CustomerDetailPageProps = {
   params: Promise<{
@@ -135,15 +135,28 @@ type EquipmentOption = {
   name: string;
 };
 
-type InvoiceUsageRow = {
-  jobber_invoice_id: string;
+type CustomerVisit = {
+  jobber_visit_id: string;
+  title: string | null;
+  visit_status: string | null;
+  start_at: string | null;
+  completed_at: string | null;
+};
+
+type VisitUsageRow = {
+  jobber_visit_id: string;
   material_id: string;
   quantity_used: number | string;
 };
 
-type InvoiceEquipmentUsageRow = {
-  jobber_invoice_id: string;
+type VisitEquipmentUsageRow = {
+  jobber_visit_id: string;
   equipment_id: string;
+};
+
+type VisitCost = {
+  jobber_visit_id: string;
+  material_cost: number | string;
 };
 
 async function getMaterialsList(): Promise<MaterialOption[]> {
@@ -177,40 +190,72 @@ async function getEquipmentList(): Promise<EquipmentOption[]> {
   return (data ?? []) as EquipmentOption[];
 }
 
-async function getInvoiceUsageMaps(invoiceIds: string[]): Promise<{
-  usageMap: Map<string, number>;
-  equipmentUsageSet: Set<string>;
-}> {
-  if (invoiceIds.length === 0) {
-    return { usageMap: new Map(), equipmentUsageSet: new Set() };
+async function getCustomerVisits(
+  jobberClientId: string
+): Promise<CustomerVisit[]> {
+  const { data, error } = await supabaseServer
+    .from("jobber_visits")
+    .select("jobber_visit_id, title, visit_status, start_at, completed_at")
+    .eq("jobber_client_id", jobberClientId)
+    .order("start_at", { ascending: false, nullsFirst: false })
+    .limit(10);
+
+  if (error) {
+    console.error("Customer visits query failed:", error.message);
+    return [];
   }
 
-  const [usageResult, equipmentUsageResult] = await Promise.all([
+  return (data ?? []) as CustomerVisit[];
+}
+
+async function getVisitUsageMaps(visitIds: string[]): Promise<{
+  usageMap: Map<string, number>;
+  equipmentUsageSet: Set<string>;
+  costMap: Map<string, number>;
+}> {
+  if (visitIds.length === 0) {
+    return {
+      usageMap: new Map(),
+      equipmentUsageSet: new Set(),
+      costMap: new Map(),
+    };
+  }
+
+  const [usageResult, equipmentUsageResult, costResult] = await Promise.all([
     supabaseServer
-      .from("invoice_material_usage")
-      .select("jobber_invoice_id, material_id, quantity_used")
-      .in("jobber_invoice_id", invoiceIds),
+      .from("visit_material_usage")
+      .select("jobber_visit_id, material_id, quantity_used")
+      .in("jobber_visit_id", visitIds),
     supabaseServer
-      .from("equipment_usage")
-      .select("jobber_invoice_id, equipment_id")
-      .in("jobber_invoice_id", invoiceIds),
+      .from("visit_equipment_usage")
+      .select("jobber_visit_id, equipment_id")
+      .in("jobber_visit_id", visitIds),
+    supabaseServer
+      .from("visit_material_cost")
+      .select("jobber_visit_id, material_cost")
+      .in("jobber_visit_id", visitIds),
   ]);
 
   const usageMap = new Map<string, number>();
-  for (const row of (usageResult.data ?? []) as InvoiceUsageRow[]) {
+  for (const row of (usageResult.data ?? []) as VisitUsageRow[]) {
     usageMap.set(
-      `${row.jobber_invoice_id}:${row.material_id}`,
+      `${row.jobber_visit_id}:${row.material_id}`,
       Number(row.quantity_used ?? 0)
     );
   }
 
   const equipmentUsageSet = new Set<string>();
   for (const row of (equipmentUsageResult.data ??
-    []) as InvoiceEquipmentUsageRow[]) {
-    equipmentUsageSet.add(`${row.jobber_invoice_id}:${row.equipment_id}`);
+    []) as VisitEquipmentUsageRow[]) {
+    equipmentUsageSet.add(`${row.jobber_visit_id}:${row.equipment_id}`);
   }
 
-  return { usageMap, equipmentUsageSet };
+  const costMap = new Map<string, number>();
+  for (const row of (costResult.data ?? []) as VisitCost[]) {
+    costMap.set(row.jobber_visit_id, Number(row.material_cost ?? 0));
+  }
+
+  return { usageMap, equipmentUsageSet, costMap };
 }
 
 async function getJobberClient(id: string): Promise<{
@@ -498,6 +543,44 @@ function formatDate(value: string | null): string {
   }).format(date);
 }
 
+function formatVisitDateTime(value: string | null): string {
+  if (!value) {
+    return "Not scheduled";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Not scheduled";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Phoenix",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function visitStatusBadge(status: string | null): string {
+  const normalized = (status ?? "").toUpperCase();
+
+  if (normalized === "COMPLETED") {
+    return "bg-green-100 text-green-800";
+  }
+
+  if (normalized === "LATE") {
+    return "bg-red-100 text-red-800";
+  }
+
+  if (normalized === "UPCOMING") {
+    return "bg-blue-100 text-blue-800";
+  }
+
+  return "bg-gray-100 text-gray-700";
+}
+
 function formatStatus(value: string | null): string {
   if (!value) {
     return "Unknown";
@@ -575,6 +658,7 @@ export default async function CustomerDetailPage({
     invoiceCosts,
     materialsList,
     equipmentList,
+    visits,
   ] = await Promise.all([
     getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
@@ -583,6 +667,7 @@ export default async function CustomerDetailPage({
     getInvoiceCostBreakdowns(decodedId),
     getMaterialsList(),
     getEquipmentList(),
+    getCustomerVisits(decodedId),
   ]);
 
   if (!client) {
@@ -631,9 +716,11 @@ export default async function CustomerDetailPage({
   const quotes = client.quotes?.nodes ?? [];
   const invoices = client.invoices?.nodes ?? [];
 
-  const { usageMap, equipmentUsageSet } = await getInvoiceUsageMaps(
-    invoices.map((invoice) => invoice.id)
-  );
+  const {
+    usageMap: visitUsageMap,
+    equipmentUsageSet: visitEquipmentUsageSet,
+    costMap: visitCostMap,
+  } = await getVisitUsageMaps(visits.map((visit) => visit.jobber_visit_id));
 
   const pageEquipmentIds = equipmentList.map((item) => item.id).join(",");
 
@@ -1193,98 +1280,6 @@ export default async function CustomerDetailPage({
                       </div>
                     );
 
-                    const editForm = materialsList.length > 0 && (
-                      <details className="border-t border-[#f0eee6] px-3 py-2">
-                        <summary className="cursor-pointer text-xs font-bold text-[#9c7a20]">
-                          Edit costs
-                        </summary>
-
-                        <form action={saveJobCosts} className="mt-3 space-y-3">
-                          <input
-                            type="hidden"
-                            name="page_invoice_ids"
-                            value={invoice.id}
-                          />
-                          <input
-                            type="hidden"
-                            name="page_equipment_ids"
-                            value={pageEquipmentIds}
-                          />
-
-                          <div className="grid grid-cols-2 gap-2">
-                            {materialsList.map((material) => {
-                              const isTime =
-                                material.unit_label.toLowerCase() === "hour";
-                              const raw =
-                                usageMap.get(
-                                  `${invoice.id}:${material.id}`
-                                ) || 0;
-
-                              return (
-                                <label key={material.id} className="block">
-                                  <span className="text-[10px] font-bold text-[#9c7a20]">
-                                    {material.name}
-                                  </span>
-                                  <input
-                                    type={isTime ? "text" : "number"}
-                                    inputMode={isTime ? "text" : "decimal"}
-                                    step={isTime ? undefined : "0.01"}
-                                    min={isTime ? undefined : "0"}
-                                    pattern={
-                                      isTime ? "[0-9]{1,2}:[0-5][0-9]" : undefined
-                                    }
-                                    name={`usage[${invoice.id}][${material.id}]`}
-                                    defaultValue={
-                                      isTime
-                                        ? decimalHoursToHMM(raw)
-                                        : raw || ""
-                                    }
-                                    placeholder={isTime ? "1:30" : "0"}
-                                    className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-2 py-1.5 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-                                  />
-                                </label>
-                              );
-                            })}
-                          </div>
-
-                          {equipmentList.length > 0 && (
-                            <div className="flex flex-wrap gap-2">
-                              {equipmentList.map((item) => {
-                                const checked = equipmentUsageSet.has(
-                                  `${invoice.id}:${item.id}`
-                                );
-
-                                return (
-                                  <label
-                                    key={item.id}
-                                    className="flex items-center gap-1.5 rounded-lg bg-[#f7f6f1] px-2 py-1.5"
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      name={`equipment[${invoice.id}][${item.id}]`}
-                                      value="1"
-                                      defaultChecked={checked}
-                                      className="h-4 w-4 rounded border-[#d9d4c6] text-[#174734] focus:ring-[#d4af37]"
-                                    />
-                                    <span className="text-xs font-semibold">
-                                      {item.name}
-                                    </span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          )}
-
-                          <button
-                            type="submit"
-                            className="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246]"
-                          >
-                            Save Changes
-                          </button>
-                        </form>
-                      </details>
-                    );
-
                     return (
                       <div
                         key={invoice.id}
@@ -1302,14 +1297,160 @@ export default async function CustomerDetailPage({
                         ) : (
                           <div className="px-3 py-2">{content}</div>
                         )}
-
-                        {editForm}
                       </div>
                     );
                   })
                 ) : (
                   <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
                     No invoices found.
+                  </p>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">Recent Visits</h2>
+
+              <p className="mt-1 text-xs text-[#6b705c]">
+                Log materials, labor, fuel, and equipment per visit here.
+              </p>
+
+              <div className="mt-3 space-y-2">
+                {visits.length > 0 ? (
+                  visits.map((visit) => (
+                    <details
+                      key={visit.jobber_visit_id}
+                      className="rounded-xl border border-[#e7e2d5] px-3 py-2"
+                    >
+                      <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold">
+                            {formatVisitDateTime(visit.start_at)}
+                            {visit.title ? ` — ${visit.title}` : ""}
+                          </p>
+                        </div>
+
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span
+                            className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${visitStatusBadge(
+                              visit.visit_status
+                            )}`}
+                          >
+                            {visit.visit_status || "Unknown"}
+                          </span>
+
+                          <p className="text-sm font-bold">
+                            {formatCurrencyPrecise(
+                              visitCostMap.get(visit.jobber_visit_id) ?? 0
+                            )}
+                          </p>
+                        </div>
+                      </summary>
+
+                      {materialsList.length > 0 && (
+                        <div className="mt-4 border-t border-[#f0eee6] pt-4">
+                          <form
+                            action={saveVisitCosts}
+                            className="space-y-3"
+                          >
+                            <input
+                              type="hidden"
+                              name="page_visit_ids"
+                              value={visit.jobber_visit_id}
+                            />
+                            <input
+                              type="hidden"
+                              name="page_equipment_ids"
+                              value={pageEquipmentIds}
+                            />
+
+                            <div className="grid grid-cols-2 gap-2">
+                              {materialsList.map((material) => {
+                                const isTime =
+                                  material.unit_label.toLowerCase() ===
+                                  "hour";
+                                const raw =
+                                  visitUsageMap.get(
+                                    `${visit.jobber_visit_id}:${material.id}`
+                                  ) || 0;
+
+                                return (
+                                  <label
+                                    key={material.id}
+                                    className="block"
+                                  >
+                                    <span className="text-[10px] font-bold text-[#9c7a20]">
+                                      {material.name}
+                                    </span>
+                                    <input
+                                      type={isTime ? "text" : "number"}
+                                      inputMode={
+                                        isTime ? "text" : "decimal"
+                                      }
+                                      step={isTime ? undefined : "0.01"}
+                                      min={isTime ? undefined : "0"}
+                                      pattern={
+                                        isTime
+                                          ? "[0-9]{1,2}:[0-5][0-9]"
+                                          : undefined
+                                      }
+                                      name={`usage[${visit.jobber_visit_id}][${material.id}]`}
+                                      defaultValue={
+                                        isTime
+                                          ? decimalHoursToHMM(raw)
+                                          : raw || ""
+                                      }
+                                      placeholder={isTime ? "1:30" : "0"}
+                                      className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-2 py-1.5 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                                    />
+                                  </label>
+                                );
+                              })}
+                            </div>
+
+                            {equipmentList.length > 0 && (
+                              <div className="flex flex-wrap gap-2">
+                                {equipmentList.map((item) => {
+                                  const checked =
+                                    visitEquipmentUsageSet.has(
+                                      `${visit.jobber_visit_id}:${item.id}`
+                                    );
+
+                                  return (
+                                    <label
+                                      key={item.id}
+                                      className="flex items-center gap-1.5 rounded-lg bg-[#f7f6f1] px-2 py-1.5"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        name={`equipment[${visit.jobber_visit_id}][${item.id}]`}
+                                        value="1"
+                                        defaultChecked={checked}
+                                        className="h-4 w-4 rounded border-[#d9d4c6] text-[#174734] focus:ring-[#d4af37]"
+                                      />
+                                      <span className="text-xs font-semibold">
+                                        {item.name}
+                                      </span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            <button
+                              type="submit"
+                              className="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246]"
+                            >
+                              Save Changes
+                            </button>
+                          </form>
+                        </div>
+                      )}
+                    </details>
+                  ))
+                ) : (
+                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                    No visits found.
                   </p>
                 )}
               </div>
