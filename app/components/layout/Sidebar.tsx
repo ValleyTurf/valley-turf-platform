@@ -44,7 +44,10 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
   {
     title: "Financials",
     icon: "💰",
-    items: [{ name: "Revenue", href: "/revenue", icon: "💰" }],
+    items: [
+      { name: "Revenue", href: "/revenue", icon: "💰" },
+      { name: "Profitability Alerts", href: "/alerts", icon: "🚨" },
+    ],
   },
   {
     title: "Job Costing",
