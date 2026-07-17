@@ -290,3 +290,66 @@ export async function saveJobCosts(formData: FormData): Promise<void> {
 
   revalidatePath("/job-costs");
 }
+
+// ---------- Employees (stored as Labor materials under the hood) ----------
+
+export async function addEmployee(formData: FormData): Promise<void> {
+  const employeeName = cleanText(formData.get("employee_name"));
+  const hourlyRate = cleanNumber(formData.get("hourly_rate"));
+
+  if (!employeeName) {
+    throw new Error("Employee name is required.");
+  }
+
+  const { error } = await supabaseServer.from("materials").insert({
+    name: `Labor — ${employeeName}`,
+    unit_label: "hour",
+    unit_cost: hourlyRate,
+  });
+
+  if (error) {
+    throw new Error(`Failed to add employee: ${error.message}`);
+  }
+
+  revalidatePath("/employees");
+  revalidatePath("/job-costs");
+}
+
+export async function updateEmployee(
+  id: string,
+  formData: FormData
+): Promise<void> {
+  const employeeName = cleanText(formData.get("employee_name"));
+  const hourlyRate = cleanNumber(formData.get("hourly_rate"));
+
+  if (!employeeName) {
+    throw new Error("Employee name is required.");
+  }
+
+  const { error } = await supabaseServer
+    .from("materials")
+    .update({
+      name: `Labor — ${employeeName}`,
+      unit_cost: hourlyRate,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(`Failed to update employee: ${error.message}`);
+  }
+
+  revalidatePath("/employees");
+  revalidatePath("/job-costs");
+}
+
+export async function deleteEmployee(id: string): Promise<void> {
+  const { error } = await supabaseServer.from("materials").delete().eq("id", id);
+
+  if (error) {
+    throw new Error(`Failed to delete employee: ${error.message}`);
+  }
+
+  revalidatePath("/employees");
+  revalidatePath("/job-costs");
+}
