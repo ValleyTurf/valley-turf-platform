@@ -200,13 +200,17 @@ export default async function JobCostsPage({
   const materials = (materialsResult.data ?? []) as Material[];
   const equipmentList = (equipmentResult.data ?? []) as Equipment[];
 
+  const nowIso = new Date().toISOString();
+
   let visitsQuery = supabaseServer
     .from("visit_costing_list")
     .select(
       "jobber_visit_id, jobber_client_id, jobber_invoice_id, customer_name, job_number, title, visit_status, start_at, end_at, completed_at, service_category, has_logged_cost",
       { count: "exact" }
     )
-    .order("start_at", { ascending: false, nullsFirst: false })
+    .not("start_at", "is", null)
+    .lte("start_at", nowIso)
+    .order("start_at", { ascending: false })
     .range(from, to);
 
   if (!showAll) {
@@ -302,8 +306,13 @@ export default async function JobCostsPage({
 
             <p className="mt-2 text-sm text-[#6b705c]">
               {showAll
-                ? "Showing every visit, logged or not. Save several at once — leave fields blank or unchecked to skip."
-                : "Working through visits that still need costs logged — save one and it drops off the list."}
+                ? "Showing every past visit, logged or not. Save several at once — leave fields blank or unchecked to skip."
+                : "Working through past visits that still need costs logged — save one and it drops off the list."}{" "}
+              Upcoming visits live on{" "}
+              <Link href="/schedule" className="font-semibold underline">
+                the schedule
+              </Link>
+              .
             </p>
           </div>
 
