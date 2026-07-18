@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
 
@@ -576,4 +576,291 @@ export async function GET(
       }
     );
   }
+}
+const JOB_QUERY = `
+  query GetJob($id: EncodedId!) {
+    job(id: $id) {
+      id
+      jobNumber
+      title
+      jobStatus
+      jobType
+      jobberWebUri
+      endAt
+      completedAt
+      client {
+        id
+        name
+      }
+    }
+  }
+`;
+
+const INVOICE_QUERY = `
+  query GetInvoice($id: EncodedId!) {
+    invoice(id: $id) {
+      id
+      invoiceNumber
+      subject
+      invoiceStatus
+      issuedDate
+      dueDate
+      total
+      client {
+        id
+        name
+      }
+    }
+  }
+`;
+
+const VISIT_QUERY = `
+  query GetVisit($id: EncodedId!) {
+    visit(id: $id) {
+      id
+      title
+      visitStatus
+      startAt
+      endAt
+      completedAt
+      duration
+      isLastScheduledVisit
+      client {
+        id
+        name
+      }
+      job {
+        id
+        jobNumber
+      }
+      invoice {
+        id
+      }
+    }
+  }
+`;
+
+async function syncSingleJob(jobberJobId: string): Promise<void> {
+  console.log(`Incrementally syncing Jobber job ${jobberJobId}...`);
+
+  const response = await jobberGraphQL<{
+    job: {
+      id: string;
+      jobNumber: number | string | null;
+      title: string | null;
+      jobStatus: string | null;
+      jobType: string | null;
+      jobberWebUri: string | null;
+      endAt: string | null;
+      completedAt: string | null;
+      client: { id: string; name: string | null } | null;
+    } | null;
+  }>(JOB_QUERY, { id: jobberJobId });
+
+  if (response.errors?.length) {
+    const message = response.errors
+      .map((error) => error.message)
+      .filter(Boolean)
+      .join(", ");
+    throw new Error(message || `Unable to load Jobber job ${jobberJobId}.`);
+  }
+
+  const job = response.data?.job;
+
+  if (!job) {
+    throw new Error(`Jobber job ${jobberJobId} was not found.`);
+  }
+
+  const jobRow = {
+    jobber_job_id: job.id,
+    jobber_client_id: job.client?.id ?? null,
+    customer_name: cleanText(job.client?.name),
+    title: cleanText(job.title),
+    job_number: cleanNumericText(job.jobNumber),
+    job_status: cleanText(job.jobStatus),
+    job_type: cleanText(job.jobType),
+    jobber_web_uri: cleanText(job.jobberWebUri),
+    end_at: job.endAt ?? null,
+    completed_at: job.completedAt ?? null,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error: upsertError } = await supabaseServer
+    .from("jobber_jobs")
+    .upsert(jobRow, {
+      onConflict: "jobber_job_id",
+      ignoreDuplicates: false,
+    });
+
+  if (upsertError) {
+    throw new Error(
+      `Unable to save Jobber job ${jobberJobId}: ${upsertError.message}`
+    );
+  }
+
+  console.log(`Incremental job sync completed for ${jobberJobId}.`);
+}
+
+async function syncSingleInvoice(jobberInvoiceId: string): Promise<void> {
+  console.log(`Incrementally syncing Jobber invoice ${jobberInvoiceId}...`);
+
+  const response = await jobberGraphQL<{
+    invoice: {
+      id: string;
+      invoiceNumber: string | number | null;
+      subject: string | null;
+      invoiceStatus: string | null;
+      issuedDate: string | null;
+      dueDate: string | null;
+      total: number | string | null;
+      client: { id: string; name: string | null } | null;
+    } | null;
+  }>(INVOICE_QUERY, { id: jobberInvoiceId });
+
+  if (response.errors?.length) {
+    const message = response.errors
+      .map((error) => error.message)
+      .filter(Boolean)
+      .join(", ");
+    throw new Error(
+      message || `Unable to load Jobber invoice ${jobberInvoiceId}.`
+    );
+  }
+
+  const invoice = response.data?.invoice;
+
+  if (!invoice) {
+    throw new Error(`Jobber invoice ${jobberInvoiceId} was not found.`);
+  }
+
+  const total = Number(invoice.total ?? 0);
+
+  const invoiceRow = {
+    jobber_invoice_id: invoice.id,
+    jobber_client_id: invoice.client?.id ?? null,
+    invoice_number: cleanNumericText(invoice.invoiceNumber),
+    customer_name: cleanText(invoice.client?.name),
+    subject: cleanText(invoice.subject),
+    status: cleanText(invoice.invoiceStatus),
+    issue_date: invoice.issuedDate ?? null,
+    due_date: invoice.dueDate ?? null,
+    total: Number.isNaN(total) ? 0 : total,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error: upsertError } = await supabaseServer
+    .from("jobber_invoices")
+    .upsert(invoiceRow, {
+      onConflict: "jobber_invoice_id",
+      ignoreDuplicates: false,
+    });
+
+  if (upsertError) {
+    throw new Error(
+      `Unable to save Jobber invoice ${jobberInvoiceId}: ${upsertError.message}`
+    );
+  }
+
+  console.log(`Incremental invoice sync completed for ${jobberInvoiceId}.`);
+}
+
+async function syncSingleVisit(jobberVisitId: string): Promise<void> {
+  console.log(`Incrementally syncing Jobber visit ${jobberVisitId}...`);
+
+  const response = await jobberGraphQL<{
+    visit: {
+      id: string;
+      title: string | null;
+      visitStatus: string | null;
+      startAt: string | null;
+      endAt: string | null;
+      completedAt: string | null;
+      duration: number | string | null;
+      isLastScheduledVisit: boolean | null;
+      client: { id: string; name: string | null } | null;
+      job: { id: string; jobNumber: number | string | null } | null;
+      invoice: { id: string } | null;
+    } | null;
+  }>(VISIT_QUERY, { id: jobberVisitId });
+
+  if (response.errors?.length) {
+    const message = response.errors
+      .map((error) => error.message)
+      .filter(Boolean)
+      .join(", ");
+    throw new Error(
+      message || `Unable to load Jobber visit ${jobberVisitId}.`
+    );
+  }
+
+  const visit = response.data?.visit;
+
+  if (!visit) {
+    throw new Error(`Jobber visit ${jobberVisitId} was not found.`);
+  }
+
+  const duration = Number(visit.duration ?? 0);
+
+  const visitRow = {
+    jobber_visit_id: visit.id,
+    jobber_job_id: visit.job?.id ?? null,
+    jobber_client_id: visit.client?.id ?? null,
+    jobber_invoice_id: visit.invoice?.id ?? null,
+    customer_name: cleanText(visit.client?.name),
+    job_number: cleanNumericText(visit.job?.jobNumber),
+    title: cleanText(visit.title),
+    visit_status: cleanText(visit.visitStatus),
+    start_at: visit.startAt ?? null,
+    end_at: visit.endAt ?? null,
+    completed_at: visit.completedAt ?? null,
+    duration_minutes: Number.isNaN(duration) ? null : duration,
+    is_last_scheduled_visit: visit.isLastScheduledVisit ?? null,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error: upsertError } = await supabaseServer
+    .from("jobber_visits")
+    .upsert(visitRow, {
+      onConflict: "jobber_visit_id",
+      ignoreDuplicates: false,
+    });
+
+  if (upsertError) {
+    throw new Error(
+      `Unable to save Jobber visit ${jobberVisitId}: ${upsertError.message}`
+    );
+  }
+
+  console.log(`Incremental visit sync completed for ${jobberVisitId}.`);
+}
+
+async function handleDestroyedJob(jobberJobId: string): Promise<void> {
+  console.log(
+    `Jobber reported deleted job ${jobberJobId}. Historical job data was retained.`
+  );
+}
+
+async function handleDestroyedInvoice(
+  jobberInvoiceId: string
+): Promise<void> {
+  console.log(
+    `Jobber reported deleted invoice ${jobberInvoiceId}. Historical invoice data was retained.`
+  );
+}
+
+async function handleDestroyedVisit(jobberVisitId: string): Promise<void> {
+  console.log(
+    `Jobber reported deleted visit ${jobberVisitId}. Historical visit data was retained.`
+  );
+}
+
+
+function cleanNumericText(
+  value: string | number | null | undefined
+): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const text = String(value).trim();
+  return text ? text : null;
 }
