@@ -190,22 +190,48 @@ async function getEquipmentList(): Promise<EquipmentOption[]> {
   return (data ?? []) as EquipmentOption[];
 }
 
-async function getCustomerVisits(
+async function getPastVisits(
   jobberClientId: string
 ): Promise<CustomerVisit[]> {
+  const nowIso = new Date().toISOString();
+
   const { data, error } = await supabaseServer
     .from("jobber_visits")
     .select("jobber_visit_id, title, visit_status, start_at, completed_at")
     .eq("jobber_client_id", jobberClientId)
-    .order("start_at", { ascending: false, nullsFirst: false })
-    .limit(10);
+    .not("start_at", "is", null)
+    .lt("start_at", nowIso)
+    .order("start_at", { ascending: false });
 
   if (error) {
-    console.error("Customer visits query failed:", error.message);
+    console.error("Past visits query failed:", error.message);
     return [];
   }
 
   return (data ?? []) as CustomerVisit[];
+}
+
+async function getNextVisit(
+  jobberClientId: string
+): Promise<CustomerVisit | null> {
+  const nowIso = new Date().toISOString();
+
+  const { data, error } = await supabaseServer
+    .from("jobber_visits")
+    .select("jobber_visit_id, title, visit_status, start_at, completed_at")
+    .eq("jobber_client_id", jobberClientId)
+    .not("start_at", "is", null)
+    .gte("start_at", nowIso)
+    .order("start_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Next visit query failed:", error.message);
+    return null;
+  }
+
+  return (data as CustomerVisit | null) ?? null;
 }
 
 async function getVisitUsageMaps(visitIds: string[]): Promise<{
@@ -644,6 +670,104 @@ function statusClasses(status: string | null): string {
   return "bg-gray-100 text-gray-700";
 }
 
+function VisitCostForm({
+  visit,
+  materialsList,
+  equipmentList,
+  visitUsageMap,
+  visitEquipmentUsageSet,
+  pageEquipmentIds,
+}: {
+  visit: CustomerVisit;
+  materialsList: MaterialOption[];
+  equipmentList: EquipmentOption[];
+  visitUsageMap: Map<string, number>;
+  visitEquipmentUsageSet: Set<string>;
+  pageEquipmentIds: string;
+}) {
+  if (materialsList.length === 0) {
+    return null;
+  }
+
+  return (
+    <form action={saveVisitCosts} className="space-y-3">
+      <input
+        type="hidden"
+        name="page_visit_ids"
+        value={visit.jobber_visit_id}
+      />
+      <input
+        type="hidden"
+        name="page_equipment_ids"
+        value={pageEquipmentIds}
+      />
+
+      <div className="grid grid-cols-2 gap-2">
+        {materialsList.map((material) => {
+          const isTime = material.unit_label.toLowerCase() === "hour";
+          const raw =
+            visitUsageMap.get(`${visit.jobber_visit_id}:${material.id}`) ||
+            0;
+
+          return (
+            <label key={material.id} className="block">
+              <span className="text-[10px] font-bold text-[#9c7a20]">
+                {material.name}
+              </span>
+              <input
+                type={isTime ? "text" : "number"}
+                inputMode={isTime ? "text" : "decimal"}
+                step={isTime ? undefined : "0.01"}
+                min={isTime ? undefined : "0"}
+                pattern={isTime ? "[0-9]{1,2}:[0-5][0-9]" : undefined}
+                name={`usage[${visit.jobber_visit_id}][${material.id}]`}
+                defaultValue={
+                  isTime ? decimalHoursToHMM(raw) : raw || ""
+                }
+                placeholder={isTime ? "1:30" : "0"}
+                className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-2 py-1.5 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+              />
+            </label>
+          );
+        })}
+      </div>
+
+      {equipmentList.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {equipmentList.map((item) => {
+            const checked = visitEquipmentUsageSet.has(
+              `${visit.jobber_visit_id}:${item.id}`
+            );
+
+            return (
+              <label
+                key={item.id}
+                className="flex items-center gap-1.5 rounded-lg bg-[#f7f6f1] px-2 py-1.5"
+              >
+                <input
+                  type="checkbox"
+                  name={`equipment[${visit.jobber_visit_id}][${item.id}]`}
+                  value="1"
+                  defaultChecked={checked}
+                  className="h-4 w-4 rounded border-[#d9d4c6] text-[#174734] focus:ring-[#d4af37]"
+                />
+                <span className="text-xs font-semibold">{item.name}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+
+      <button
+        type="submit"
+        className="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246]"
+      >
+        Save Changes
+      </button>
+    </form>
+  );
+}
+
 export default async function CustomerDetailPage({
   params,
 }: CustomerDetailPageProps) {
@@ -658,7 +782,8 @@ export default async function CustomerDetailPage({
     invoiceCosts,
     materialsList,
     equipmentList,
-    visits,
+    pastVisits,
+    nextVisit,
   ] = await Promise.all([
     getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
@@ -667,7 +792,8 @@ export default async function CustomerDetailPage({
     getInvoiceCostBreakdowns(decodedId),
     getMaterialsList(),
     getEquipmentList(),
-    getCustomerVisits(decodedId),
+    getPastVisits(decodedId),
+    getNextVisit(decodedId),
   ]);
 
   if (!client) {
@@ -716,11 +842,16 @@ export default async function CustomerDetailPage({
   const quotes = client.quotes?.nodes ?? [];
   const invoices = client.invoices?.nodes ?? [];
 
+  const allVisitIds = [
+    ...pastVisits.map((visit) => visit.jobber_visit_id),
+    ...(nextVisit ? [nextVisit.jobber_visit_id] : []),
+  ];
+
   const {
     usageMap: visitUsageMap,
     equipmentUsageSet: visitEquipmentUsageSet,
     costMap: visitCostMap,
-  } = await getVisitUsageMaps(visits.map((visit) => visit.jobber_visit_id));
+  } = await getVisitUsageMaps(allVisitIds);
 
   const pageEquipmentIds = equipmentList.map((item) => item.id).join(",");
 
@@ -898,6 +1029,44 @@ export default async function CustomerDetailPage({
                   </p>
                 )}
               </div>
+            </section>
+
+            <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">Next Visit</h2>
+
+              {nextVisit ? (
+                <>
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <p className="text-sm font-bold">
+                      {formatVisitDateTime(nextVisit.start_at)}
+                      {nextVisit.title ? ` — ${nextVisit.title}` : ""}
+                    </p>
+
+                    <span
+                      className={`w-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${visitStatusBadge(
+                        nextVisit.visit_status
+                      )}`}
+                    >
+                      {nextVisit.visit_status || "Unknown"}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 border-t border-[#f0eee6] pt-4">
+                    <VisitCostForm
+                      visit={nextVisit}
+                      materialsList={materialsList}
+                      equipmentList={equipmentList}
+                      visitUsageMap={visitUsageMap}
+                      visitEquipmentUsageSet={visitEquipmentUsageSet}
+                      pageEquipmentIds={pageEquipmentIds}
+                    />
+                  </div>
+                </>
+              ) : (
+                <p className="mt-3 rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                  No upcoming visit scheduled.
+                </p>
+              )}
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">
@@ -1084,6 +1253,158 @@ export default async function CustomerDetailPage({
 
           <div className="space-y-4">
             <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">Past Visits</h2>
+
+              <p className="mt-1 text-xs text-[#6b705c]">
+                Log materials, labor, fuel, and equipment per visit here.
+              </p>
+
+              <div className="mt-3 max-h-[600px] space-y-2 overflow-y-auto pr-1">
+                {pastVisits.length > 0 ? (
+                  pastVisits.map((visit) => (
+                    <details
+                      key={visit.jobber_visit_id}
+                      className="rounded-xl border border-[#e7e2d5] px-3 py-2"
+                    >
+                      <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold">
+                            {formatVisitDateTime(visit.start_at)}
+                            {visit.title ? ` — ${visit.title}` : ""}
+                          </p>
+                        </div>
+
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span
+                            className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${visitStatusBadge(
+                              visit.visit_status
+                            )}`}
+                          >
+                            {visit.visit_status || "Unknown"}
+                          </span>
+
+                          <p className="text-sm font-bold">
+                            {formatCurrencyPrecise(
+                              visitCostMap.get(visit.jobber_visit_id) ?? 0
+                            )}
+                          </p>
+                        </div>
+                      </summary>
+
+                      <div className="mt-4 border-t border-[#f0eee6] pt-4">
+                        <VisitCostForm
+                          visit={visit}
+                          materialsList={materialsList}
+                          equipmentList={equipmentList}
+                          visitUsageMap={visitUsageMap}
+                          visitEquipmentUsageSet={visitEquipmentUsageSet}
+                          pageEquipmentIds={pageEquipmentIds}
+                        />
+                      </div>
+                    </details>
+                  ))
+                ) : (
+                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                    No past visits found.
+                  </p>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">
+                Recent Invoices
+              </h2>
+
+              <div className="mt-3 space-y-2">
+                {invoices.length > 0 ? (
+                  invoices.map((invoice) => {
+                    const cost = invoiceCosts.get(invoice.id);
+                    const profit = cost
+                      ? toNumber(cost.estimated_profit)
+                      : null;
+
+                    const content = (
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold">
+                            Invoice #{invoice.invoiceNumber ?? "—"}
+                            {invoice.subject ? ` — ${invoice.subject}` : ""}
+                          </p>
+
+                          <p className="text-xs text-[#6b705c]">
+                            Issued {formatDate(invoice.issuedDate)}
+                          </p>
+
+                          {cost && (
+                            <p className="mt-1 text-xs text-[#6b705c]">
+                              {formatCurrencyPrecise(cost.direct_cost)} direct
+                              {" + "}
+                              {formatCurrencyPrecise(cost.overhead_allocated)}{" "}
+                              overhead
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
+                                invoice.invoiceStatus
+                              )}`}
+                            >
+                              {formatStatus(invoice.invoiceStatus)}
+                            </span>
+
+                            <p className="text-sm font-bold">
+                              {formatCurrency(invoice.total)}
+                            </p>
+                          </div>
+
+                          {profit !== null && (
+                            <p
+                              className={`text-xs font-bold ${
+                                profit >= 0
+                                  ? "text-green-700"
+                                  : "text-red-600"
+                              }`}
+                            >
+                              {formatCurrencyPrecise(profit)} profit
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+
+                    return (
+                      <div
+                        key={invoice.id}
+                        className="overflow-hidden rounded-xl border border-[#e7e2d5]"
+                      >
+                        {invoice.jobberWebUri ? (
+                          <a
+                            href={invoice.jobberWebUri}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block px-3 py-2 transition hover:bg-[#f7f6f1]"
+                          >
+                            {content}
+                          </a>
+                        ) : (
+                          <div className="px-3 py-2">{content}</div>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                    No invoices found.
+                  </p>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">
                 Recent Jobs
               </h2>
@@ -1210,247 +1531,6 @@ export default async function CustomerDetailPage({
                 ) : (
                   <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
                     No quotes found.
-                  </p>
-                )}
-              </div>
-            </section>
-
-            <section className="rounded-2xl bg-white p-5 shadow">
-              <h2 className="text-lg font-bold">
-                Recent Invoices
-              </h2>
-
-              <div className="mt-3 space-y-2">
-                {invoices.length > 0 ? (
-                  invoices.map((invoice) => {
-                    const cost = invoiceCosts.get(invoice.id);
-                    const profit = cost
-                      ? toNumber(cost.estimated_profit)
-                      : null;
-
-                    const content = (
-                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-bold">
-                            Invoice #{invoice.invoiceNumber ?? "—"}
-                            {invoice.subject ? ` — ${invoice.subject}` : ""}
-                          </p>
-
-                          <p className="text-xs text-[#6b705c]">
-                            Issued {formatDate(invoice.issuedDate)}
-                          </p>
-
-                          {cost && (
-                            <p className="mt-1 text-xs text-[#6b705c]">
-                              {formatCurrencyPrecise(cost.direct_cost)} direct
-                              {" + "}
-                              {formatCurrencyPrecise(cost.overhead_allocated)}{" "}
-                              overhead
-                            </p>
-                          )}
-                        </div>
-
-                        <div className="flex shrink-0 flex-col items-end gap-1">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
-                                invoice.invoiceStatus
-                              )}`}
-                            >
-                              {formatStatus(invoice.invoiceStatus)}
-                            </span>
-
-                            <p className="text-sm font-bold">
-                              {formatCurrency(invoice.total)}
-                            </p>
-                          </div>
-
-                          {profit !== null && (
-                            <p
-                              className={`text-xs font-bold ${
-                                profit >= 0
-                                  ? "text-green-700"
-                                  : "text-red-600"
-                              }`}
-                            >
-                              {formatCurrencyPrecise(profit)} profit
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    );
-
-                    return (
-                      <div
-                        key={invoice.id}
-                        className="overflow-hidden rounded-xl border border-[#e7e2d5]"
-                      >
-                        {invoice.jobberWebUri ? (
-                          <a
-                            href={invoice.jobberWebUri}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="block px-3 py-2 transition hover:bg-[#f7f6f1]"
-                          >
-                            {content}
-                          </a>
-                        ) : (
-                          <div className="px-3 py-2">{content}</div>
-                        )}
-                      </div>
-                    );
-                  })
-                ) : (
-                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
-                    No invoices found.
-                  </p>
-                )}
-              </div>
-            </section>
-
-            <section className="rounded-2xl bg-white p-5 shadow">
-              <h2 className="text-lg font-bold">Recent Visits</h2>
-
-              <p className="mt-1 text-xs text-[#6b705c]">
-                Log materials, labor, fuel, and equipment per visit here.
-              </p>
-
-              <div className="mt-3 space-y-2">
-                {visits.length > 0 ? (
-                  visits.map((visit) => (
-                    <details
-                      key={visit.jobber_visit_id}
-                      className="rounded-xl border border-[#e7e2d5] px-3 py-2"
-                    >
-                      <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-bold">
-                            {formatVisitDateTime(visit.start_at)}
-                            {visit.title ? ` — ${visit.title}` : ""}
-                          </p>
-                        </div>
-
-                        <div className="flex shrink-0 items-center gap-2">
-                          <span
-                            className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${visitStatusBadge(
-                              visit.visit_status
-                            )}`}
-                          >
-                            {visit.visit_status || "Unknown"}
-                          </span>
-
-                          <p className="text-sm font-bold">
-                            {formatCurrencyPrecise(
-                              visitCostMap.get(visit.jobber_visit_id) ?? 0
-                            )}
-                          </p>
-                        </div>
-                      </summary>
-
-                      {materialsList.length > 0 && (
-                        <div className="mt-4 border-t border-[#f0eee6] pt-4">
-                          <form
-                            action={saveVisitCosts}
-                            className="space-y-3"
-                          >
-                            <input
-                              type="hidden"
-                              name="page_visit_ids"
-                              value={visit.jobber_visit_id}
-                            />
-                            <input
-                              type="hidden"
-                              name="page_equipment_ids"
-                              value={pageEquipmentIds}
-                            />
-
-                            <div className="grid grid-cols-2 gap-2">
-                              {materialsList.map((material) => {
-                                const isTime =
-                                  material.unit_label.toLowerCase() ===
-                                  "hour";
-                                const raw =
-                                  visitUsageMap.get(
-                                    `${visit.jobber_visit_id}:${material.id}`
-                                  ) || 0;
-
-                                return (
-                                  <label
-                                    key={material.id}
-                                    className="block"
-                                  >
-                                    <span className="text-[10px] font-bold text-[#9c7a20]">
-                                      {material.name}
-                                    </span>
-                                    <input
-                                      type={isTime ? "text" : "number"}
-                                      inputMode={
-                                        isTime ? "text" : "decimal"
-                                      }
-                                      step={isTime ? undefined : "0.01"}
-                                      min={isTime ? undefined : "0"}
-                                      pattern={
-                                        isTime
-                                          ? "[0-9]{1,2}:[0-5][0-9]"
-                                          : undefined
-                                      }
-                                      name={`usage[${visit.jobber_visit_id}][${material.id}]`}
-                                      defaultValue={
-                                        isTime
-                                          ? decimalHoursToHMM(raw)
-                                          : raw || ""
-                                      }
-                                      placeholder={isTime ? "1:30" : "0"}
-                                      className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-2 py-1.5 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-                                    />
-                                  </label>
-                                );
-                              })}
-                            </div>
-
-                            {equipmentList.length > 0 && (
-                              <div className="flex flex-wrap gap-2">
-                                {equipmentList.map((item) => {
-                                  const checked =
-                                    visitEquipmentUsageSet.has(
-                                      `${visit.jobber_visit_id}:${item.id}`
-                                    );
-
-                                  return (
-                                    <label
-                                      key={item.id}
-                                      className="flex items-center gap-1.5 rounded-lg bg-[#f7f6f1] px-2 py-1.5"
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        name={`equipment[${visit.jobber_visit_id}][${item.id}]`}
-                                        value="1"
-                                        defaultChecked={checked}
-                                        className="h-4 w-4 rounded border-[#d9d4c6] text-[#174734] focus:ring-[#d4af37]"
-                                      />
-                                      <span className="text-xs font-semibold">
-                                        {item.name}
-                                      </span>
-                                    </label>
-                                  );
-                                })}
-                              </div>
-                            )}
-
-                            <button
-                              type="submit"
-                              className="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246]"
-                            >
-                              Save Changes
-                            </button>
-                          </form>
-                        </div>
-                      )}
-                    </details>
-                  ))
-                ) : (
-                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
-                    No visits found.
                   </p>
                 )}
               </div>
