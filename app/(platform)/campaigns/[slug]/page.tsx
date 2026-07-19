@@ -88,17 +88,17 @@ export default async function CampaignDetailPage({
   const lastScan = scans?.[0]?.scanned_at ?? null;
 
   return (
-    <main className="min-h-screen bg-[#F7F6F2] p-8 text-[#1F2937]">
+    <main className="min-h-screen bg-[#f5f4ef] p-8 text-[#174734]">
       <div className="mx-auto max-w-5xl">
         <Link
           href="/codes"
-          className="text-sm font-semibold text-[#0E3B2E] hover:underline"
+          className="text-sm font-semibold text-[#174734] hover:underline"
         >
           ← Back to QR Library
         </Link>
 
-        <section className="mt-4 rounded-3xl bg-gradient-to-r from-[#0E3B2E] to-[#2E6B3F] p-8 text-white shadow-lg">
-          <p className="text-sm font-semibold uppercase tracking-widest text-[#F2C94C]">
+        <section className="mt-4 rounded-3xl bg-gradient-to-r from-[#174734] to-[#226246] p-8 text-white shadow-lg">
+          <p className="text-sm font-semibold uppercase tracking-widest text-[#d4af37]">
             Campaign
           </p>
           <h1 className="mt-2 text-4xl font-bold">
@@ -108,23 +108,23 @@ export default async function CampaignDetailPage({
         </section>
 
         <section className="mt-8 grid gap-6 sm:grid-cols-2">
-          <div className="rounded-2xl border border-[#D9E4D4] bg-white p-6 shadow-sm">
-            <p className="text-xs text-[#6B7280]">Total Scans</p>
-            <p className="mt-1 text-4xl font-bold text-[#0E3B2E]">
+          <div className="rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
+            <p className="text-xs text-[#6b705c]">Total Scans</p>
+            <p className="mt-1 text-4xl font-bold text-[#174734]">
               {totalScans}
             </p>
           </div>
 
-          <div className="rounded-2xl border border-[#D9E4D4] bg-white p-6 shadow-sm">
-            <p className="text-xs text-[#6B7280]">Last Scan</p>
-            <p className="mt-1 text-lg font-semibold text-[#0E3B2E]">
+          <div className="rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
+            <p className="text-xs text-[#6b705c]">Last Scan</p>
+            <p className="mt-1 text-lg font-semibold text-[#174734]">
               {formatArizonaTime(lastScan)}
             </p>
           </div>
         </section>
 
-        <section className="mt-8 rounded-2xl border border-[#D9E4D4] bg-white p-6 shadow-sm">
-          <h2 className="text-2xl font-bold text-[#0E3B2E]">Edit Campaign</h2>
+        <section className="mt-8 rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
+          <h2 className="text-2xl font-bold text-[#174734]">Edit Campaign</h2>
 
           <form
             action={updateCampaign}
@@ -133,59 +133,59 @@ export default async function CampaignDetailPage({
             <input type="hidden" name="id" value={campaign.id} />
 
             <div>
-              <label className="text-sm font-semibold text-[#1F2937]">
+              <label className="text-sm font-semibold text-[#174734]">
                 Campaign Name
               </label>
               <input
                 name="name"
                 defaultValue={campaign.name}
                 required
-                className="mt-1 w-full rounded-xl border border-[#D9E4D4] p-3 outline-none focus:border-[#D4A32A]"
+                className="mt-1 w-full rounded-xl border border-[#e7e2d5] p-3 outline-none focus:border-[#d4af37]"
               />
             </div>
 
             <div>
-              <label className="text-sm font-semibold text-[#1F2937]">
+              <label className="text-sm font-semibold text-[#174734]">
                 Display Alias
               </label>
               <input
                 name="alias"
                 defaultValue={campaign.alias ?? ""}
-                className="mt-1 w-full rounded-xl border border-[#D9E4D4] p-3 outline-none focus:border-[#D4A32A]"
+                className="mt-1 w-full rounded-xl border border-[#e7e2d5] p-3 outline-none focus:border-[#d4af37]"
               />
             </div>
 
             <div>
-              <label className="text-sm font-semibold text-[#1F2937]">
+              <label className="text-sm font-semibold text-[#174734]">
                 Slug
               </label>
               <input
                 name="slug"
                 defaultValue={campaign.slug}
                 required
-                className="mt-1 w-full rounded-xl border border-[#D9E4D4] p-3 outline-none focus:border-[#D4A32A]"
+                className="mt-1 w-full rounded-xl border border-[#e7e2d5] p-3 outline-none focus:border-[#d4af37]"
               />
-              <p className="mt-1 text-xs text-[#6B7280]">
+              <p className="mt-1 text-xs text-[#6b705c]">
                 Changing this changes the tracking URL and this page's address.
               </p>
             </div>
 
             <div>
-              <label className="text-sm font-semibold text-[#1F2937]">
+              <label className="text-sm font-semibold text-[#174734]">
                 Destination URL
               </label>
               <input
                 name="destination"
                 defaultValue={campaign.destination}
                 required
-                className="mt-1 w-full rounded-xl border border-[#D9E4D4] p-3 outline-none focus:border-[#D4A32A]"
+                className="mt-1 w-full rounded-xl border border-[#e7e2d5] p-3 outline-none focus:border-[#d4af37]"
               />
             </div>
 
             <div className="md:col-span-2">
               <button
                 type="submit"
-                className="rounded-xl bg-[#0E3B2E] px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-[#2E6B3F]"
+                className="rounded-xl bg-[#174734] px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-[#226246]"
               >
                 Save Changes
               </button>
@@ -193,14 +193,14 @@ export default async function CampaignDetailPage({
           </form>
         </section>
 
-        <section className="mt-8 rounded-2xl border border-[#D9E4D4] bg-white p-6 shadow-sm">
-          <h2 className="text-2xl font-bold text-[#0E3B2E]">Scan History</h2>
+        <section className="mt-8 rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
+          <h2 className="text-2xl font-bold text-[#174734]">Scan History</h2>
 
           <div className="mt-5 overflow-x-auto">
             {scans && scans.length > 0 ? (
               <table className="w-full text-left text-sm">
                 <thead>
-                  <tr className="border-b border-[#D9E4D4] text-[#6B7280]">
+                  <tr className="border-b border-[#e7e2d5] text-[#6b705c]">
                     <th className="pb-2 pr-4">Time</th>
                     <th className="pb-2 pr-4">Location</th>
                     <th className="pb-2 pr-4">Device</th>
@@ -208,7 +208,7 @@ export default async function CampaignDetailPage({
                 </thead>
                 <tbody>
                   {scans.map((scan) => (
-                    <tr key={scan.id} className="border-b border-[#F0EEE8]">
+                    <tr key={scan.id} className="border-b border-[#f0eee6]">
                       <td className="py-2 pr-4">
                         {formatArizonaTime(scan.scanned_at)}
                       </td>
@@ -225,7 +225,7 @@ export default async function CampaignDetailPage({
                 </tbody>
               </table>
             ) : (
-              <p className="text-sm text-[#6B7280]">No scans yet.</p>
+              <p className="text-sm text-[#6b705c]">No scans yet.</p>
             )}
           </div>
         </section>
