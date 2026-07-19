@@ -488,14 +488,14 @@ export default async function CustomersPage({
         <section className="mt-6">
           <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <p className="font-semibold">
-              Showing {firstCustomerNumber}â€“{lastCustomerNumber} of{" "}
+              Showing {firstCustomerNumber}-{lastCustomerNumber} of{" "}
               {totalCustomers} customer
               {totalCustomers === 1 ? "" : "s"}
             </p>
 
             {search && (
               <p className="text-sm text-[#6b705c]">
-                Search results for â€œ{search}â€
+                Search results for "{search}"
               </p>
             )}
           </div>
