@@ -1,4 +1,4 @@
-export const dynamic = "force-dynamic";
+﻿export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import Link from "next/link";
@@ -363,7 +363,7 @@ async function checkSyncFreshness(): Promise<Check> {
       name: "Customer sync freshness",
       status: "warn",
       detail: `Last synced ${daysAgo} days ago.`,
-      hint: "Consider running Sync Jobber Customers on the Customers page.",
+      hint: "Customer sync now runs automatically via webhooks and a daily backup job. If this persists, check /settings/jobber for sync status.",
     };
   }
 
@@ -383,6 +383,7 @@ export default async function HealthPage() {
     checkInvoiceCountConsistency(),
     checkOverheadCostsExist(),
     checkMaterialsExist(),
+    checkWebhookBacklog(),
     checkSyncFreshness(),
   ]);
 
@@ -480,4 +481,54 @@ export default async function HealthPage() {
       </div>
     </main>
   );
+}
+
+async function checkWebhookBacklog(): Promise<Check> {
+  const { count: failedCount } = await supabaseServer
+    .from("jobber_webhook_events")
+    .select("*", { count: "exact", head: true })
+    .eq("status", "failed");
+
+  const staleThreshold = new Date(
+    Date.now() - 24 * 60 * 60 * 1000
+  ).toISOString();
+
+  const { count: stalePendingCount } = await supabaseServer
+    .from("jobber_webhook_events")
+    .select("*", { count: "exact", head: true })
+    .eq("status", "pending")
+    .lt("created_at", staleThreshold);
+
+  const failed = failedCount ?? 0;
+  const stalePending = stalePendingCount ?? 0;
+
+  if (failed > 0) {
+    return {
+      name: "Webhook processing backlog",
+      status: "fail",
+      detail: `${failed} webhook event${
+        failed === 1 ? "" : "s"
+      } permanently failed (hit max retry attempts) and need${
+        failed === 1 ? "s" : ""
+      } a manual reset.`,
+      hint: "Reset in Supabase: update jobber_webhook_events set status='pending', attempts=0, error_message=null where status='failed'; then trigger /api/jobber/process-webhooks.",
+    };
+  }
+
+  if (stalePending > 0) {
+    return {
+      name: "Webhook processing backlog",
+      status: "warn",
+      detail: `${stalePending} webhook event${
+        stalePending === 1 ? "" : "s"
+      } have been pending for over 24 hours - the sync cron may not be keeping up.`,
+      hint: "Check /settings/jobber for sync status, or manually trigger /api/jobber/process-webhooks.",
+    };
+  }
+
+  return {
+    name: "Webhook processing backlog",
+    status: "pass",
+    detail: "No failed or stale pending webhook events.",
+  };
 }
