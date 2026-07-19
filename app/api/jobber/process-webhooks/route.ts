@@ -388,27 +388,64 @@ async function processWebhookEvent(
     }
 
     case "JOB_CREATE":
-    case "JOB_UPDATE":
-    case "JOB_DESTROY":
-      console.log(
-        `Job webhook received for item ${
-          event.jobber_item_id ?? "unknown"
-        }. Incremental job sync is coming next.`
-      );
-
+    case "JOB_UPDATE": {
+      if (!event.jobber_item_id) {
+        throw new Error(
+          `${topic} webhook did not contain a Jobber job ID.`
+        );
+      }
+      await syncSingleJob(event.jobber_item_id);
       return;
+    }
+    case "JOB_DESTROY": {
+      if (!event.jobber_item_id) {
+        throw new Error(
+          "JOB_DESTROY webhook did not contain a Jobber job ID."
+        );
+      }
+      await handleDestroyedJob(event.jobber_item_id);
+      return;
+    }
 
     case "INVOICE_CREATE":
-    case "INVOICE_UPDATE":
-    case "INVOICE_DESTROY":
-      console.log(
-        `Invoice webhook received for item ${
-          event.jobber_item_id ?? "unknown"
-        }. Incremental invoice sync is coming next.`
-      );
-
+    case "INVOICE_UPDATE": {
+      if (!event.jobber_item_id) {
+        throw new Error(
+          `${topic} webhook did not contain a Jobber invoice ID.`
+        );
+      }
+      await syncSingleInvoice(event.jobber_item_id);
       return;
+    }
+    case "INVOICE_DESTROY": {
+      if (!event.jobber_item_id) {
+        throw new Error(
+          "INVOICE_DESTROY webhook did not contain a Jobber invoice ID."
+        );
+      }
+      await handleDestroyedInvoice(event.jobber_item_id);
+      return;
+    }
 
+    case "VISIT_CREATE":
+    case "VISIT_UPDATE": {
+      if (!event.jobber_item_id) {
+        throw new Error(
+          `${topic} webhook did not contain a Jobber visit ID.`
+        );
+      }
+      await syncSingleVisit(event.jobber_item_id);
+      return;
+    }
+    case "VISIT_DESTROY": {
+      if (!event.jobber_item_id) {
+        throw new Error(
+          "VISIT_DESTROY webhook did not contain a Jobber visit ID."
+        );
+      }
+      await handleDestroyedVisit(event.jobber_item_id);
+      return;
+    }
     default:
       throw new Error(
         `Unsupported Jobber webhook topic: ${topic}`
