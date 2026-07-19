@@ -1,4 +1,4 @@
-export const dynamic = "force-dynamic";
+﻿export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import Link from "next/link";
@@ -908,11 +908,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
               </p>
 
               <h1 className="mt-2 text-4xl font-bold">Financial Dashboard</h1>
-
-              <p className="mt-2 max-w-2xl text-[#6b705c]">
-                Revenue, payments, customer value, and accounts receivable from
-                your synchronized Jobber data.
-              </p>
             </div>
 
             <div className="flex flex-wrap gap-3">
@@ -921,20 +916,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                 className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold transition hover:bg-white"
               >
                 Manage Costs
-              </Link>
-
-              <Link
-                href="/api/jobber/sync-invoices"
-                className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold transition hover:bg-white"
-              >
-                Sync Invoices
-              </Link>
-
-              <Link
-                href="/api/jobber/sync-payments"
-                className="rounded-xl bg-[#d4af37] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#e6c766]"
-              >
-                Sync Payments
               </Link>
             </div>
           </header>
