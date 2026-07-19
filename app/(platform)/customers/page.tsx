@@ -1,4 +1,4 @@
-export const dynamic = "force-dynamic";
+﻿export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import Link from "next/link";
@@ -379,9 +379,6 @@ export default async function CustomersPage({
               Customers
             </h1>
 
-            <p className="mt-2 text-[#6b705c]">
-              Search and view customers synchronized from Jobber.
-            </p>
 
             <div className="mt-3 flex items-center gap-2 text-sm text-[#6b705c]">
               <span className="h-3 w-3 rounded-full border-2 border-[#174734] bg-[#eef4ee]" />
@@ -393,12 +390,6 @@ export default async function CustomersPage({
 
           <div className="flex flex-col items-end gap-2">
             <div className="flex flex-wrap gap-3">
-              <Link
-                href="/api/jobber/sync-customers"
-                className="rounded-xl bg-[#d4af37] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#e6c766]"
-              >
-                Sync Jobber Customers
-              </Link>
 
               <Link
                 href="/"
@@ -497,14 +488,14 @@ export default async function CustomersPage({
         <section className="mt-6">
           <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <p className="font-semibold">
-              Showing {firstCustomerNumber}–{lastCustomerNumber} of{" "}
+              Showing {firstCustomerNumber}â€“{lastCustomerNumber} of{" "}
               {totalCustomers} customer
               {totalCustomers === 1 ? "" : "s"}
             </p>
 
             {search && (
               <p className="text-sm text-[#6b705c]">
-                Search results for “{search}”
+                Search results for â€œ{search}â€
               </p>
             )}
           </div>
@@ -650,11 +641,11 @@ export default async function CustomersPage({
                 href={previousPageUrl}
                 className="w-full rounded-xl border border-[#d9d4c6] px-5 py-3 text-center font-bold transition hover:bg-[#f7f6f1] sm:w-auto"
               >
-                ← Previous
+                â† Previous
               </Link>
             ) : (
               <span className="w-full cursor-not-allowed rounded-xl border border-[#e6e2d8] px-5 py-3 text-center font-bold text-[#aaa99f] sm:w-auto">
-                ← Previous
+                â† Previous
               </span>
             )}
 
@@ -667,11 +658,11 @@ export default async function CustomersPage({
                 href={nextPageUrl}
                 className="w-full rounded-xl bg-[#174734] px-5 py-3 text-center font-bold text-white transition hover:bg-[#226246] sm:w-auto"
               >
-                Next →
+                Next â†’
               </Link>
             ) : (
               <span className="w-full cursor-not-allowed rounded-xl bg-[#d5d5cf] px-5 py-3 text-center font-bold text-white sm:w-auto">
-                Next →
+                Next â†’
               </span>
             )}
           </nav>
