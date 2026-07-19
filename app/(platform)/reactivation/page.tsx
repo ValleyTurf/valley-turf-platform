@@ -1,4 +1,4 @@
-export const dynamic = "force-dynamic";
+﻿export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import Link from "next/link";
@@ -424,34 +424,48 @@ export default async function ReactivationPage({
     ? requestedFilter
     : "all";
 
-  const { data: customers, error } =
-    await supabaseServer
-      .from("customers")
-      .select(
-        `
-          id,
-          first_name,
-          last_name,
-          company_name,
-          email,
-          phone,
-          first_job_at,
-          last_job_at,
-          total_jobs,
-          total_completed_jobs,
-          reactivation_status,
-          reactivation_last_contacted_at,
-          reactivation_next_follow_up_at,
-          reactivation_contact_attempts
-        `
-      )
-      .gt("total_completed_jobs", 0)
-      .not("last_job_at", "is", null)
-      .neq("reactivation_status", "removed")
-      .order("last_job_at", {
-        ascending: true,
-      })
-      .limit(1000);
+  const { data: exclusionsData } = await supabaseServer
+    .from("customer_intelligence_exclusions")
+    .select("jobber_client_id")
+    .eq("exclusion_type", "reactivation");
+
+  const excludedClientIds = (exclusionsData ?? []).map(
+    (row) => row.jobber_client_id
+  );
+
+  const idListForFilter =
+    excludedClientIds.length > 0
+      ? excludedClientIds.map((id) => `"${id}"`).join(",")
+      : '"__none__"';
+
+  const { data: customers, error } = await supabaseServer
+    .from("customers")
+    .select(
+      `
+        id,
+        first_name,
+        last_name,
+        company_name,
+        email,
+        phone,
+        first_job_at,
+        last_job_at,
+        total_jobs,
+        total_completed_jobs,
+        reactivation_status,
+        reactivation_last_contacted_at,
+        reactivation_next_follow_up_at,
+        reactivation_contact_attempts
+      `
+    )
+    .gt("total_completed_jobs", 0)
+    .not("last_job_at", "is", null)
+    .neq("reactivation_status", "removed")
+    .not("jobber_client_id", "in", `(${idListForFilter})`)
+    .order("last_job_at", {
+      ascending: true,
+    })
+    .limit(1000);
 
   if (error) {
     return (
