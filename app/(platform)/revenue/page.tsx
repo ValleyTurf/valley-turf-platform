@@ -1178,7 +1178,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
           <div className="mt-8 grid gap-6 lg:grid-cols-2">
           <section
             id="revenue-by-market"
-            className="mt-8 scroll-mt-6 rounded-3xl bg-white p-8 shadow"
+            className="scroll-mt-6 rounded-3xl bg-white p-8 shadow"
           >
             <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
               <div>
