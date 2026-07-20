@@ -1175,6 +1175,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
             </div>
           </section>
 
+          <div className="mt-8 grid gap-6 lg:grid-cols-2">
           <section
             id="revenue-by-market"
             className="mt-8 scroll-mt-6 rounded-3xl bg-white p-8 shadow"
@@ -1317,8 +1318,8 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                             <p className="mt-1 text-lg font-bold">
                               {market.market}
                             </p>
+                          </div>
                           <div>
-                            </div>
 
                             <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-[#6b705c]">
                               <span>
@@ -1374,6 +1375,53 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
               </>
             )}
           </section>
+
+          <section className="rounded-3xl bg-white p-8 shadow">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
+                Market Intelligence
+              </p>
+              <h2 className="mt-2 text-2xl font-bold">Revenue by Service</h2>
+              <p className="mt-2 text-sm font-semibold text-[#174734]">
+                {marketDateLabel}
+              </p>
+            </div>
+
+            {serviceCategoryRevenue.length === 0 ? (
+              <p className="mt-6 rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+                No invoice revenue was found for this timeframe.
+              </p>
+            ) : (
+              <div className="mt-7 space-y-3">
+                {serviceCategoryRevenue.map((service, index) => (
+                  <div
+                    key={service.category}
+                    className="flex items-center justify-between gap-4 rounded-2xl border border-[#e7e2d5] p-4"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f7f6f1] text-sm font-bold">
+                        {index + 1}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate font-bold">
+                          {service.category}
+                        </p>
+                        <p className="text-xs text-[#6b705c]">
+                          {formatNumber(service.invoiceCount)} invoice
+                          {service.invoiceCount === 1 ? "" : "s"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <p className="shrink-0 text-xl font-bold text-[#9c7a20]">
+                      {formatCurrency(service.revenue)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+          </div>
 
           <section className="mt-8 rounded-3xl bg-white p-8 shadow">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
