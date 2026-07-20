@@ -1185,10 +1185,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                   Market Intelligence
                 </p>
                 <h2 className="mt-2 text-2xl font-bold">Revenue by Market</h2>
-                <p className="mt-1 text-[#6b705c]">
-                  See which {marketMode === "zip" ? "ZIP codes" : "cities"}{" "}
-                  generate the most financial value.
-                </p>
                 <p className="mt-2 text-sm font-semibold text-[#174734]">
                   {marketDateLabel}
                 </p>
@@ -1321,14 +1317,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                             <p className="mt-1 text-lg font-bold">
                               {market.market}
                             </p>
-                          </div>
-
                           <div>
-                            <div className="h-4 overflow-hidden rounded-full bg-[#eeeae0]">
-                              <div
-                                className="h-full rounded-full bg-[#174734]"
-                                style={{ width: `${width}%` }}
-                              />
                             </div>
 
                             <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-[#6b705c]">
