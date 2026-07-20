@@ -430,6 +430,106 @@ async function fetchMarketInvoices(
 }
 
 
+
+type ServiceCategoryRevenue = {
+  category: string;
+  revenue: number;
+  invoiceCount: number;
+};
+
+async function fetchServiceCategoryRevenue(
+  startDate: string,
+  endDate: string,
+): Promise<ServiceCategoryRevenue[]> {
+  const pageSize = 1000;
+  const invoiceRows: {
+    jobber_invoice_id: string;
+    invoice_total: number | string;
+  }[] = [];
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseServer
+      .from("invoice_financials")
+      .select("jobber_invoice_id, invoice_total")
+      .gte("issue_date", startDate)
+      .lte("issue_date", endDate)
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+
+    const batch = (data ?? []) as {
+      jobber_invoice_id: string;
+      invoice_total: number | string;
+    }[];
+
+    invoiceRows.push(...batch);
+
+    if (batch.length < pageSize) break;
+  }
+
+  if (invoiceRows.length === 0) {
+    return [];
+  }
+
+  const invoiceIds = invoiceRows.map((row) => row.jobber_invoice_id);
+  const categoryRows: {
+    jobber_invoice_id: string;
+    service_category: string | null;
+  }[] = [];
+  const idBatchSize = 500;
+
+  for (let i = 0; i < invoiceIds.length; i += idBatchSize) {
+    const idBatch = invoiceIds.slice(i, i + idBatchSize);
+
+    const { data, error } = await supabaseServer
+      .from("invoice_service_category")
+      .select("jobber_invoice_id, service_category")
+      .in("jobber_invoice_id", idBatch);
+
+    if (error) throw error;
+
+    categoryRows.push(
+      ...((data ?? []) as {
+        jobber_invoice_id: string;
+        service_category: string | null;
+      }[]),
+    );
+  }
+
+  const categoryMap = new Map<string, string>();
+
+  for (const row of categoryRows) {
+    if (row.service_category) {
+      categoryMap.set(row.jobber_invoice_id, row.service_category);
+    }
+  }
+
+  const totals = new Map<
+    string,
+    { revenue: number; invoiceCount: number }
+  >();
+
+  for (const row of invoiceRows) {
+    const category =
+      categoryMap.get(row.jobber_invoice_id) ?? "Uncategorized";
+    const existing = totals.get(category) ?? {
+      revenue: 0,
+      invoiceCount: 0,
+    };
+
+    existing.revenue += Number(row.invoice_total ?? 0);
+    existing.invoiceCount += 1;
+    totals.set(category, existing);
+  }
+
+  return Array.from(totals.entries())
+    .map(([category, values]) => ({
+      category,
+      revenue: values.revenue,
+      invoiceCount: values.invoiceCount,
+    }))
+    .sort((a, b) => b.revenue - a.revenue);
+}
 async function fetchDashboardPayments(
   startDate: string,
   endDate: string,
@@ -643,6 +743,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       forecastResult,
       overheadCosts,
       marketInvoices,
+      serviceCategoryRevenue,
       previousMarketInvoices,
       marketCustomers,
       dashboardPayments,
@@ -711,6 +812,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       fetchOverheadCosts(),
 
       fetchMarketInvoices(startDate, endDate),
+      fetchServiceCategoryRevenue(startDate, endDate),
       fetchMarketInvoices(previousStartDate, previousEndDate),
       fetchMarketCustomers(),
       fetchDashboardPayments(startDate, endDate),
