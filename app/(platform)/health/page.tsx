@@ -385,6 +385,7 @@ export default async function HealthPage() {
     checkMaterialsExist(),
     checkWebhookBacklog(),
     checkSyncFreshness(),
+    checkJobberSyncStatus(),
   ]);
 
   const failCount = checks.filter((c) => c.status === "fail").length;
@@ -530,5 +531,70 @@ async function checkWebhookBacklog(): Promise<Check> {
     name: "Webhook processing backlog",
     status: "pass",
     detail: "No failed or stale pending webhook events.",
+  };
+}
+
+async function checkJobberSyncStatus(): Promise<Check> {
+  const { data, error } = await supabaseServer
+    .from("jobber_sync_status")
+    .select("sync_type, status, last_completed_at, last_error");
+
+  if (error) {
+    return {
+      name: "Jobber sync status",
+      status: "fail",
+      detail: `Query failed: ${error.message}`,
+    };
+  }
+
+  const rows = data ?? [];
+
+  const failed = rows.filter((row) => row.status === "failed");
+
+  if (failed.length > 0) {
+    const names = failed.map((row) => row.sync_type).join(", ");
+
+    return {
+      name: "Jobber sync status",
+      status: "fail",
+      detail: `${failed.length} sync${
+        failed.length === 1 ? "" : "s"
+      } currently failing: ${names}.`,
+      hint: failed[0].last_error
+        ? `Latest error (${failed[0].sync_type}): ${failed[0].last_error}`
+        : "Check /settings/jobber for details.",
+    };
+  }
+
+  const staleThresholdDays = 3;
+  const now = Date.now();
+
+  const stale = rows.filter((row) => {
+    if (!row.last_completed_at) return true;
+
+    const daysAgo =
+      (now - new Date(row.last_completed_at).getTime()) /
+      (1000 * 60 * 60 * 24);
+
+    return daysAgo > staleThresholdDays;
+  });
+
+  if (stale.length > 0) {
+    const names = stale.map((row) => row.sync_type).join(", ");
+
+    return {
+      name: "Jobber sync status",
+      status: "warn",
+      detail: `${stale.length} sync${
+        stale.length === 1 ? "" : "s"
+      } haven't completed in over ${staleThresholdDays} days: ${names}.`,
+      hint: "Check /settings/jobber for sync status, or trigger a manual sync.",
+    };
+  }
+
+  return {
+    name: "Jobber sync status",
+    status: "pass",
+    detail: `All ${rows.length} tracked syncs completed successfully within the last ${staleThresholdDays} days.`,
   };
 }
