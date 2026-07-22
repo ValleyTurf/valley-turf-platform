@@ -641,7 +641,7 @@ export default async function CustomersPage({
                 href={previousPageUrl}
                 className="w-full rounded-xl border border-[#d9d4c6] px-5 py-3 text-center font-bold transition hover:bg-[#f7f6f1] sm:w-auto"
               >
-                â† Previous
+                Previous
               </Link>
             ) : (
               <span className="w-full cursor-not-allowed rounded-xl border border-[#e6e2d8] px-5 py-3 text-center font-bold text-[#aaa99f] sm:w-auto">
@@ -658,7 +658,7 @@ export default async function CustomersPage({
                 href={nextPageUrl}
                 className="w-full rounded-xl bg-[#174734] px-5 py-3 text-center font-bold text-white transition hover:bg-[#226246] sm:w-auto"
               >
-                Next â†’
+                Next
               </Link>
             ) : (
               <span className="w-full cursor-not-allowed rounded-xl bg-[#d5d5cf] px-5 py-3 text-center font-bold text-white sm:w-auto">
