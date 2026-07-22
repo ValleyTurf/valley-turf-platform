@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import dynamic from "next/dynamic";
+import type { MapCustomer, MapDoorHanger } from "./page";
 
 const MapClient = dynamic(() => import("./MapClient"), {
   ssr: false,
@@ -11,6 +12,12 @@ const MapClient = dynamic(() => import("./MapClient"), {
   ),
 });
 
-export default function MapLoader() {
-  return <MapClient />;
+export default function MapLoader({
+  customers,
+  doorHangers,
+}: {
+  customers: MapCustomer[];
+  doorHangers: MapDoorHanger[];
+}) {
+  return <MapClient customers={customers} doorHangers={doorHangers} />;
 }
