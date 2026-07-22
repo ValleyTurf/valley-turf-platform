@@ -1,4 +1,4 @@
-import { supabaseServer } from "@/lib/supabase-server";
+﻿import { supabaseServer } from "@/lib/supabase-server";
 
 type JobberTokenRow = {
   id: string;
@@ -116,6 +116,17 @@ async function refreshJobberToken(
         `Token refresh failed with status ${response.status}.`
       )
     );
+
+    const latestTokenRow = await getLatestTokenRow();
+
+    if (latestTokenRow && latestTokenRow.id !== tokenRow.id) {
+      console.warn(
+        "Jobber token refresh failed, but a newer token already exists (likely a concurrent refresh from another request) - using it instead."
+      );
+      return latestTokenRow.access_token;
+    }
+
+    return null;
 
     return null;
   }
