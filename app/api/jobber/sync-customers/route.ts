@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
 
@@ -20,6 +20,11 @@ type JobberAddress = {
   street: string | null;
   street1: string | null;
   street2: string | null;
+  coordinates: {
+    latitude: number | null;
+    longitude: number | null;
+  } | null;
+  geoStatus: string | null;
 };
 
 type JobberProperty = {
@@ -78,6 +83,9 @@ type CustomerUpsert = {
   country: string | null;
   current_balance: number;
   last_synced_at: string;
+  latitude: number | null;
+  longitude: number | null;
+  geo_status: string | null;
 };
 
 type SyncResult = {
@@ -132,6 +140,11 @@ const CLIENTS_QUERY = `
           street
           street1
           street2
+        coordinates {
+          latitude
+          longitude
+        }
+        geoStatus
         }
 
         clientProperties(first: 1) {
@@ -144,6 +157,11 @@ const CLIENTS_QUERY = `
               street
               street1
               street2
+        coordinates {
+          latitude
+          longitude
+        }
+        geoStatus
             }
           }
         }
@@ -255,6 +273,9 @@ function formatCustomer(
     state: cleanText(address?.province),
     postal_code: cleanText(address?.postalCode),
     country: cleanText(address?.country),
+    latitude: address?.coordinates?.latitude ?? null,
+    longitude: address?.coordinates?.longitude ?? null,
+    geo_status: cleanText(address?.geoStatus),
     current_balance: Number.isNaN(balance)
       ? 0
       : balance,
