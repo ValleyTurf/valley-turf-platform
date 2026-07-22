@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -20,6 +20,11 @@ const topLevelItems: NavItem[] = [
     name: "Schedule",
     href: "/schedule",
     icon: "📅",
+  },
+  {
+    name: "Customer Map",
+    href: "/map",
+    icon: "🗺️",
   },
 ];
 
