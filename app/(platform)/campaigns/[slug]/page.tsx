@@ -5,9 +5,17 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
+import { generateBrandedQrCode } from "@/lib/qrcode";
+import CopyLinkButton from "@/app/components/CopyLinkButton";
 
-function formatArizonaTime(value: string | null) {
-  if (!value) return "No scans yet";
+type Channel = "qr" | "social";
+
+function normalizeChannel(value: unknown): Channel {
+  return value === "social" ? "social" : "qr";
+}
+
+function formatArizonaTime(value: string | null, emptyLabel = "No scans yet") {
+  if (!value) return emptyLabel;
 
   return new Date(value).toLocaleString("en-US", {
     timeZone: "America/Phoenix",
@@ -42,6 +50,7 @@ async function updateCampaign(formData: FormData) {
     .replace(/\s+/g, "-");
   const destination = String(formData.get("destination") ?? "").trim();
   const captureLeads = formData.get("capture_leads") === "on";
+  const channel = normalizeChannel(formData.get("channel"));
 
   if (!id || !name || !slug || !destination) return;
 
@@ -53,6 +62,7 @@ async function updateCampaign(formData: FormData) {
       slug,
       destination,
       capture_leads: captureLeads,
+      channel,
     })
     .eq("id", id);
 
@@ -96,6 +106,11 @@ export default async function CampaignDetailPage({
   const lastScan = scans?.[0]?.scanned_at ?? null;
   const totalLeads = leads?.length ?? 0;
 
+  const channel = normalizeChannel(campaign.channel);
+  const trackingUrl = `https://go.valleyturfrevival.com/r/${campaign.slug}`;
+  const qrDataUrl =
+    channel === "qr" ? await generateBrandedQrCode(trackingUrl) : null;
+
   return (
     <main className="min-h-screen bg-[#f5f4ef] p-8 text-[#174734]">
       <div className="mx-auto max-w-5xl">
@@ -103,7 +118,7 @@ export default async function CampaignDetailPage({
           href="/codes"
           className="text-sm font-semibold text-[#174734] hover:underline"
         >
-          ← Back to QR Library
+          ← Back to Links & QR Codes
         </Link>
 
         <section className="mt-4 rounded-3xl bg-gradient-to-r from-[#174734] to-[#226246] p-8 text-white shadow-lg">
@@ -118,7 +133,9 @@ export default async function CampaignDetailPage({
 
         <section className="mt-8 grid gap-6 sm:grid-cols-3">
           <div className="rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
-            <p className="text-xs text-[#6b705c]">Total Scans</p>
+            <p className="text-xs text-[#6b705c]">
+              Total {channel === "social" ? "Clicks" : "Scans"}
+            </p>
             <p className="mt-1 text-4xl font-bold text-[#174734]">
               {totalScans}
             </p>
@@ -132,10 +149,60 @@ export default async function CampaignDetailPage({
           </div>
 
           <div className="rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
-            <p className="text-xs text-[#6b705c]">Last Scan</p>
-            <p className="mt-1 text-lg font-semibold text-[#174734]">
-              {formatArizonaTime(lastScan)}
+            <p className="text-xs text-[#6b705c]">
+              Last {channel === "social" ? "Click" : "Scan"}
             </p>
+            <p className="mt-1 text-lg font-semibold text-[#174734]">
+              {formatArizonaTime(
+                lastScan,
+                channel === "social" ? "No clicks yet" : "No scans yet"
+              )}
+            </p>
+          </div>
+        </section>
+
+        <section className="mt-8 rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
+          <h2 className="text-2xl font-bold text-[#174734]">Tracking Link</h2>
+
+          <div className="mt-5 flex flex-col gap-6 sm:flex-row">
+            {qrDataUrl && (
+              <div className="flex shrink-0 justify-center rounded-xl border border-[#e7e2d5] bg-white p-4">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={qrDataUrl}
+                  alt={`${campaign.alias || campaign.name} QR code`}
+                  className="h-40 w-40"
+                />
+              </div>
+            )}
+
+            <div className="flex-1 space-y-3">
+              <div className="rounded-xl bg-[#f5f4ef] p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[#6b705c]">
+                  Tracking URL
+                </p>
+                <p className="mt-1 break-all text-sm text-[#174734]">
+                  {trackingUrl}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                <CopyLinkButton
+                  url={trackingUrl}
+                  className="rounded-xl border border-[#174734] px-4 py-2 text-sm font-semibold text-[#174734] shadow-sm transition hover:bg-[#174734] hover:text-white"
+                />
+
+                {qrDataUrl && (
+                  <a
+                    href={qrDataUrl}
+                    download={`${campaign.slug}-qr.png`}
+                    className="rounded-xl bg-[#174734] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#226246]"
+                  >
+                    Download PNG
+                  </a>
+                )}
+              </div>
+            </div>
           </div>
         </section>
 
@@ -147,6 +214,20 @@ export default async function CampaignDetailPage({
             className="mt-5 grid gap-4 md:grid-cols-2"
           >
             <input type="hidden" name="id" value={campaign.id} />
+
+            <div>
+              <label className="text-sm font-semibold text-[#174734]">
+                Type
+              </label>
+              <select
+                name="channel"
+                defaultValue={channel}
+                className="mt-1 w-full rounded-xl border border-[#e7e2d5] bg-white p-3 outline-none focus:border-[#d4af37]"
+              >
+                <option value="qr">QR Code (printed / physical)</option>
+                <option value="social">Social Media / Bio Link</option>
+              </select>
+            </div>
 
             <div>
               <label className="text-sm font-semibold text-[#174734]">
@@ -272,7 +353,9 @@ export default async function CampaignDetailPage({
         </section>
 
         <section className="mt-8 rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
-          <h2 className="text-2xl font-bold text-[#174734]">Scan History</h2>
+          <h2 className="text-2xl font-bold text-[#174734]">
+            {channel === "social" ? "Click History" : "Scan History"}
+          </h2>
 
           <div className="mt-5 overflow-x-auto">
             {scans && scans.length > 0 ? (
@@ -303,7 +386,9 @@ export default async function CampaignDetailPage({
                 </tbody>
               </table>
             ) : (
-              <p className="text-sm text-[#6b705c]">No scans yet.</p>
+              <p className="text-sm text-[#6b705c]">
+                {channel === "social" ? "No clicks yet." : "No scans yet."}
+              </p>
             )}
           </div>
         </section>
