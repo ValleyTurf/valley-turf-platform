@@ -4,6 +4,7 @@ export const revalidate = 0;
 import Link from "next/link";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
+import { normalizeEmail, normalizePhone } from "@/lib/matching";
 import { updateCustomerProfile } from "./actions";
 import { saveVisitCosts } from "../../materials/actions";
 
@@ -159,6 +160,21 @@ type VisitCost = {
   material_cost: number | string;
 };
 
+type AttributionCampaign = {
+  id: string;
+  name: string;
+  alias: string | null;
+  slug: string;
+};
+
+type AttributionLead = {
+  id: string;
+  source: string | null;
+  status: string | null;
+  created_at: string;
+  campaign: AttributionCampaign | null;
+};
+
 async function getMaterialsList(): Promise<MaterialOption[]> {
   const { data, error } = await supabaseServer
     .from("materials")
@@ -282,6 +298,66 @@ async function getVisitUsageMaps(visitIds: string[]): Promise<{
   }
 
   return { usageMap, equipmentUsageSet, costMap };
+}
+
+async function getAttributionLeads(
+  email: string | null,
+  phone: string | null
+): Promise<AttributionLead[]> {
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedPhone = normalizePhone(phone);
+
+  if (!normalizedEmail && !normalizedPhone) {
+    return [];
+  }
+
+  const { data, error } = await supabaseServer
+    .from("leads")
+    .select("id, email, phone, source, status, campaign_id, created_at")
+    .order("created_at", { ascending: true });
+
+  if (error || !data) {
+    return [];
+  }
+
+  const matches = data.filter((lead) => {
+    const leadEmail = normalizeEmail(lead.email);
+    const leadPhone = normalizePhone(lead.phone);
+
+    return (
+      (normalizedEmail && leadEmail === normalizedEmail) ||
+      (normalizedPhone && leadPhone === normalizedPhone)
+    );
+  });
+
+  if (matches.length === 0) {
+    return [];
+  }
+
+  const campaignIds = Array.from(
+    new Set(matches.map((lead) => lead.campaign_id).filter(Boolean))
+  ) as string[];
+
+  const campaignMap = new Map<string, AttributionCampaign>();
+
+  if (campaignIds.length > 0) {
+    const { data: campaigns } = await supabaseServer
+      .from("campaigns")
+      .select("id, name, alias, slug")
+      .in("id", campaignIds);
+
+    for (const campaign of (campaigns ?? []) as AttributionCampaign[]) {
+      campaignMap.set(campaign.id, campaign);
+    }
+  }
+
+  return matches.map((lead) => ({
+    id: lead.id,
+    source: lead.source,
+    status: lead.status,
+    created_at: lead.created_at,
+    campaign: lead.campaign_id ? campaignMap.get(lead.campaign_id) ?? null : null,
+  }));
 }
 
 async function getJobberClient(id: string): Promise<{
@@ -837,6 +913,8 @@ export default async function CustomerDetailPage({
   const email = client.emails?.[0]?.address ?? null;
   const phone = client.phones?.[0]?.number ?? null;
 
+  const attributionLeads = await getAttributionLeads(email, phone);
+
   const properties = client.clientProperties?.nodes ?? [];
   const jobs = client.jobs?.nodes ?? [];
   const quotes = client.quotes?.nodes ?? [];
@@ -1244,10 +1322,39 @@ export default async function CustomerDetailPage({
                 Marketing Attribution
               </h2>
 
-              <div className="mt-4 rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
-                QR campaign, lead source, first scan, conversion history, and
-                campaign-generated revenue will be connected here.
-              </div>
+              {attributionLeads.length > 0 ? (
+                <div className="mt-4 space-y-3">
+                  {attributionLeads.map((lead) => (
+                    <div
+                      key={lead.id}
+                      className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm"
+                    >
+                      <p className="font-bold text-[#174734]">
+                        {lead.campaign ? (
+                          <Link
+                            href={`/campaigns/${lead.campaign.slug}`}
+                            className="hover:underline"
+                          >
+                            {lead.campaign.alias || lead.campaign.name}
+                          </Link>
+                        ) : (
+                          lead.source || "Unknown source"
+                        )}
+                      </p>
+                      <p className="mt-1 text-xs text-[#6b705c]">
+                        First captured {formatDate(lead.created_at)} via{" "}
+                        {lead.source || "unknown source"} · Lead status:{" "}
+                        {lead.status || "New"}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-4 rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                  No QR scan or tracked link found for this customer&apos;s
+                  phone or email yet.
+                </div>
+              )}
             </section>
           </div>
 
