@@ -140,11 +140,6 @@ const CLIENTS_QUERY = `
           street
           street1
           street2
-        coordinates {
-          latitude
-          longitude
-        }
-        geoStatus
         }
 
         clientProperties(first: 1) {
