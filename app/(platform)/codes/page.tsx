@@ -1,3 +1,6 @@
+﻿export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 import QRCode from "qrcode";
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
