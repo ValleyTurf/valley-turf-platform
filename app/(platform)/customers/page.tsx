@@ -148,6 +148,7 @@ function formatDate(value: string | null): string {
   }
 
   return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Phoenix",
     month: "short",
     day: "numeric",
     year: "numeric",
