@@ -46,7 +46,6 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
     icon: "📣",
     items: [
       { name: "Leads", href: "/leads", icon: "🎯" },
-      { name: "Campaigns", href: "/campaigns", icon: "📣" },
       { name: "Links & QR", href: "/codes", icon: "📱" },
       { name: "Analytics", href: "/analytics", icon: "📊" },
     ],
