@@ -29,6 +29,7 @@ async function createCampaign(formData: FormData) {
     .toLowerCase()
     .replace(/\s+/g, "-");
   const destination = String(formData.get("destination") ?? "").trim();
+  const captureLeads = formData.get("capture_leads") === "on";
 
   if (!name || !slug || !destination) return;
 
@@ -37,6 +38,7 @@ async function createCampaign(formData: FormData) {
     alias: alias || null,
     slug,
     destination,
+    capture_leads: captureLeads,
   });
 
   revalidatePath("/codes");
@@ -149,6 +151,23 @@ export default async function CodesPage() {
               />
             </div>
 
+            <div className="md:col-span-2 flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="capture_leads"
+                name="capture_leads"
+                className="h-4 w-4 rounded border-[#e7e2d5] text-[#174734] focus:ring-[#d4af37]"
+              />
+              <label
+                htmlFor="capture_leads"
+                className="text-sm font-semibold text-[#174734]"
+              >
+                Capture lead info before redirecting (shows a quick
+                name/phone/email form with a skip option — leave off for
+                review or social links)
+              </label>
+            </div>
+
             <div className="md:col-span-2">
               <button
                 type="submit"
@@ -179,8 +198,15 @@ export default async function CodesPage() {
                   </p>
                 </div>
 
-                <div className="rounded-full bg-[#d4af37] px-3 py-1 text-xs font-bold text-[#174734]">
-                  QR
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <div className="rounded-full bg-[#d4af37] px-3 py-1 text-xs font-bold text-[#174734]">
+                    QR
+                  </div>
+                  {code.capture_leads && (
+                    <div className="rounded-full bg-[#174734] px-3 py-1 text-xs font-bold text-white">
+                      Capturing Leads
+                    </div>
+                  )}
                 </div>
               </div>
 

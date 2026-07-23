@@ -5,6 +5,7 @@ const PUBLIC_PATHS = [
   "/api/login",
   "/api/jobber/webhook",
   "/api/jobber/process-webhooks",
+  "/api/scan-leads",
 ];
 
 export function middleware(request: NextRequest) {

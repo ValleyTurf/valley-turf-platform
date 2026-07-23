@@ -41,6 +41,7 @@ async function updateCampaign(formData: FormData) {
     .toLowerCase()
     .replace(/\s+/g, "-");
   const destination = String(formData.get("destination") ?? "").trim();
+  const captureLeads = formData.get("capture_leads") === "on";
 
   if (!id || !name || !slug || !destination) return;
 
@@ -51,6 +52,7 @@ async function updateCampaign(formData: FormData) {
       alias: alias || null,
       slug,
       destination,
+      capture_leads: captureLeads,
     })
     .eq("id", id);
 
@@ -84,8 +86,15 @@ export default async function CampaignDetailPage({
     .eq("campaign_id", campaign.id)
     .order("scanned_at", { ascending: false });
 
+  const { data: leads } = await supabaseServer
+    .from("leads")
+    .select("*")
+    .eq("campaign_id", campaign.id)
+    .order("created_at", { ascending: false });
+
   const totalScans = scans?.length ?? 0;
   const lastScan = scans?.[0]?.scanned_at ?? null;
+  const totalLeads = leads?.length ?? 0;
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] p-8 text-[#174734]">
@@ -107,11 +116,18 @@ export default async function CampaignDetailPage({
           <p className="mt-3 text-green-50">/r/{campaign.slug}</p>
         </section>
 
-        <section className="mt-8 grid gap-6 sm:grid-cols-2">
+        <section className="mt-8 grid gap-6 sm:grid-cols-3">
           <div className="rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
             <p className="text-xs text-[#6b705c]">Total Scans</p>
             <p className="mt-1 text-4xl font-bold text-[#174734]">
               {totalScans}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
+            <p className="text-xs text-[#6b705c]">Leads Captured</p>
+            <p className="mt-1 text-4xl font-bold text-[#174734]">
+              {totalLeads}
             </p>
           </div>
 
@@ -182,6 +198,23 @@ export default async function CampaignDetailPage({
               />
             </div>
 
+            <div className="md:col-span-2 flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="capture_leads"
+                name="capture_leads"
+                defaultChecked={campaign.capture_leads ?? false}
+                className="h-4 w-4 rounded border-[#e7e2d5] text-[#174734] focus:ring-[#d4af37]"
+              />
+              <label
+                htmlFor="capture_leads"
+                className="text-sm font-semibold text-[#174734]"
+              >
+                Capture lead info before redirecting (shows a quick
+                name/phone/email form with a skip option)
+              </label>
+            </div>
+
             <div className="md:col-span-2">
               <button
                 type="submit"
@@ -191,6 +224,51 @@ export default async function CampaignDetailPage({
               </button>
             </div>
           </form>
+        </section>
+
+        <section className="mt-8 rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
+          <h2 className="text-2xl font-bold text-[#174734]">
+            Leads Captured
+          </h2>
+
+          <div className="mt-5 overflow-x-auto">
+            {leads && leads.length > 0 ? (
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-[#e7e2d5] text-[#6b705c]">
+                    <th className="pb-2 pr-4">Time</th>
+                    <th className="pb-2 pr-4">Name</th>
+                    <th className="pb-2 pr-4">Phone</th>
+                    <th className="pb-2 pr-4">Email</th>
+                    <th className="pb-2 pr-4">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leads.map((lead) => (
+                    <tr key={lead.id} className="border-b border-[#f0eee6]">
+                      <td className="py-2 pr-4">
+                        {formatArizonaTime(lead.created_at)}
+                      </td>
+                      <td className="py-2 pr-4">
+                        {[lead.first_name, lead.last_name]
+                          .filter(Boolean)
+                          .join(" ") || "—"}
+                      </td>
+                      <td className="py-2 pr-4">{lead.phone || "—"}</td>
+                      <td className="py-2 pr-4">{lead.email || "—"}</td>
+                      <td className="py-2 pr-4">{lead.status || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-sm text-[#6b705c]">
+                {campaign.capture_leads
+                  ? "No leads captured yet."
+                  : "Lead capture is off for this campaign."}
+              </p>
+            )}
+          </div>
         </section>
 
         <section className="mt-8 rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">

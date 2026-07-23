@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { supabaseServer } from "@/lib/supabase-server";
+import ScanCapture from "./ScanCapture";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -26,7 +27,7 @@ export default async function Page({
 
   const { data: campaign, error: campaignError } = await supabaseServer
     .from("campaigns")
-    .select("id, slug, destination")
+    .select("id, slug, destination, capture_leads, alias, name")
     .eq("slug", slug)
     .single();
 
@@ -57,7 +58,7 @@ export default async function Page({
 
   const userAgent = headersList.get("user-agent");
 
-  const { error: scanError } = await supabaseServer
+  const { data: scan, error: scanError } = await supabaseServer
     .from("scans")
     .insert({
       campaign_id: campaign.id,
@@ -66,10 +67,23 @@ export default async function Page({
       city,
       region,
       country,
-    });
+    })
+    .select("id")
+    .single();
 
   if (scanError) {
     console.error("QR scan insert failed:", scanError);
+  }
+
+  if (campaign.capture_leads && scan?.id) {
+    return (
+      <ScanCapture
+        scanId={scan.id}
+        campaignId={campaign.id}
+        destination={campaign.destination}
+        campaignName={campaign.alias || campaign.name}
+      />
+    );
   }
 
   redirect(campaign.destination);
