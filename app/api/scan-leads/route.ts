@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
+import { sendNewLeadAlerts } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +37,7 @@ export async function POST(request: Request) {
 
     const { data: campaign, error: campaignLookupError } = await supabaseServer
       .from("campaigns")
-      .select("id, capture_leads")
+      .select("id, capture_leads, name, alias")
       .eq("id", campaignId)
       .single();
 
@@ -86,6 +87,18 @@ export async function POST(request: Request) {
         { status: 500 }
       );
     }
+
+    // Scheduled to run after the response is sent, so the visitor's
+    // redirect isn't held up waiting on email/SMS delivery.
+    after(() =>
+      sendNewLeadAlerts({
+        name: name || null,
+        phone: phone || null,
+        email: email || null,
+        source: "QR Scan",
+        campaignName: campaign.alias || campaign.name || null,
+      })
+    );
 
     return NextResponse.json({ ok: true, lead: data });
   } catch {
