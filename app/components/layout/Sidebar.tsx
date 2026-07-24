@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 type NavItem = {
@@ -102,6 +102,7 @@ function groupContainsActiveItem(
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(
@@ -135,6 +136,12 @@ export default function Sidebar() {
       ...current,
       [title]: !current[title],
     }));
+  }
+
+  async function handleLogout() {
+    await fetch("/api/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
   }
 
   function linkClasses(active: boolean): string {
@@ -250,6 +257,17 @@ export default function Sidebar() {
               </div>
             );
           })}
+
+          <div className="pt-2" />
+
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-green-100 transition hover:bg-white/10"
+          >
+            <span className="text-xl">🚪</span>
+            <span>Log Out</span>
+          </button>
         </nav>
       </aside>
     </>

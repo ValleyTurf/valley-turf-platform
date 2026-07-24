@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import { verifySessionToken } from "@/lib/auth";
 
 const PUBLIC_PATHS = [
   "/login",
   "/api/login",
+  "/api/logout",
   "/api/jobber/webhook",
   "/api/jobber/process-webhooks",
   "/api/scan-leads",
 ];
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const isPublicPath = PUBLIC_PATHS.some(
@@ -27,7 +29,7 @@ export function middleware(request: NextRequest) {
   const session =
     request.cookies.get("admin_session")?.value;
 
-  if (session !== process.env.ADMIN_PASSWORD) {
+  if (!(await verifySessionToken(session))) {
     const loginUrl = new URL(
       "/login",
       request.url
