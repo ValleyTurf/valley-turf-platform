@@ -22,7 +22,19 @@
     },
     {
       "path": "/api/jobber/sync-payments",
+      "schedule": "35 1 * * *"
+    },
+    {
+      "path": "/api/jobber/sync-payments",
+      "schedule": "35 7 * * *"
+    },
+    {
+      "path": "/api/jobber/sync-payments",
       "schedule": "35 13 * * *"
+    },
+    {
+      "path": "/api/jobber/sync-payments",
+      "schedule": "35 19 * * *"
     },
     {
       "path": "/api/jobber/sync-visits",
