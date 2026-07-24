@@ -5,6 +5,16 @@ import { supabaseServer } from "@/lib/supabase-server";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+const SYNC_TYPE = "payments";
+
+type SyncResult = {
+  invoicesReceived: number;
+  paymentsReceived: number;
+  paymentsSaved: number;
+  pagesProcessed: number;
+  warnings: string[];
+};
+
 type JobberClient = {
   id: string;
   name: string | null;
@@ -304,9 +314,184 @@ async function syncPayments() {
   };
 }
 
+async function startSyncRun(): Promise<string> {
+  const startedAt = new Date().toISOString();
+
+  const { data: syncRun, error: syncRunError } = await supabaseServer
+    .from("jobber_sync_runs")
+    .insert({
+      sync_type: SYNC_TYPE,
+      sync_mode: "manual",
+      status: "running",
+      started_at: startedAt,
+    })
+    .select("id")
+    .single();
+
+  if (syncRunError || !syncRun) {
+    throw new Error(
+      `Unable to start sync tracking: ${
+        syncRunError?.message ?? "No sync run was created."
+      }`
+    );
+  }
+
+  const { error: statusError } = await supabaseServer
+    .from("jobber_sync_status")
+    .upsert(
+      {
+        sync_type: SYNC_TYPE,
+        status: "running",
+        last_started_at: startedAt,
+        last_error: null,
+        updated_at: startedAt,
+      },
+      {
+        onConflict: "sync_type",
+        ignoreDuplicates: false,
+      }
+    );
+
+  if (statusError) {
+    console.error(
+      "Unable to update payment sync status to running:",
+      statusError
+    );
+  }
+
+  return syncRun.id as string;
+}
+
+async function completeSyncRun(
+  syncRunId: string,
+  result: SyncResult
+): Promise<void> {
+  const completedAt = new Date().toISOString();
+
+  const { error: syncRunError } = await supabaseServer
+    .from("jobber_sync_runs")
+    .update({
+      status: "success",
+      completed_at: completedAt,
+      records_received: result.paymentsReceived,
+      records_saved: result.paymentsSaved,
+      pages_processed: result.pagesProcessed,
+      metadata: { warnings: result.warnings },
+    })
+    .eq("id", syncRunId);
+
+  if (syncRunError) {
+    console.error(
+      "Unable to mark payment sync run successful:",
+      syncRunError
+    );
+  }
+
+  const { error: statusError } = await supabaseServer
+    .from("jobber_sync_status")
+    .upsert(
+      {
+        sync_type: SYNC_TYPE,
+        status: "healthy",
+        last_completed_at: completedAt,
+        last_success_at: completedAt,
+        records_received: result.paymentsReceived,
+        records_saved: result.paymentsSaved,
+        pages_processed: result.pagesProcessed,
+        last_error: null,
+        updated_at: completedAt,
+      },
+      {
+        onConflict: "sync_type",
+        ignoreDuplicates: false,
+      }
+    );
+
+  if (statusError) {
+    console.error(
+      "Unable to update payment sync status to healthy:",
+      statusError
+    );
+  }
+}
+
+async function failSyncRun(
+  syncRunId: string,
+  errorMessage: string
+): Promise<void> {
+  const failedAt = new Date().toISOString();
+
+  const { error: syncRunError } = await supabaseServer
+    .from("jobber_sync_runs")
+    .update({
+      status: "failed",
+      completed_at: failedAt,
+      error_message: errorMessage,
+    })
+    .eq("id", syncRunId);
+
+  if (syncRunError) {
+    console.error("Unable to mark payment sync run failed:", syncRunError);
+  }
+
+  const { error: statusError } = await supabaseServer
+    .from("jobber_sync_status")
+    .upsert(
+      {
+        sync_type: SYNC_TYPE,
+        status: "failed",
+        last_failed_at: failedAt,
+        last_error: errorMessage,
+        updated_at: failedAt,
+      },
+      {
+        onConflict: "sync_type",
+        ignoreDuplicates: false,
+      }
+    );
+
+  if (statusError) {
+    console.error(
+      "Unable to update payment sync status to failed:",
+      statusError
+    );
+  }
+}
+
 export async function GET() {
+  let syncRunId: string | null = null;
+
   try {
+    const { data: currentStatus, error: currentStatusError } =
+      await supabaseServer
+        .from("jobber_sync_status")
+        .select("status, last_started_at")
+        .eq("sync_type", SYNC_TYPE)
+        .maybeSingle();
+
+    if (currentStatusError) {
+      throw new Error(
+        `Unable to check current payment sync status: ${currentStatusError.message}`
+      );
+    }
+
+    if (currentStatus?.status === "running") {
+      return NextResponse.json(
+        {
+          success: false,
+          alreadyRunning: true,
+          message: "A Jobber payment sync is already running.",
+          lastStartedAt: currentStatus.last_started_at,
+        },
+        { status: 409 }
+      );
+    }
+
+    syncRunId = await startSyncRun();
+
     const syncResult = await syncPayments();
+
+    await completeSyncRun(syncRunId, syncResult);
 
     return NextResponse.json({
       success: true,
@@ -316,13 +501,19 @@ export async function GET() {
   } catch (error) {
     console.error("Jobber payment sync failed:", error);
 
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : "An unknown payment sync error occurred.";
+
+    if (syncRunId) {
+      await failSyncRun(syncRunId, errorMessage);
+    }
+
     return NextResponse.json(
       {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "An unknown payment sync error occurred.",
+        error: errorMessage,
       },
       { status: 500 }
     );

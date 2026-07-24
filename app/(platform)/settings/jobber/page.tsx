@@ -68,6 +68,11 @@ const SYNC_CONFIG: Record<
     endpoint:
       "/api/jobber/sync-jobs",
   },
+  payments: {
+    label: "Payments",
+    endpoint:
+      "/api/jobber/sync-payments",
+  },
 };
 
 function formatDate(
@@ -318,8 +323,8 @@ export default async function JobberSyncPage() {
             style={{
               display: "grid",
               gridTemplateColumns:
-                "repeat(auto-fit, minmax(280px, 1fr))",
-              gap: "18px",
+                "repeat(4, minmax(0, 1fr))",
+              gap: "12px",
             }}
           >
             {syncStatuses.map((sync) => {
@@ -336,8 +341,8 @@ export default async function JobberSyncPage() {
                     background: "#ffffff",
                     border:
                       "1px solid #e2e8f0",
-                    borderRadius: "16px",
-                    padding: "22px",
+                    borderRadius: "14px",
+                    padding: "14px",
                     boxShadow:
                       "0 1px 3px rgba(15, 23, 42, 0.05)",
                   }}
@@ -348,15 +353,15 @@ export default async function JobberSyncPage() {
                       justifyContent:
                         "space-between",
                       alignItems: "center",
-                      gap: "12px",
-                      marginBottom: "20px",
+                      gap: "8px",
+                      marginBottom: "12px",
                     }}
                   >
                     <h3
                       style={{
                         margin: 0,
                         color: "#0f172a",
-                        fontSize: "20px",
+                        fontSize: "15px",
                       }}
                     >
                       {formatSyncName(
@@ -367,9 +372,9 @@ export default async function JobberSyncPage() {
                     <span
                       style={{
                         ...badge,
-                        padding: "6px 10px",
+                        padding: "4px 8px",
                         borderRadius: "999px",
-                        fontSize: "12px",
+                        fontSize: "10px",
                         fontWeight: 700,
                         textTransform:
                           "capitalize",
@@ -381,10 +386,10 @@ export default async function JobberSyncPage() {
 
                   <div
                     style={{
-                      fontSize: "34px",
+                      fontSize: "22px",
                       fontWeight: 800,
                       color: "#0f172a",
-                      marginBottom: "4px",
+                      marginBottom: "2px",
                     }}
                   >
                     {sync.records_saved.toLocaleString()}
@@ -393,8 +398,8 @@ export default async function JobberSyncPage() {
                   <div
                     style={{
                       color: "#64748b",
-                      fontSize: "14px",
-                      marginBottom: "20px",
+                      fontSize: "12px",
+                      marginBottom: "12px",
                     }}
                   >
                     records saved
@@ -403,9 +408,9 @@ export default async function JobberSyncPage() {
                   <div
                     style={{
                       display: "grid",
-                      gap: "8px",
+                      gap: "4px",
                       color: "#475569",
-                      fontSize: "14px",
+                      fontSize: "12px",
                     }}
                   >
                     <div>
