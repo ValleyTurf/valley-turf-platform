@@ -1,44 +1,63 @@
 import { NextResponse } from "next/server";
-import { timingSafeEqual } from "crypto";
-import { createSessionToken, SESSION_MAX_AGE_SECONDS } from "@/lib/auth";
+import { supabaseServer } from "@/lib/supabase-server";
+import { verifyPassword } from "@/lib/passwords";
+import {
+  createSessionToken,
+  SESSION_COOKIE_NAME,
+  SESSION_MAX_AGE_SECONDS,
+} from "@/lib/auth";
 
-// Constant-time comparison so a mistyped password can't be brute-forced
-// faster by timing how quickly the comparison fails. Buffers must be equal
-// length for timingSafeEqual, so a length mismatch is treated as an
-// immediate, safe failure rather than thrown.
-function passwordsMatch(candidate: string, expected: string): boolean {
-  const candidateBuffer = Buffer.from(candidate);
-  const expectedBuffer = Buffer.from(expected);
-
-  if (candidateBuffer.length !== expectedBuffer.length) {
-    return false;
-  }
-
-  return timingSafeEqual(candidateBuffer, expectedBuffer);
-}
+type UserRow = {
+  id: string;
+  email: string;
+  name: string;
+  password_hash: string;
+  role: "admin" | "staff";
+  active: boolean;
+};
 
 export async function POST(request: Request) {
-  const { password } = await request.json();
-  const adminPassword = process.env.ADMIN_PASSWORD ?? "";
+  const { email, password } = await request.json();
 
-  if (
-    typeof password !== "string" ||
-    !adminPassword ||
-    !passwordsMatch(password, adminPassword)
-  ) {
+  if (typeof email !== "string" || typeof password !== "string" || !email) {
+    return NextResponse.json({ success: false }, { status: 401 });
+  }
+
+  const { data, error } = await supabaseServer
+    .from("users")
+    .select("id, email, name, password_hash, role, active")
+    .ilike("email", email.trim())
+    .maybeSingle();
+
+  const user = data as UserRow | null;
+
+  // Same response whether the account doesn't exist, is deactivated, or
+  // the password is wrong — don't let the login form leak which one it is.
+  if (error || !user || !user.active || !verifyPassword(password, user.password_hash)) {
     return NextResponse.json({ success: false }, { status: 401 });
   }
 
   const response = NextResponse.json({ success: true });
-  const token = await createSessionToken();
 
-  response.cookies.set("admin_session", token, {
+  const token = await createSessionToken({
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+  });
+
+  response.cookies.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
     secure: true,
     sameSite: "lax",
     maxAge: SESSION_MAX_AGE_SECONDS,
     path: "/",
   });
+
+  await supabaseServer
+    .from("users")
+    .update({ last_login_at: new Date().toISOString() })
+    .eq("id", user.id);
 
   return response;
 }

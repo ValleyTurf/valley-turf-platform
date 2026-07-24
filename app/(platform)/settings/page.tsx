@@ -5,6 +5,14 @@ export const revalidate = 0;
 
 const settingsSections = [
   {
+    title: "Team",
+    description:
+      "Manage individual logins, roles, and access. Add or remove team members and reset passwords.",
+    href: "/team",
+    icon: "🧑‍🤝‍🧑",
+    status: "Manage",
+  },
+  {
     title: "Jobber Sync",
     description:
       "Monitor Jobber synchronization, run manual syncs, review webhook activity, and manage automated data updates.",

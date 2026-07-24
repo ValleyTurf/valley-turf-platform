@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { isAdminOnlyPath } from "@/lib/permissions";
+import type { SessionUser } from "@/lib/auth";
 
 type NavItem = {
   name: string;
@@ -77,7 +79,10 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
   {
     title: "Admin",
     icon: "⚙️",
-    items: [{ name: "Settings", href: "/settings", icon: "⚙️" }],
+    items: [
+      { name: "Team", href: "/team", icon: "🧑‍🤝‍🧑" },
+      { name: "Settings", href: "/settings", icon: "⚙️" },
+    ],
   },
 ];
 
@@ -100,10 +105,27 @@ function groupContainsActiveItem(
   return items.some((item) => isItemActive(pathname, item.href));
 }
 
-export default function Sidebar() {
+export default function Sidebar({ user }: { user: SessionUser | null }) {
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+
+  // Staff never see nav links to admin-only pages — keeps the sidebar
+  // honest about what they can actually reach (middleware enforces the
+  // real gate; this just avoids dead-end links).
+  const visibleGroups = useMemo(() => {
+    if (user?.role === "admin") {
+      return groups;
+    }
+
+    return groups
+      .map((group) => ({
+        ...group,
+        items: group.items.filter((item) => !isAdminOnlyPath(item.href)),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [user?.role]);
+
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(
       groups.map((group) => [
@@ -213,7 +235,7 @@ export default function Sidebar() {
 
           <div className="pt-2" />
 
-          {groups.map((group) => {
+          {visibleGroups.map((group) => {
             const isOpen = Boolean(openGroups[group.title]);
 
             return (
@@ -259,6 +281,23 @@ export default function Sidebar() {
           })}
 
           <div className="pt-2" />
+
+          <Link
+            href="/account"
+            className={linkClasses(isItemActive(pathname, "/account"))}
+          >
+            <span className="text-xl">👤</span>
+            <span className="min-w-0">
+              <span className="block truncate text-sm">
+                {user?.name ?? "Account"}
+              </span>
+              {user && (
+                <span className="block text-xs font-normal capitalize text-green-100">
+                  {user.role}
+                </span>
+              )}
+            </span>
+          </Link>
 
           <button
             type="button"
