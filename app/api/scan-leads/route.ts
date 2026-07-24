@@ -1,6 +1,7 @@
 import { NextResponse, after } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 import { sendNewLeadAlerts } from "@/lib/notifications";
+import { normalizeEmail, normalizePhone } from "@/lib/matching";
 
 export const dynamic = "force-dynamic";
 
@@ -66,6 +67,56 @@ export async function POST(request: Request) {
     const [firstName, ...rest] = name.split(" ").filter(Boolean);
     const lastName = rest.join(" ") || null;
 
+    const normalizedPhone = normalizePhone(phone);
+    const normalizedEmail = normalizeEmail(email);
+
+    // Same person can scan the same (or a different) QR code more than
+    // once — match on normalized phone/email against prior leads instead
+    // of creating a fresh row every time.
+    let existingLead: { id: string; scan_count: number | null } | null = null;
+
+    if (normalizedPhone || normalizedEmail) {
+      const orFilters = [
+        normalizedPhone ? `normalized_phone.eq.${normalizedPhone}` : null,
+        normalizedEmail ? `normalized_email.eq.${normalizedEmail}` : null,
+      ]
+        .filter(Boolean)
+        .join(",");
+
+      const { data: match } = await supabaseServer
+        .from("leads")
+        .select("id, scan_count")
+        .or(orFilters)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      existingLead = match;
+    }
+
+    if (existingLead) {
+      const { data, error } = await supabaseServer
+        .from("leads")
+        .update({
+          scan_count: (existingLead.scan_count ?? 1) + 1,
+          last_seen_at: new Date().toISOString(),
+        })
+        .eq("id", existingLead.id)
+        .select()
+        .single();
+
+      if (error) {
+        return NextResponse.json(
+          { ok: false, error: error.message },
+          { status: 500 }
+        );
+      }
+
+      // Repeat scan of a known lead — no alert, keeps texts/emails to
+      // genuinely new leads only.
+      return NextResponse.json({ ok: true, lead: data, duplicate: true });
+    }
+
     const { data, error } = await supabaseServer
       .from("leads")
       .insert({
@@ -73,10 +124,14 @@ export async function POST(request: Request) {
         last_name: lastName,
         email: email || null,
         phone: phone || null,
+        normalized_phone: normalizedPhone,
+        normalized_email: normalizedEmail,
         source: "QR Scan",
         status: "New",
         scan_id: scanId,
         campaign_id: campaignId,
+        scan_count: 1,
+        last_seen_at: new Date().toISOString(),
       })
       .select()
       .single();

@@ -15,6 +15,7 @@ type Lead = {
   status: string | null;
   campaign_id: string | null;
   created_at: string;
+  scan_count: number | null;
 };
 
 type Campaign = {
@@ -67,7 +68,7 @@ export default async function LeadsPage() {
   const { data: leadsData, error } = await supabaseServer
     .from("leads")
     .select(
-      "id, first_name, last_name, email, phone, source, status, campaign_id, created_at"
+      "id, first_name, last_name, email, phone, source, status, campaign_id, created_at, scan_count"
     )
     .order("created_at", { ascending: false });
 
@@ -189,6 +190,7 @@ export default async function LeadsPage() {
                     <th className="pb-2 pr-4">Source</th>
                     <th className="pb-2 pr-4">Campaign</th>
                     <th className="pb-2 pr-4">Status</th>
+                    <th className="pb-2 pr-4">Scans</th>
                     <th className="pb-2 pr-4">Customer Match</th>
                   </tr>
                 </thead>
@@ -233,6 +235,15 @@ export default async function LeadsPage() {
                           >
                             {lead.status || "New"}
                           </span>
+                        </td>
+                        <td className="py-2 pr-4">
+                          {lead.scan_count && lead.scan_count > 1 ? (
+                            <span className="rounded-full bg-[#f0eee6] px-2 py-1 text-xs font-bold text-[#6b705c]">
+                              {lead.scan_count} scans
+                            </span>
+                          ) : (
+                            "—"
+                          )}
                         </td>
                         <td className="py-2 pr-4">
                           {customer ? (
