@@ -5,9 +5,18 @@ import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
 import { generateBrandedQrCode } from "@/lib/qrcode";
+import { getAllCampaignRoi } from "@/lib/campaignRoi";
 import CopyLinkButton from "@/app/components/CopyLinkButton";
 
 type Channel = "qr" | "social";
+
+function formatCurrency(value: number) {
+  return value.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
+}
 
 function formatArizonaTime(value: string | null, emptyLabel: string) {
   if (!value) return emptyLabel;
@@ -66,6 +75,8 @@ export default async function CodesPage() {
     .select("*")
     .order("scanned_at", { ascending: false });
 
+  const roiByCampaign = await getAllCampaignRoi();
+
   const baseUrl = "https://go.valleyturfrevival.com/r";
 
   const campaignsWithStats = await Promise.all(
@@ -81,6 +92,8 @@ export default async function CodesPage() {
       const qrDataUrl =
         channel === "qr" ? await generateBrandedQrCode(trackingUrl) : null;
 
+      const roi = roiByCampaign.get(campaign.id) ?? null;
+
       return {
         ...campaign,
         channel,
@@ -89,6 +102,8 @@ export default async function CodesPage() {
         qrDataUrl,
         totalScans: campaignScans.length,
         lastScan: campaignScans[0]?.scanned_at ?? null,
+        revenue: roi?.revenue ?? 0,
+        roiPercent: roi?.roiPercent ?? null,
       };
     })
   );
@@ -266,6 +281,28 @@ export default async function CodesPage() {
                         {formatArizonaTime(code.lastScan, "No scans yet")}
                       </p>
                     </div>
+
+                    <div className="rounded-xl bg-[#f5f4ef] p-3">
+                      <p className="text-xs text-[#6b705c]">Revenue</p>
+                      <p className="text-lg font-bold text-[#174734]">
+                        {formatCurrency(code.revenue)}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl bg-[#f5f4ef] p-3">
+                      <p className="text-xs text-[#6b705c]">ROI</p>
+                      <p
+                        className={`text-lg font-bold ${
+                          code.roiPercent !== null && code.roiPercent < 0
+                            ? "text-red-600"
+                            : "text-[#174734]"
+                        }`}
+                      >
+                        {code.roiPercent === null
+                          ? "—"
+                          : `${code.roiPercent >= 0 ? "+" : ""}${code.roiPercent.toFixed(0)}%`}
+                      </p>
+                    </div>
                   </div>
 
                   <div className="mt-5 flex justify-center rounded-xl border border-[#e7e2d5] bg-white p-4">
@@ -371,6 +408,24 @@ export default async function CodesPage() {
                       </p>
                       <p className="text-xs text-[#6b705c]">
                         {formatArizonaTime(code.lastScan, "No clicks yet")}
+                      </p>
+                    </div>
+
+                    <div className="text-right">
+                      <p className="text-xs text-[#6b705c]">Revenue</p>
+                      <p className="text-lg font-bold text-[#174734]">
+                        {formatCurrency(code.revenue)}
+                      </p>
+                      <p
+                        className={`text-xs font-semibold ${
+                          code.roiPercent !== null && code.roiPercent < 0
+                            ? "text-red-600"
+                            : "text-[#6b705c]"
+                        }`}
+                      >
+                        {code.roiPercent === null
+                          ? "No spend logged"
+                          : `${code.roiPercent >= 0 ? "+" : ""}${code.roiPercent.toFixed(0)}% ROI`}
                       </p>
                     </div>
 

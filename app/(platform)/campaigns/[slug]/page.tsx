@@ -6,7 +6,16 @@ import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
 import { generateBrandedQrCode } from "@/lib/qrcode";
+import { getCampaignRoi } from "@/lib/campaignRoi";
 import CopyLinkButton from "@/app/components/CopyLinkButton";
+
+function formatCurrency(value: number) {
+  return value.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
+}
 
 type Channel = "qr" | "social";
 
@@ -51,6 +60,8 @@ async function updateCampaign(formData: FormData) {
   const destination = String(formData.get("destination") ?? "").trim();
   const captureLeads = formData.get("capture_leads") === "on";
   const channel = normalizeChannel(formData.get("channel"));
+  const spendRaw = Number(formData.get("spend"));
+  const spend = Number.isFinite(spendRaw) && spendRaw >= 0 ? spendRaw : 0;
 
   if (!id || !name || !slug || !destination) return;
 
@@ -63,6 +74,7 @@ async function updateCampaign(formData: FormData) {
       destination,
       capture_leads: captureLeads,
       channel,
+      spend,
     })
     .eq("id", id);
 
@@ -105,6 +117,8 @@ export default async function CampaignDetailPage({
   const totalScans = scans?.length ?? 0;
   const lastScan = scans?.[0]?.scanned_at ?? null;
   const totalLeads = leads?.length ?? 0;
+
+  const roi = await getCampaignRoi(campaign.id);
 
   const channel = normalizeChannel(campaign.channel);
   const trackingUrl = `https://go.valleyturfrevival.com/r/${campaign.slug}`;
@@ -159,6 +173,95 @@ export default async function CampaignDetailPage({
               )}
             </p>
           </div>
+        </section>
+
+        <section className="mt-8 rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
+          <h2 className="text-2xl font-bold text-[#174734]">
+            Campaign ROI
+          </h2>
+          <p className="mt-1 text-sm text-[#6b705c]">
+            Revenue counts invoices billed on or after each customer's first
+            touch on this campaign — not their full history.
+          </p>
+
+          <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-xl bg-[#f5f4ef] p-4">
+              <p className="text-xs text-[#6b705c]">Spend to Date</p>
+              <p className="mt-1 text-2xl font-bold text-[#174734]">
+                {formatCurrency(roi?.spend ?? 0)}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-[#f5f4ef] p-4">
+              <p className="text-xs text-[#6b705c]">Revenue Attributed</p>
+              <p className="mt-1 text-2xl font-bold text-[#174734]">
+                {formatCurrency(roi?.revenue ?? 0)}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-[#f5f4ef] p-4">
+              <p className="text-xs text-[#6b705c]">ROI</p>
+              <p
+                className={`mt-1 text-2xl font-bold ${
+                  roi?.roiPercent !== null &&
+                  roi?.roiPercent !== undefined &&
+                  roi.roiPercent < 0
+                    ? "text-red-600"
+                    : "text-[#174734]"
+                }`}
+              >
+                {roi?.roiPercent === null || roi?.roiPercent === undefined
+                  ? "—"
+                  : `${roi.roiPercent >= 0 ? "+" : ""}${roi.roiPercent.toFixed(0)}%`}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-[#f5f4ef] p-4">
+              <p className="text-xs text-[#6b705c]">Converted Customers</p>
+              <p className="mt-1 text-2xl font-bold text-[#174734]">
+                {roi?.matchedCustomers.length ?? 0}
+              </p>
+            </div>
+          </div>
+
+          {roi && roi.matchedCustomers.length > 0 && (
+            <div className="mt-6 overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-[#e7e2d5] text-[#6b705c]">
+                    <th className="pb-2 pr-4">Customer</th>
+                    <th className="pb-2 pr-4">First Touch</th>
+                    <th className="pb-2 pr-4">Revenue Since</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {roi.matchedCustomers.map((match) => (
+                    <tr
+                      key={match.jobberClientId}
+                      className="border-b border-[#f0eee6]"
+                    >
+                      <td className="py-2 pr-4">
+                        <Link
+                          href={`/customers/${encodeURIComponent(
+                            match.jobberClientId
+                          )}`}
+                          className="font-semibold text-[#174734] hover:underline"
+                        >
+                          {match.fullName || "View Customer"}
+                        </Link>
+                      </td>
+                      <td className="py-2 pr-4">
+                        {formatArizonaTime(match.firstTouch)}
+                      </td>
+                      <td className="py-2 pr-4">
+                        {formatCurrency(match.revenue)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
 
         <section className="mt-8 rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
@@ -277,6 +380,23 @@ export default async function CampaignDetailPage({
                 required
                 className="mt-1 w-full rounded-xl border border-[#e7e2d5] p-3 outline-none focus:border-[#d4af37]"
               />
+            </div>
+
+            <div>
+              <label className="text-sm font-semibold text-[#174734]">
+                Spend to Date ($)
+              </label>
+              <input
+                name="spend"
+                type="number"
+                step="0.01"
+                min="0"
+                defaultValue={campaign.spend ?? 0}
+                className="mt-1 w-full rounded-xl border border-[#e7e2d5] p-3 outline-none focus:border-[#d4af37]"
+              />
+              <p className="mt-1 text-xs text-[#6b705c]">
+                Running total — printing, signage, ad boosts, etc.
+              </p>
             </div>
 
             <div className="md:col-span-2 flex items-center gap-2">
