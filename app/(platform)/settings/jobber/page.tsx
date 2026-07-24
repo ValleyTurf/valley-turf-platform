@@ -214,6 +214,17 @@ export default async function JobberSyncPage() {
   const lastWebhook =
     webhookEvents[0] ?? null;
 
+  const lastWebhookAgeHours = lastWebhook
+    ? (Date.now() - new Date(lastWebhook.created_at).getTime()) /
+      (1000 * 60 * 60)
+    : null;
+
+  const webhookStatus: { label: string; color: string } = !lastWebhook
+    ? { label: "● Not Configured", color: "#92400e" }
+    : lastWebhookAgeHours !== null && lastWebhookAgeHours > 48
+      ? { label: "● Stale", color: "#92400e" }
+      : { label: "● Active", color: "#166534" };
+
   return (
     <main
       style={{
@@ -520,10 +531,10 @@ export default async function JobberSyncPage() {
                 <div
                   style={{
                     fontWeight: 700,
-                    color: "#92400e",
+                    color: webhookStatus.color,
                   }}
                 >
-                  ● Not Configured
+                  {webhookStatus.label}
                 </div>
               </div>
 
