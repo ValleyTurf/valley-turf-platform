@@ -16,6 +16,7 @@ type UserRow = {
   email: string;
   role: "admin" | "staff";
   active: boolean;
+  hourly_rate: number | string | null;
   last_login_at: string | null;
   created_at: string;
 };
@@ -30,11 +31,29 @@ function formatDate(value: string | null): string {
   });
 }
 
+function formatRate(value: number | string | null): string {
+  if (value === null || value === undefined || value === "") {
+    return "Not set";
+  }
+
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed)
+    ? `${new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        minimumFractionDigits: 2,
+      }).format(parsed)}/hr`
+    : "Not set";
+}
+
 export default async function TeamPage() {
   const [{ data, error }, currentUser] = await Promise.all([
     supabaseServer
       .from("users")
-      .select("id, name, email, role, active, last_login_at, created_at")
+      .select(
+        "id, name, email, role, active, hourly_rate, last_login_at, created_at"
+      )
       .order("created_at", { ascending: true }),
     getCurrentUser(),
   ]);
@@ -127,6 +146,20 @@ export default async function TeamPage() {
                   <option value="admin">Admin</option>
                 </select>
               </div>
+
+              <div>
+                <label className="text-xs font-bold text-[#9c7a20]">
+                  Pay Rate ($/hr, optional)
+                </label>
+                <input
+                  name="hourly_rate"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="e.g. 22.00"
+                  className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                />
+              </div>
             </div>
 
             <button
@@ -185,6 +218,9 @@ function UserRowItem({
         </div>
 
         <div className="flex items-center gap-2">
+          <span className="hidden text-xs font-semibold text-[#6b705c] sm:inline">
+            {formatRate(user.hourly_rate)}
+          </span>
           {!user.active && (
             <span className="rounded-full bg-red-100 px-2 py-1 text-xs font-bold text-red-700">
               Inactive
@@ -202,6 +238,10 @@ function UserRowItem({
         </p>
 
         <form action={updateUser.bind(null, user.id)} className="space-y-3">
+          <p className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
+            Profile
+          </p>
+
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="text-xs font-bold text-[#9c7a20]">
@@ -230,7 +270,29 @@ function UserRowItem({
                 <option value="admin">Admin</option>
               </select>
             </div>
+
+            <div>
+              <label className="text-xs font-bold text-[#9c7a20]">
+                Pay Rate ($/hr)
+              </label>
+              <input
+                name="hourly_rate"
+                type="number"
+                step="0.01"
+                min="0"
+                defaultValue={
+                  user.hourly_rate === null ? "" : Number(user.hourly_rate)
+                }
+                placeholder="Not set"
+                className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+              />
+            </div>
           </div>
+
+          <p className="text-xs text-[#6b705c]">
+            More profile fields (phone, hire date, etc.) can go here as
+            they come up.
+          </p>
 
           <label className="flex items-center gap-2 text-sm font-semibold">
             <input

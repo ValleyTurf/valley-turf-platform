@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# print-ready marketing collateral — large binaries that belong in the
+# OneDrive folder, not the git history. Still on disk, just not tracked.
+/marketing-assets/
+
+# stray backup files created while working around OneDrive file locks
+*-delete-me
+*.bak

@@ -47,15 +47,23 @@ export default async function EmployeesPage() {
               Valley Turf Revival OS
             </p>
 
-            <h1 className="mt-2 text-4xl font-bold">Employees</h1>
+            <h1 className="mt-2 text-4xl font-bold">Labor Rates</h1>
 
             <p className="mt-2 max-w-2xl text-[#6b705c]">
-              Hourly rates used for labor cost on{" "}
+              Hourly rates used purely for job-cost math on{" "}
               <Link href="/job-costs" className="font-semibold underline">
                 job entries
               </Link>
               . Add anyone new here and they'll show up as a time field on
               every job.
+            </p>
+
+            <p className="mt-2 max-w-2xl text-sm text-[#9c7a20]">
+              Looking for logins, roles, or pay profiles instead? That's{" "}
+              <Link href="/team" className="font-semibold underline">
+                Team
+              </Link>
+              .
             </p>
           </div>
 
@@ -70,14 +78,14 @@ export default async function EmployeesPage() {
         {error && (
           <section className="mt-6 rounded-2xl border border-red-200 bg-white p-5 shadow">
             <p className="font-bold text-red-700">
-              Employees could not be loaded
+              Labor rates could not be loaded
             </p>
             <p className="mt-1 text-sm text-red-600">{error.message}</p>
           </section>
         )}
 
         <section className="mt-6 rounded-2xl bg-white p-5 shadow">
-          <h2 className="text-lg font-bold">Add an Employee</h2>
+          <h2 className="text-lg font-bold">Add a Labor Rate</h2>
 
           <form action={addEmployee} className="mt-4 space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -127,12 +135,12 @@ export default async function EmployeesPage() {
         </section>
 
         <section className="mt-6 rounded-2xl bg-white p-5 shadow">
-          <h2 className="text-lg font-bold">Current Employees</h2>
+          <h2 className="text-lg font-bold">Current Labor Rates</h2>
 
           <div className="mt-4 space-y-3">
             {employees.length === 0 ? (
               <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
-                No employees added yet.
+                No labor rates added yet.
               </p>
             ) : (
               employees.map((employee) => (

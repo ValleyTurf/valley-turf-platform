@@ -1,0 +1,14 @@
+# Normalize line endings so Windows/OneDrive checkouts don't show every
+# text file as "modified" with no real content change. Git stores LF in
+# the repo and converts to the platform's native line ending on checkout.
+* text=auto eol=lf
+
+# Binary files — never touch these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary

@@ -71,7 +71,7 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
         icon: "📈",
       },
       { name: "Materials", href: "/materials", icon: "🧪" },
-      { name: "Employees", href: "/employees", icon: "🧑‍🔧" },
+      { name: "Labor Rates", href: "/employees", icon: "🧑‍🔧" },
       { name: "Equipment", href: "/equipment", icon: "🧹" },
       { name: "Overhead Costs", href: "/costs", icon: "💵" },
     ],

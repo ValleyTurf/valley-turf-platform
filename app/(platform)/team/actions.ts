@@ -19,6 +19,16 @@ function cleanRole(value: FormDataEntryValue | null): "admin" | "staff" {
   return value === "admin" ? "admin" : "staff";
 }
 
+function cleanHourlyRate(value: FormDataEntryValue | null): number | null {
+  if (typeof value !== "string" || value.trim() === "") {
+    return null;
+  }
+
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
 export async function addUser(formData: FormData): Promise<void> {
   await requireAdmin();
 
@@ -26,6 +36,7 @@ export async function addUser(formData: FormData): Promise<void> {
   const email = cleanText(formData.get("email"));
   const password = cleanText(formData.get("password"));
   const role = cleanRole(formData.get("role"));
+  const hourlyRate = cleanHourlyRate(formData.get("hourly_rate"));
 
   if (!name || !email || !password) {
     throw new Error("Name, email, and a starting password are required.");
@@ -40,6 +51,7 @@ export async function addUser(formData: FormData): Promise<void> {
     email: email.toLowerCase(),
     password_hash: hashPassword(password),
     role,
+    hourly_rate: hourlyRate,
   });
 
   if (error) {
@@ -62,6 +74,7 @@ export async function updateUser(
   const name = cleanText(formData.get("name"));
   const role = cleanRole(formData.get("role"));
   const active = formData.get("active") === "on";
+  const hourlyRate = cleanHourlyRate(formData.get("hourly_rate"));
 
   if (!name) {
     throw new Error("Name is required.");
@@ -79,6 +92,7 @@ export async function updateUser(
       name,
       role,
       active,
+      hourly_rate: hourlyRate,
       updated_at: new Date().toISOString(),
     })
     .eq("id", id);
