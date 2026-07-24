@@ -4,26 +4,17 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { addEmployee, updateEmployee, deleteEmployee } from "../materials/actions";
+import ConfirmSubmitButton from "@/app/components/ConfirmSubmitButton";
+import {
+  toNumber,
+  formatCurrencyPrecise as formatCurrency,
+} from "@/lib/format";
 
 type EmployeeRow = {
   id: string;
   name: string;
   unit_cost: number | string;
 };
-
-function toNumber(value: number | string | null | undefined): number {
-  const parsed = Number(value ?? 0);
-
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatCurrency(value: number | string | null | undefined): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-  }).format(toNumber(value));
-}
 
 function displayName(rawName: string): string {
   return rawName.replace(/^Labor\s*[—-]\s*/i, "").trim();
@@ -214,12 +205,12 @@ function EmployeeRowItem({ employee }: { employee: EmployeeRow }) {
         </form>
 
         <form action={deleteEmployee.bind(null, employee.id)} className="mt-3">
-          <button
-            type="submit"
+          <ConfirmSubmitButton
+            confirmMessage={`Remove ${name}'s labor rate? This can't be undone.`}
             className="rounded-lg border border-red-300 px-4 py-2 text-sm font-bold text-red-700 transition hover:bg-red-50"
           >
             Remove Employee
-          </button>
+          </ConfirmSubmitButton>
         </form>
       </div>
     </details>

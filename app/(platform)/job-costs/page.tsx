@@ -4,6 +4,10 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { saveVisitCosts } from "../materials/actions";
+import {
+  toNumber,
+  formatCurrencyPrecise as formatCurrency,
+} from "@/lib/format";
 
 type JobCostsPageProps = {
   searchParams: Promise<{
@@ -57,20 +61,6 @@ type VisitCost = {
 };
 
 const PAGE_SIZE = 15;
-
-function toNumber(value: number | string | null | undefined): number {
-  const parsed = Number(value ?? 0);
-
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatCurrency(value: number | string | null | undefined): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-  }).format(toNumber(value));
-}
 
 function formatDateTime(value: string | null): string {
   if (!value) {

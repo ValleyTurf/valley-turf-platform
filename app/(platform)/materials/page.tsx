@@ -4,6 +4,11 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { addMaterial, updateMaterial, deleteMaterial } from "./actions";
+import ConfirmSubmitButton from "@/app/components/ConfirmSubmitButton";
+import {
+  toNumber,
+  formatCurrencyPrecise as formatCurrency,
+} from "@/lib/format";
 
 type Material = {
   id: string;
@@ -12,20 +17,6 @@ type Material = {
   unit_cost: number | string;
   notes: string | null;
 };
-
-function toNumber(value: number | string | null | undefined): number {
-  const parsed = Number(value ?? 0);
-
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatCurrency(value: number | string | null | undefined): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-  }).format(toNumber(value));
-}
 
 export default async function MaterialsPage() {
   const { data, error } = await supabaseServer
@@ -264,12 +255,12 @@ function MaterialRow({ material }: { material: Material }) {
         </form>
 
         <form action={deleteMaterial.bind(null, material.id)} className="mt-3">
-          <button
-            type="submit"
+          <ConfirmSubmitButton
+            confirmMessage={`Delete ${material.name}? This can't be undone.`}
             className="rounded-lg border border-red-300 px-4 py-2 text-sm font-bold text-red-700 transition hover:bg-red-50"
           >
             Delete Material
-          </button>
+          </ConfirmSubmitButton>
         </form>
       </div>
     </details>

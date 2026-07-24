@@ -5,8 +5,10 @@
 // email go live as soon as RESEND_API_KEY is set, without waiting on
 // Twilio's carrier registration (A2P 10DLC) to clear.
 
-const ALERT_EMAIL = "valleyturfrevival@gmail.com";
-const ALERT_PHONE = "+14803314596";
+// Overridable via env vars so who gets alerted doesn't require a code
+// change + redeploy. Falls back to the original hardcoded values if unset.
+const ALERT_EMAIL = process.env.ALERT_EMAIL || "valleyturfrevival@gmail.com";
+const ALERT_PHONE = process.env.ALERT_PHONE || "+14803314596";
 
 export type NewLeadAlert = {
   name: string | null;

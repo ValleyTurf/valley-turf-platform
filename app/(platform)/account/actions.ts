@@ -5,22 +5,37 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { hashPassword, verifyPassword } from "@/lib/passwords";
 import { getCurrentUser } from "@/lib/currentUser";
 
-export async function changeOwnPassword(formData: FormData): Promise<void> {
+// Returned instead of thrown so the form can show the message inline via
+// useActionState, rather than crashing to Next's generic error screen.
+export type ChangePasswordState = { error: string | null; success: boolean };
+
+export const initialChangePasswordState: ChangePasswordState = {
+  error: null,
+  success: false,
+};
+
+export async function changeOwnPassword(
+  _prevState: ChangePasswordState,
+  formData: FormData
+): Promise<ChangePasswordState> {
   const user = await getCurrentUser();
 
   if (!user) {
-    throw new Error("Not signed in.");
+    return { error: "Not signed in.", success: false };
   }
 
   const currentPassword = formData.get("current_password");
   const newPassword = formData.get("new_password");
 
   if (typeof currentPassword !== "string" || typeof newPassword !== "string") {
-    throw new Error("Both fields are required.");
+    return { error: "Both fields are required.", success: false };
   }
 
   if (newPassword.length < 8) {
-    throw new Error("New password must be at least 8 characters.");
+    return {
+      error: "New password must be at least 8 characters.",
+      success: false,
+    };
   }
 
   const { data, error } = await supabaseServer
@@ -30,7 +45,7 @@ export async function changeOwnPassword(formData: FormData): Promise<void> {
     .single();
 
   if (error || !data || !verifyPassword(currentPassword, data.password_hash)) {
-    throw new Error("Current password is incorrect.");
+    return { error: "Current password is incorrect.", success: false };
   }
 
   const { error: updateError } = await supabaseServer
@@ -42,8 +57,13 @@ export async function changeOwnPassword(formData: FormData): Promise<void> {
     .eq("id", user.id);
 
   if (updateError) {
-    throw new Error(`Failed to update password: ${updateError.message}`);
+    return {
+      error: `Failed to update password: ${updateError.message}`,
+      success: false,
+    };
   }
 
   revalidatePath("/account");
+
+  return { error: null, success: true };
 }

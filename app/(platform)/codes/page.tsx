@@ -7,16 +7,9 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { generateBrandedQrCode } from "@/lib/qrcode";
 import { getAllCampaignRoi } from "@/lib/campaignRoi";
 import CopyLinkButton from "@/app/components/CopyLinkButton";
+import { formatCurrency } from "@/lib/format";
 
 type Channel = "qr" | "social";
-
-function formatCurrency(value: number) {
-  return value.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  });
-}
 
 function formatArizonaTime(value: string | null, emptyLabel: string) {
   if (!value) return emptyLabel;

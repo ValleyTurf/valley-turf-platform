@@ -8,6 +8,10 @@ import {
   updateOverheadCost,
   deleteOverheadCost,
 } from "./actions";
+import {
+  toNumber,
+  formatCurrencyPrecise as formatCurrency,
+} from "@/lib/format";
 
 type OverheadCost = {
   id: string;
@@ -19,19 +23,6 @@ type OverheadCost = {
   end_date: string | null;
   notes: string | null;
 };
-
-function toNumber(value: number | string | null | undefined): number {
-  const parsed = Number(value ?? 0);
-
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatCurrency(value: number | string | null | undefined): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format(toNumber(value));
-}
 
 function formatDate(value: string | null): string {
   if (!value) {

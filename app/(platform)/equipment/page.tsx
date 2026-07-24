@@ -4,6 +4,11 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { addEquipment, updateEquipment, deleteEquipment } from "../materials/actions";
+import ConfirmSubmitButton from "@/app/components/ConfirmSubmitButton";
+import {
+  toNumber,
+  formatCurrencyPrecise as formatCurrency,
+} from "@/lib/format";
 
 type EquipmentSummary = {
   equipment_id: string;
@@ -21,20 +26,6 @@ function isRetired(retiredDate: string | null): boolean {
   }
 
   return new Date(`${retiredDate}T00:00:00`) <= new Date();
-}
-
-function toNumber(value: number | string | null | undefined): number {
-  const parsed = Number(value ?? 0);
-
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatCurrency(value: number | string | null | undefined): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-  }).format(toNumber(value));
 }
 
 function formatDate(value: string | null): string {
@@ -337,12 +328,12 @@ function EquipmentRow({ item }: { item: EquipmentSummary }) {
         </form>
 
         <form action={deleteEquipment.bind(null, item.equipment_id)} className="mt-3">
-          <button
-            type="submit"
+          <ConfirmSubmitButton
+            confirmMessage={`Delete ${item.name}? This can't be undone.`}
             className="rounded-lg border border-red-300 px-4 py-2 text-sm font-bold text-red-700 transition hover:bg-red-50"
           >
             Delete Equipment
-          </button>
+          </ConfirmSubmitButton>
         </form>
       </div>
     </details>

@@ -3,6 +3,11 @@ export const revalidate = 0;
 
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
+import {
+  toNumber,
+  formatCurrency,
+  formatNumber,
+} from "@/lib/format";
 
 type CustomerAlert = {
   jobber_client_id: string;
@@ -21,24 +26,6 @@ type CategoryAlert = {
 };
 
 const THIN_MARGIN_THRESHOLD = 15;
-
-function toNumber(value: number | string | null | undefined): number {
-  const parsed = Number(value ?? 0);
-
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatCurrency(value: number | string | null | undefined): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(toNumber(value));
-}
-
-function formatNumber(value: number | string | null | undefined): string {
-  return new Intl.NumberFormat("en-US").format(toNumber(value));
-}
 
 export default async function AlertsPage() {
   const [customerResult, categoryResult] = await Promise.all([

@@ -4,6 +4,12 @@ export const revalidate = 0;
 import Link from "next/link";
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
+import {
+  toNumber,
+  formatCurrency,
+  formatNumber,
+  formatPercent,
+} from "@/lib/format";
 
 type Timeframe =
   | "last-7-days"
@@ -77,30 +83,6 @@ type PageProps = {
 };
 
 const PHOENIX_TIME_ZONE = "America/Phoenix";
-
-function toNumber(value: number | string | null | undefined): number {
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(value);
-}
-
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
-}
-
-function formatPercent(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "percent",
-    maximumFractionDigits: 1,
-  }).format(value);
-}
 
 function formatDate(value: string | null): string {
   if (!value) return "—";

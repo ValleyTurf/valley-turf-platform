@@ -7,6 +7,11 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { normalizeEmail, normalizePhone } from "@/lib/matching";
 import { updateCustomerProfile } from "./actions";
 import { saveVisitCosts } from "../../materials/actions";
+import {
+  toNumber,
+  formatCurrency,
+  formatCurrencyPrecise,
+} from "@/lib/format";
 
 type CustomerDetailPageProps = {
   params: Promise<{
@@ -566,14 +571,6 @@ async function getCustomerProfile(
   return data as CustomerProfile | null;
 }
 
-function toNumber(
-  value: number | string | null | undefined
-): number {
-  const parsed = Number(value ?? 0);
-
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 function formatPhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");
 
@@ -590,27 +587,6 @@ function formatPhone(phone: string): string {
     3,
     6
   )}-${normalized.slice(6)}`;
-}
-
-function formatCurrency(
-  value: number | string | null | undefined
-): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(toNumber(value));
-}
-
-function formatCurrencyPrecise(
-  value: number | string | null | undefined
-): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(toNumber(value));
 }
 
 function decimalHoursToHMM(decimalHours: number): string {

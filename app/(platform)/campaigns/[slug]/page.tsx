@@ -8,14 +8,7 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { generateBrandedQrCode } from "@/lib/qrcode";
 import { getCampaignRoi } from "@/lib/campaignRoi";
 import CopyLinkButton from "@/app/components/CopyLinkButton";
-
-function formatCurrency(value: number) {
-  return value.toLocaleString("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  });
-}
+import { formatCurrency } from "@/lib/format";
 
 type Channel = "qr" | "social";
 
