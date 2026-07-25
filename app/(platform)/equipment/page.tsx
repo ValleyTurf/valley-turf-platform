@@ -8,6 +8,7 @@ import ConfirmSubmitButton from "@/app/components/ConfirmSubmitButton";
 import {
   toNumber,
   formatCurrencyPrecise as formatCurrency,
+  formatDateOnly as formatDate,
 } from "@/lib/format";
 
 type EquipmentSummary = {
@@ -26,24 +27,6 @@ function isRetired(retiredDate: string | null): boolean {
   }
 
   return new Date(`${retiredDate}T00:00:00`) <= new Date();
-}
-
-function formatDate(value: string | null): string {
-  if (!value) {
-    return "—";
-  }
-
-  const date = new Date(`${value}T12:00:00`);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
 }
 
 export default async function EquipmentPage() {

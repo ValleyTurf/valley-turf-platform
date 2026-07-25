@@ -11,6 +11,7 @@ import {
   toNumber,
   formatCurrency,
   formatCurrencyPrecise,
+  formatDateOnly as formatDate,
 } from "@/lib/format";
 
 type CustomerDetailPageProps = {
@@ -599,26 +600,6 @@ function decimalHoursToHMM(decimalHours: number): string {
   const minutes = totalMinutes % 60;
 
   return `${hours}:${String(minutes).padStart(2, "0")}`;
-}
-
-function formatDate(value: string | null): string {
-  if (!value) {
-    return "—";
-  }
-
-  const date = new Date(
-    value.includes("T") ? value : `${value}T12:00:00`
-  );
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
 }
 
 function formatVisitDateTime(value: string | null): string {

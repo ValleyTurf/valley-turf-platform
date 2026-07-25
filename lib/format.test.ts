@@ -5,6 +5,7 @@ import {
   formatCurrencyPrecise,
   formatNumber,
   formatPercent,
+  formatDateOnly,
 } from "./format";
 
 describe("toNumber", () => {
@@ -46,6 +47,29 @@ describe("formatCurrencyPrecise", () => {
 describe("formatNumber", () => {
   it("adds thousands separators", () => {
     expect(formatNumber(1234567)).toBe("1,234,567");
+  });
+});
+
+describe("formatDateOnly", () => {
+  it("formats a date-only string without shifting the day", () => {
+    // The classic bug this guards against: parsing "2026-07-24" as
+    // midnight UTC and then displaying it in a timezone behind UTC would
+    // show July 23rd. Noon-anchoring prevents that.
+    expect(formatDateOnly("2026-07-24")).toBe("Jul 24, 2026");
+  });
+
+  it("also accepts a full ISO timestamp", () => {
+    expect(formatDateOnly("2026-07-24T15:30:00Z")).toBe("Jul 24, 2026");
+  });
+
+  it("returns the fallback for a missing value", () => {
+    expect(formatDateOnly(null)).toBe("—");
+    expect(formatDateOnly(undefined)).toBe("—");
+    expect(formatDateOnly(null, "Never")).toBe("Never");
+  });
+
+  it("returns the raw value for an unparseable date", () => {
+    expect(formatDateOnly("not-a-date")).toBe("not-a-date");
   });
 });
 

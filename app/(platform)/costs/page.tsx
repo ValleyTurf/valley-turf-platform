@@ -11,6 +11,7 @@ import {
 import {
   toNumber,
   formatCurrencyPrecise as formatCurrency,
+  formatDateOnly as formatDate,
 } from "@/lib/format";
 
 type OverheadCost = {
@@ -23,24 +24,6 @@ type OverheadCost = {
   end_date: string | null;
   notes: string | null;
 };
-
-function formatDate(value: string | null): string {
-  if (!value) {
-    return "—";
-  }
-
-  const date = new Date(`${value}T12:00:00`);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
-}
 
 const CATEGORY_OPTIONS = [
   "Software",

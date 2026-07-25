@@ -7,6 +7,7 @@ import {
   toNumber,
   formatCurrency,
   formatNumber,
+  formatDateOnly as formatDateLabel,
 } from "@/lib/format";
 
 type JobCostingAnalyticsProps = {
@@ -51,20 +52,6 @@ type CategorySummary = {
 
 function formatDateInput(date: Date): string {
   return date.toISOString().slice(0, 10);
-}
-
-function formatDateLabel(value: string): string {
-  const date = new Date(`${value}T12:00:00`);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
 }
 
 function getPhoenixToday(): Date {
