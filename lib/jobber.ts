@@ -127,8 +127,6 @@ async function refreshJobberToken(
     }
 
     return null;
-
-    return null;
   }
 
   if (

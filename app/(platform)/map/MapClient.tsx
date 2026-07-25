@@ -62,6 +62,11 @@ export default function MapClient({
     lng: number;
   } | null>(null);
   const [notesInput, setNotesInput] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  function errorMessage(error: unknown, fallback: string): string {
+    return error instanceof Error ? error.message : fallback;
+  }
 
   function handleMapClick(lat: number, lng: number) {
     setAddingAt({ lat, lng });
@@ -74,9 +79,16 @@ export default function MapClient({
     const { lat, lng } = addingAt;
 
     startTransition(async () => {
-      await addDoorHangerDrop(lat, lng, notesInput.trim() || null);
-      setAddingAt(null);
-      setNotesInput("");
+      try {
+        await addDoorHangerDrop(lat, lng, notesInput.trim() || null);
+        setAddingAt(null);
+        setNotesInput("");
+        setActionError(null);
+      } catch (error) {
+        setActionError(
+          errorMessage(error, "Couldn't save that pin. Try again.")
+        );
+      }
     });
   }
 
@@ -93,13 +105,27 @@ export default function MapClient({
       currentStatus === "door_hanger" ? "lead" : "door_hanger";
 
     startTransition(async () => {
-      await updateDoorHangerStatus(id, nextStatus);
+      try {
+        await updateDoorHangerStatus(id, nextStatus);
+        setActionError(null);
+      } catch (error) {
+        setActionError(
+          errorMessage(error, "Couldn't update that pin. Try again.")
+        );
+      }
     });
   }
 
   function handleDelete(id: string) {
     startTransition(async () => {
-      await deleteDoorHangerDrop(id);
+      try {
+        await deleteDoorHangerDrop(id);
+        setActionError(null);
+      } catch (error) {
+        setActionError(
+          errorMessage(error, "Couldn't remove that pin. Try again.")
+        );
+      }
     });
   }
 
@@ -219,6 +245,23 @@ export default function MapClient({
           />
         )}
       </MapContainer>
+
+      {actionError && (
+        <div className="absolute top-4 left-1/2 z-[1000] w-80 -translate-x-1/2 rounded-2xl border border-red-200 bg-red-50 p-3 shadow-lg">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-sm font-semibold text-red-700">
+              {actionError}
+            </p>
+            <button
+              onClick={() => setActionError(null)}
+              className="text-xs font-bold text-red-600"
+              aria-label="Dismiss error"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {addingAt && (
         <div className="absolute bottom-4 left-1/2 z-[1000] w-80 -translate-x-1/2 rounded-2xl bg-white p-4 shadow-lg">

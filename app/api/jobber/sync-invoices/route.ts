@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
+import {
+  checkNotAlreadyRunning,
+  completeSyncRun,
+  failSyncRun,
+  fetchPageWithThrottleRetry,
+  startSyncRun,
+} from "@/lib/jobberSyncTracking";
 
 export const dynamic = "force-dynamic";
 
@@ -167,22 +174,6 @@ function formatInvoice(
   };
 }
 
-function isThrottled<T>(
-  response: JobberGraphQLResponse<T>
-): boolean {
-  return Boolean(
-    response.errors?.some((error) => {
-      const message =
-        error.message.toLowerCase();
-
-      return (
-        message.includes("throttled") ||
-        error.extensions?.code === "THROTTLED"
-      );
-    })
-  );
-}
-
 async function getInvoicesPage(
   cursor: string | null,
   pageNumber: number
@@ -190,219 +181,19 @@ async function getInvoicesPage(
   response: JobberGraphQLResponse<InvoicesPage>;
   throttleRetries: number;
 }> {
-  let retryNumber = 0;
-
-  while (retryNumber <= MAX_THROTTLE_RETRIES) {
-    const response =
-      await jobberGraphQL<InvoicesPage>(
-        INVOICES_QUERY,
-        {
-          limit: INVOICE_BATCH_SIZE,
-          cursor,
-        }
-      );
-
-    if (!isThrottled(response)) {
-      return {
-        response,
-        throttleRetries: retryNumber,
-      };
+  return fetchPageWithThrottleRetry<InvoicesPage>(
+    () =>
+      jobberGraphQL<InvoicesPage>(INVOICES_QUERY, {
+        limit: INVOICE_BATCH_SIZE,
+        cursor,
+      }),
+    {
+      pageNumber,
+      maxRetries: MAX_THROTTLE_RETRIES,
+      retryDelayMs: THROTTLE_RETRY_DELAY_MS,
+      label: "invoice page",
     }
-
-    retryNumber += 1;
-
-    if (retryNumber > MAX_THROTTLE_RETRIES) {
-      throw new Error(
-        `Jobber remained throttled after ${MAX_THROTTLE_RETRIES} retries on invoice page ${pageNumber}.`
-      );
-    }
-
-    const waitTime =
-      THROTTLE_RETRY_DELAY_MS * retryNumber;
-
-    console.warn(
-      `Jobber throttled invoice page ${pageNumber}. Retry ${retryNumber}/${MAX_THROTTLE_RETRIES} in ${waitTime}ms.`
-    );
-
-    await sleep(waitTime);
-  }
-
-  throw new Error(
-    `Unable to load Jobber invoice page ${pageNumber}.`
   );
-}
-
-async function startSyncRun(): Promise<string> {
-  const startedAt =
-    new Date().toISOString();
-
-  const {
-    data: syncRun,
-    error: syncRunError,
-  } = await supabaseServer
-    .from("jobber_sync_runs")
-    .insert({
-      sync_type: SYNC_TYPE,
-      sync_mode: "manual",
-      status: "running",
-      started_at: startedAt,
-    })
-    .select("id")
-    .single();
-
-  if (syncRunError || !syncRun) {
-    throw new Error(
-      `Unable to start invoice sync tracking: ${
-        syncRunError?.message ??
-        "No sync run was created."
-      }`
-    );
-  }
-
-  const { error: statusError } =
-    await supabaseServer
-      .from("jobber_sync_status")
-      .upsert(
-        {
-          sync_type: SYNC_TYPE,
-          status: "running",
-          last_started_at: startedAt,
-          last_error: null,
-          updated_at: startedAt,
-        },
-        {
-          onConflict: "sync_type",
-          ignoreDuplicates: false,
-        }
-      );
-
-  if (statusError) {
-    console.error(
-      "Unable to update invoice sync status to running:",
-      statusError
-    );
-  }
-
-  return syncRun.id as string;
-}
-
-async function completeSyncRun(
-  syncRunId: string,
-  result: SyncResult
-): Promise<void> {
-  const completedAt =
-    new Date().toISOString();
-
-  const metadata = {
-    warnings: result.warnings,
-  };
-
-  const { error: syncRunError } =
-    await supabaseServer
-      .from("jobber_sync_runs")
-      .update({
-        status: "success",
-        completed_at: completedAt,
-        records_received:
-          result.invoicesReceived,
-        records_saved:
-          result.invoicesSaved,
-        pages_processed:
-          result.pagesProcessed,
-        throttle_retries:
-          result.throttleRetries,
-        metadata,
-      })
-      .eq("id", syncRunId);
-
-  if (syncRunError) {
-    console.error(
-      "Unable to mark invoice sync run successful:",
-      syncRunError
-    );
-  }
-
-  const { error: statusError } =
-    await supabaseServer
-      .from("jobber_sync_status")
-      .upsert(
-        {
-          sync_type: SYNC_TYPE,
-          status: "healthy",
-          last_completed_at: completedAt,
-          last_success_at: completedAt,
-          records_received:
-            result.invoicesReceived,
-          records_saved:
-            result.invoicesSaved,
-          pages_processed:
-            result.pagesProcessed,
-          throttle_retries:
-            result.throttleRetries,
-          last_error: null,
-          updated_at: completedAt,
-        },
-        {
-          onConflict: "sync_type",
-          ignoreDuplicates: false,
-        }
-      );
-
-  if (statusError) {
-    console.error(
-      "Unable to update invoice sync status to healthy:",
-      statusError
-    );
-  }
-}
-
-async function failSyncRun(
-  syncRunId: string,
-  errorMessage: string
-): Promise<void> {
-  const failedAt =
-    new Date().toISOString();
-
-  const { error: syncRunError } =
-    await supabaseServer
-      .from("jobber_sync_runs")
-      .update({
-        status: "failed",
-        completed_at: failedAt,
-        error_message: errorMessage,
-      })
-      .eq("id", syncRunId);
-
-  if (syncRunError) {
-    console.error(
-      "Unable to mark invoice sync run failed:",
-      syncRunError
-    );
-  }
-
-  const { error: statusError } =
-    await supabaseServer
-      .from("jobber_sync_status")
-      .upsert(
-        {
-          sync_type: SYNC_TYPE,
-          status: "failed",
-          last_failed_at: failedAt,
-          last_error: errorMessage,
-          updated_at: failedAt,
-        },
-        {
-          onConflict: "sync_type",
-          ignoreDuplicates: false,
-        }
-      );
-
-  if (statusError) {
-    console.error(
-      "Unable to update invoice sync status to failed:",
-      statusError
-    );
-  }
 }
 
 async function syncInvoices(): Promise<SyncResult> {
@@ -523,63 +314,39 @@ export async function GET() {
   let syncRunId: string | null = null;
 
   try {
-    const {
-      data: currentStatus,
-      error: currentStatusError,
-    } = await supabaseServer
-      .from("jobber_sync_status")
-      .select(
-        "status, last_started_at"
-      )
-      .eq("sync_type", SYNC_TYPE)
-      .maybeSingle();
+    const alreadyRunning = await checkNotAlreadyRunning(SYNC_TYPE);
 
-    if (currentStatusError) {
-      throw new Error(
-        `Unable to check current invoice sync status: ${currentStatusError.message}`
-      );
-    }
-
-    if (
-      currentStatus?.status === "running"
-    ) {
+    if (alreadyRunning) {
       return NextResponse.json(
         {
           success: false,
           alreadyRunning: true,
-          message:
-            "A Jobber invoice sync is already running.",
-          lastStartedAt:
-            currentStatus.last_started_at,
+          message: "A Jobber invoice sync is already running.",
+          lastStartedAt: alreadyRunning.lastStartedAt,
         },
-        {
-          status: 409,
-        }
+        { status: 409 }
       );
     }
 
-    syncRunId =
-      await startSyncRun();
+    syncRunId = await startSyncRun(SYNC_TYPE);
 
-    const syncResult =
-      await syncInvoices();
+    const syncResult = await syncInvoices();
 
-    await completeSyncRun(
-      syncRunId,
-      syncResult
-    );
+    await completeSyncRun(SYNC_TYPE, syncRunId, {
+      recordsReceived: syncResult.invoicesReceived,
+      recordsSaved: syncResult.invoicesSaved,
+      pagesProcessed: syncResult.pagesProcessed,
+      throttleRetries: syncResult.throttleRetries,
+      metadata: { warnings: syncResult.warnings },
+    });
 
     return NextResponse.json({
       success: true,
-      message:
-        "Jobber invoices synchronized successfully.",
+      message: "Jobber invoices synchronized successfully.",
       ...syncResult,
     });
   } catch (error) {
-    console.error(
-      "Jobber invoice sync failed:",
-      error
-    );
+    console.error("Jobber invoice sync failed:", error);
 
     const errorMessage =
       error instanceof Error
@@ -587,10 +354,7 @@ export async function GET() {
         : "An unknown invoice sync error occurred.";
 
     if (syncRunId) {
-      await failSyncRun(
-        syncRunId,
-        errorMessage
-      );
+      await failSyncRun(SYNC_TYPE, syncRunId, errorMessage);
     }
 
     return NextResponse.json(
@@ -598,9 +362,7 @@ export async function GET() {
         success: false,
         error: errorMessage,
       },
-      {
-        status: 500,
-      }
+      { status: 500 }
     );
   }
 }

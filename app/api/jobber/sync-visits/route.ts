@@ -1,8 +1,62 @@
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
+import {
+  checkNotAlreadyRunning,
+  completeSyncRun,
+  failSyncRun,
+  fetchPageWithThrottleRetry,
+  startSyncRun,
+} from "@/lib/jobberSyncTracking";
 
 export const dynamic = "force-dynamic";
+
+const SYNC_TYPE = "visits";
+
+// Visits are a much more expensive query than jobs/invoices/customers
+// (nested client/job/invoice sub-objects on every node), so this uses a
+// smaller batch size, a longer pace between pages, and a longer initial
+// throttle-retry delay than the other sync routes' defaults.
+const VISIT_BATCH_SIZE = 50;
+const PAGE_DELAY_MS = 1800;
+const THROTTLE_RETRY_DELAY_MS = 4000;
+const MAX_THROTTLE_RETRIES = 5;
+
+const VISITS_QUERY = `
+  query GetVisitsPage($limit: Int!, $cursor: String) {
+    visits(first: $limit, after: $cursor) {
+      nodes {
+        id
+        title
+        visitStatus
+        startAt
+        endAt
+        completedAt
+        duration
+        isLastScheduledVisit
+
+        client {
+          id
+          name
+        }
+
+        job {
+          id
+          jobNumber
+        }
+
+        invoice {
+          id
+        }
+      }
+
+      pageInfo {
+        endCursor
+        hasNextPage
+      }
+    }
+  }
+`;
 
 type JobberClient = {
   id: string;
@@ -107,15 +161,42 @@ function formatVisit(visit: JobberVisit): VisitUpsert {
   };
 }
 
-async function syncVisits() {
-  const batchSize = 50;
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
 
+async function getVisitsPage(
+  cursor: string | null,
+  pageNumber: number
+): Promise<{
+  response: JobberGraphQLResponse<VisitsPage>;
+  throttleRetries: number;
+}> {
+  return fetchPageWithThrottleRetry<VisitsPage>(
+    () =>
+      jobberGraphQL<VisitsPage>(VISITS_QUERY, {
+        limit: VISIT_BATCH_SIZE,
+        cursor,
+      }),
+    {
+      pageNumber,
+      maxRetries: MAX_THROTTLE_RETRIES,
+      retryDelayMs: THROTTLE_RETRY_DELAY_MS,
+      label: "visit page",
+    }
+  );
+}
+
+async function syncVisits() {
   let cursor: string | null = null;
   let hasNextPage = true;
   let pageNumber = 0;
 
   let visitsReceived = 0;
   let visitsSaved = 0;
+  let throttleRetries = 0;
 
   const warnings: string[] = [];
 
@@ -127,48 +208,10 @@ async function syncVisits() {
       break;
     }
 
-    const jobberResponse: JobberGraphQLResponse<VisitsPage> =
-      await jobberGraphQL<VisitsPage>(
-        `
-          query GetVisitsPage($limit: Int!, $cursor: String) {
-            visits(first: $limit, after: $cursor) {
-              nodes {
-                id
-                title
-                visitStatus
-                startAt
-                endAt
-                completedAt
-                duration
-                isLastScheduledVisit
+    const pageResult = await getVisitsPage(cursor, pageNumber);
+    const jobberResponse = pageResult.response;
 
-                client {
-                  id
-                  name
-                }
-
-                job {
-                  id
-                  jobNumber
-                }
-
-                invoice {
-                  id
-                }
-              }
-
-              pageInfo {
-                endCursor
-                hasNextPage
-              }
-            }
-          }
-        `,
-        {
-          limit: batchSize,
-          cursor,
-        }
-      );
+    throttleRetries += pageResult.throttleRetries;
 
     if (jobberResponse.errors?.length) {
       const message = jobberResponse.errors
@@ -213,11 +256,8 @@ async function syncVisits() {
       break;
     }
 
-    // Visits are a much more expensive query than jobs/invoices/customers
-    // (nested client/job/invoice sub-objects on every node), so pace
-    // requests to avoid burning through the throttle budget mid-sync.
     if (hasNextPage) {
-      await new Promise((resolve) => setTimeout(resolve, 1800));
+      await sleep(PAGE_DELAY_MS);
     }
   }
 
@@ -225,13 +265,40 @@ async function syncVisits() {
     visitsReceived,
     visitsSaved,
     pagesProcessed: pageNumber,
+    throttleRetries,
     warnings,
   };
 }
 
 export async function GET() {
+  let syncRunId: string | null = null;
+
   try {
+    const alreadyRunning = await checkNotAlreadyRunning(SYNC_TYPE);
+
+    if (alreadyRunning) {
+      return NextResponse.json(
+        {
+          success: false,
+          alreadyRunning: true,
+          message: "A Jobber visit sync is already running.",
+          lastStartedAt: alreadyRunning.lastStartedAt,
+        },
+        { status: 409 }
+      );
+    }
+
+    syncRunId = await startSyncRun(SYNC_TYPE);
+
     const syncResult = await syncVisits();
+
+    await completeSyncRun(SYNC_TYPE, syncRunId, {
+      recordsReceived: syncResult.visitsReceived,
+      recordsSaved: syncResult.visitsSaved,
+      pagesProcessed: syncResult.pagesProcessed,
+      throttleRetries: syncResult.throttleRetries,
+      metadata: { warnings: syncResult.warnings },
+    });
 
     return NextResponse.json({
       success: true,
@@ -241,13 +308,19 @@ export async function GET() {
   } catch (error) {
     console.error("Jobber visit sync failed:", error);
 
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : "An unknown visit sync error occurred.";
+
+    if (syncRunId) {
+      await failSyncRun(SYNC_TYPE, syncRunId, errorMessage);
+    }
+
     return NextResponse.json(
       {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "An unknown visit sync error occurred.",
+        error: errorMessage,
       },
       { status: 500 }
     );

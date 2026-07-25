@@ -105,37 +105,79 @@ async function syncCoordinates() {
 
     clientsReceived += clients.length;
 
-    for (const client of clients) {
-      const property = client.clientProperties?.nodes?.[0];
-      const address = property?.address;
-      const coordinates = address?.coordinates;
+    const candidates = clients
+      .map((client) => {
+        const property = client.clientProperties?.nodes?.[0];
+        const address = property?.address;
+        const coordinates = address?.coordinates;
 
-      if (
-        !coordinates ||
-        coordinates.latitude === null ||
-        coordinates.longitude === null
-      ) {
-        clientsSkipped += 1;
-        continue;
-      }
+        if (
+          !coordinates ||
+          coordinates.latitude === null ||
+          coordinates.longitude === null
+        ) {
+          return null;
+        }
 
-      const { error: updateError } = await supabaseServer
-        .from("customers")
-        .update({
+        return {
+          jobber_client_id: client.id,
           latitude: coordinates.latitude,
           longitude: coordinates.longitude,
           geo_status: address?.geoStatus ?? null,
-        })
-        .eq("jobber_client_id", client.id);
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null);
 
-      if (updateError) {
-        warnings.push(
-          `Failed to update ${client.id}: ${updateError.message}`
+    clientsSkipped += clients.length - candidates.length;
+
+    if (candidates.length > 0) {
+      // Only upsert rows that already exist as customers — a plain
+      // upsert would happily *insert* a new customer row with nothing
+      // but coordinates on it for any client this sync sees before
+      // sync-customers has ever created that row, which is worse than
+      // just skipping it. One lookup + one batched upsert per page
+      // instead of an individual round-trip update per client.
+      const { data: existingCustomers, error: lookupError } =
+        await supabaseServer
+          .from("customers")
+          .select("jobber_client_id")
+          .in(
+            "jobber_client_id",
+            candidates.map((row) => row.jobber_client_id)
+          );
+
+      if (lookupError) {
+        throw new Error(
+          `Supabase lookup failed on page ${pageNumber}: ${lookupError.message}`
         );
-        continue;
       }
 
-      clientsUpdated += 1;
+      const existingIds = new Set(
+        (existingCustomers ?? []).map((row) => row.jobber_client_id as string)
+      );
+
+      const rowsToUpdate = candidates.filter((row) =>
+        existingIds.has(row.jobber_client_id)
+      );
+
+      clientsSkipped += candidates.length - rowsToUpdate.length;
+
+      if (rowsToUpdate.length > 0) {
+        const { error: upsertError } = await supabaseServer
+          .from("customers")
+          .upsert(rowsToUpdate, {
+            onConflict: "jobber_client_id",
+            ignoreDuplicates: false,
+          });
+
+        if (upsertError) {
+          warnings.push(
+            `Failed to update coordinates on page ${pageNumber}: ${upsertError.message}`
+          );
+        } else {
+          clientsUpdated += rowsToUpdate.length;
+        }
+      }
     }
 
     hasNextPage = pageInfo?.hasNextPage ?? false;
