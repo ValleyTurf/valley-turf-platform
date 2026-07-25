@@ -1,7 +1,33 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 
+// Public endpoint: meant to be called by an external automation (e.g. a
+// Jobber automation or Zapier zap posting new client/request info) rather
+// than by anything inside this app — nothing in this codebase calls it.
+// Since it's listed in proxy.ts's PUBLIC_PATHS (no session cookie will
+// ever be present), it guards itself with its own shared-secret check,
+// the same pattern used by /api/jobber/process-webhooks.
+function isAuthorized(request: Request): boolean {
+  const expectedSecret = process.env.LEADS_WEBHOOK_SECRET;
+
+  if (!expectedSecret) {
+    console.error("LEADS_WEBHOOK_SECRET is not configured.");
+    return false;
+  }
+
+  const authorization = request.headers.get("authorization");
+
+  return authorization === `Bearer ${expectedSecret}`;
+}
+
 export async function POST(request: Request) {
+  if (!isAuthorized(request)) {
+    return NextResponse.json(
+      { ok: false, error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
   try {
     const body = await request.json();
 

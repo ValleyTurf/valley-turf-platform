@@ -172,11 +172,18 @@ function formatDate(date: string | null) {
     return "—";
   }
 
+  const parsed = new Date(date);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return "—";
+  }
+
   return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Phoenix",
     month: "short",
     day: "numeric",
     year: "numeric",
-  }).format(new Date(date));
+  }).format(parsed);
 }
 
 function daysSince(date: string | null) {

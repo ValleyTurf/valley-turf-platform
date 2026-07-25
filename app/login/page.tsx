@@ -6,12 +6,12 @@ import { useRouter } from "next/navigation";
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError(false);
+    setError(null);
 
     const res = await fetch("/api/login", {
       method: "POST",
@@ -22,9 +22,16 @@ export default function LoginPage() {
     if (res.ok) {
       router.push("/");
       router.refresh();
-    } else {
-      setError(true);
+      return;
     }
+
+    if (res.status === 429) {
+      const body = await res.json().catch(() => null);
+      setError(body?.error || "Too many failed attempts. Try again later.");
+      return;
+    }
+
+    setError("Incorrect email or password.");
   }
 
   return (
@@ -56,9 +63,7 @@ export default function LoginPage() {
           />
 
           {error && (
-            <p className="text-sm font-semibold text-red-600">
-              Incorrect email or password.
-            </p>
+            <p className="text-sm font-semibold text-red-600">{error}</p>
           )}
 
           <button

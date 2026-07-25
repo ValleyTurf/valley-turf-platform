@@ -14,6 +14,11 @@ const PUBLIC_PATHS = [
   // so this one has to stay public here and rely on its own check.
   "/api/jobber/process-webhooks",
   "/api/scan-leads",
+  // Called by an external automation (Jobber automation / Zapier), not
+  // from inside this app. Guards itself internally with its own
+  // LEADS_WEBHOOK_SECRET bearer check (see route.ts) rather than a
+  // session cookie, since the caller has no browser session.
+  "/api/leads",
 ];
 
 // Routes Vercel Cron calls on a schedule (see vercel.json) that have no

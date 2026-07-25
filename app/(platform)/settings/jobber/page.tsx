@@ -152,6 +152,7 @@ export default async function JobberSyncPage() {
     webhookEventsResult,
     pendingEventsResult,
     failedEventsResult,
+    latestTokenResult,
   ] = await Promise.all([
     supabase
       .from("jobber_sync_status")
@@ -193,6 +194,13 @@ export default async function JobberSyncPage() {
         head: true,
       })
       .eq("status", "failed"),
+
+    supabase
+      .from("jobber_tokens")
+      .select("id, created_at")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
   ]);
 
   const syncStatuses =
@@ -229,6 +237,39 @@ export default async function JobberSyncPage() {
     : lastWebhookAgeHours !== null && lastWebhookAgeHours > 48
       ? { label: "● Stale", color: "#92400e" }
       : { label: "● Active", color: "#166534" };
+
+  const hasToken = Boolean(latestTokenResult.data);
+
+  const needsReconnect = syncStatuses.some((sync) => {
+    const error = (sync.last_error ?? "").toLowerCase();
+    return (
+      error.includes("reconnect") ||
+      error.includes("no jobber connection") ||
+      (error.includes("token") && error.includes("expired"))
+    );
+  });
+
+  const connectionStatus: {
+    label: string;
+    background: string;
+    color: string;
+  } = !hasToken
+    ? {
+        label: "○ Not Connected",
+        background: "#f3f4f6",
+        color: "#4b5563",
+      }
+    : needsReconnect
+      ? {
+          label: "● Reconnect Needed",
+          background: "#fee2e2",
+          color: "#991b1b",
+        }
+      : {
+          label: "● Jobber Connected",
+          background: "#dcfce7",
+          color: "#166534",
+        };
 
   return (
     <main
@@ -294,13 +335,13 @@ export default async function JobberSyncPage() {
             style={{
               padding: "10px 14px",
               borderRadius: "999px",
-              background: "#dcfce7",
-              color: "#166534",
+              background: connectionStatus.background,
+              color: connectionStatus.color,
               fontWeight: 700,
               fontSize: "14px",
             }}
           >
-            ● Jobber Connected
+            {connectionStatus.label}
           </div>
         </div>
 

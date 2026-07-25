@@ -6,6 +6,11 @@ import {
   SESSION_COOKIE_NAME,
   SESSION_MAX_AGE_SECONDS,
 } from "@/lib/auth";
+import {
+  clearLoginAttempts,
+  getLockoutMinutesRemaining,
+  recordFailedLoginAttempt,
+} from "@/lib/loginAttempts";
 
 type UserRow = {
   id: string;
@@ -23,6 +28,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: false }, { status: 401 });
   }
 
+  const lockoutMinutesRemaining = await getLockoutMinutesRemaining(email);
+
+  if (lockoutMinutesRemaining !== null) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: `Too many failed attempts. Try again in ${lockoutMinutesRemaining} minute${
+          lockoutMinutesRemaining === 1 ? "" : "s"
+        }.`,
+      },
+      { status: 429 }
+    );
+  }
+
   const { data, error } = await supabaseServer
     .from("users")
     .select("id, email, name, password_hash, role, active")
@@ -34,8 +53,11 @@ export async function POST(request: Request) {
   // Same response whether the account doesn't exist, is deactivated, or
   // the password is wrong — don't let the login form leak which one it is.
   if (error || !user || !user.active || !verifyPassword(password, user.password_hash)) {
+    await recordFailedLoginAttempt(email);
     return NextResponse.json({ success: false }, { status: 401 });
   }
+
+  await clearLoginAttempts(email);
 
   const response = NextResponse.json({ success: true });
 
