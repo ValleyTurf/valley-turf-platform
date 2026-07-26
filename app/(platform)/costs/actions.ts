@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
+import { getCurrentUser } from "@/lib/currentUser";
+import { recordAuditLog } from "@/lib/auditLog";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
@@ -32,9 +34,10 @@ function cleanDate(value: FormDataEntryValue | null): string | null {
 }
 
 export async function addOverheadCost(formData: FormData): Promise<void> {
+  const actor = await getCurrentUser();
   const costType = cleanText(formData.get("cost_type")) ?? "recurring";
 
-  const { error } = await supabaseServer.from("overhead_costs").insert({
+  const row = {
     name: cleanText(formData.get("name")),
     category: cleanText(formData.get("category")),
     cost_type: costType,
@@ -42,11 +45,26 @@ export async function addOverheadCost(formData: FormData): Promise<void> {
     start_date: cleanDate(formData.get("start_date")),
     end_date: cleanDate(formData.get("end_date")),
     notes: cleanText(formData.get("notes")),
-  });
+  };
+
+  const { data, error } = await supabaseServer
+    .from("overhead_costs")
+    .insert(row)
+    .select("id")
+    .single();
 
   if (error) {
     throw new Error(`Failed to add overhead cost: ${error.message}`);
   }
+
+  await recordAuditLog({
+    actor,
+    action: "create",
+    entityType: "overhead_cost",
+    entityId: data?.id ?? null,
+    entityLabel: row.name,
+    after: row,
+  });
 
   revalidatePath("/costs");
   revalidatePath("/revenue");
@@ -56,31 +74,57 @@ export async function updateOverheadCost(
   id: string,
   formData: FormData
 ): Promise<void> {
+  const actor = await getCurrentUser();
   const costType = cleanText(formData.get("cost_type")) ?? "recurring";
+
+  const { data: before } = await supabaseServer
+    .from("overhead_costs")
+    .select("name, category, cost_type, amount, start_date, end_date, notes")
+    .eq("id", id)
+    .maybeSingle();
+
+  const row = {
+    name: cleanText(formData.get("name")),
+    category: cleanText(formData.get("category")),
+    cost_type: costType,
+    amount: cleanNumber(formData.get("amount")),
+    start_date: cleanDate(formData.get("start_date")),
+    end_date: cleanDate(formData.get("end_date")),
+    notes: cleanText(formData.get("notes")),
+  };
 
   const { error } = await supabaseServer
     .from("overhead_costs")
-    .update({
-      name: cleanText(formData.get("name")),
-      category: cleanText(formData.get("category")),
-      cost_type: costType,
-      amount: cleanNumber(formData.get("amount")),
-      start_date: cleanDate(formData.get("start_date")),
-      end_date: cleanDate(formData.get("end_date")),
-      notes: cleanText(formData.get("notes")),
-      updated_at: new Date().toISOString(),
-    })
+    .update({ ...row, updated_at: new Date().toISOString() })
     .eq("id", id);
 
   if (error) {
     throw new Error(`Failed to update overhead cost: ${error.message}`);
   }
 
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "overhead_cost",
+    entityId: id,
+    entityLabel: row.name,
+    before,
+    after: row,
+  });
+
   revalidatePath("/costs");
   revalidatePath("/revenue");
 }
 
 export async function deleteOverheadCost(id: string): Promise<void> {
+  const actor = await getCurrentUser();
+
+  const { data: before } = await supabaseServer
+    .from("overhead_costs")
+    .select("name, category, cost_type, amount, start_date, end_date, notes")
+    .eq("id", id)
+    .maybeSingle();
+
   const { error } = await supabaseServer
     .from("overhead_costs")
     .delete()
@@ -89,6 +133,15 @@ export async function deleteOverheadCost(id: string): Promise<void> {
   if (error) {
     throw new Error(`Failed to delete overhead cost: ${error.message}`);
   }
+
+  await recordAuditLog({
+    actor,
+    action: "delete",
+    entityType: "overhead_cost",
+    entityId: id,
+    entityLabel: before?.name ?? null,
+    before,
+  });
 
   revalidatePath("/costs");
   revalidatePath("/revenue");

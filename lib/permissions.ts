@@ -6,6 +6,7 @@
 export const ADMIN_ONLY_PREFIXES = [
   "/settings",
   "/team",
+  "/audit",
   "/revenue",
   "/alerts",
   "/analytics",

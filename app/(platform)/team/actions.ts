@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
 import { hashPassword } from "@/lib/passwords";
 import { requireAdmin } from "@/lib/currentUser";
+import { recordAuditLog } from "@/lib/auditLog";
 
 // Returned instead of thrown so forms can show the message inline via
 // useActionState, rather than crashing to Next's generic error screen.
@@ -57,7 +58,7 @@ export async function addUser(
   _prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
-  await requireAdmin();
+  const actor = await requireAdmin();
 
   const name = cleanText(formData.get("name"));
   const email = cleanText(formData.get("email"));
@@ -73,13 +74,17 @@ export async function addUser(
     return { error: "Password must be at least 8 characters." };
   }
 
-  const { error } = await supabaseServer.from("users").insert({
-    name,
-    email: email.toLowerCase(),
-    password_hash: hashPassword(password),
-    role,
-    hourly_rate: hourlyRate,
-  });
+  const { data, error } = await supabaseServer
+    .from("users")
+    .insert({
+      name,
+      email: email.toLowerCase(),
+      password_hash: hashPassword(password),
+      role,
+      hourly_rate: hourlyRate,
+    })
+    .select("id")
+    .single();
 
   if (error) {
     if (error.code === "23505") {
@@ -88,6 +93,15 @@ export async function addUser(
 
     return { error: `Failed to add user: ${error.message}` };
   }
+
+  await recordAuditLog({
+    actor,
+    action: "create",
+    entityType: "user",
+    entityId: data?.id ?? null,
+    entityLabel: name,
+    after: { name, email: email.toLowerCase(), role, hourly_rate: hourlyRate },
+  });
 
   revalidatePath("/team");
 
@@ -130,6 +144,12 @@ export async function updateUser(
     }
   }
 
+  const { data: before } = await supabaseServer
+    .from("users")
+    .select("name, role, active, hourly_rate")
+    .eq("id", id)
+    .maybeSingle();
+
   const { error } = await supabaseServer
     .from("users")
     .update({
@@ -145,6 +165,16 @@ export async function updateUser(
     return { error: `Failed to update user: ${error.message}` };
   }
 
+  await recordAuditLog({
+    actor: currentUser,
+    action: "update",
+    entityType: "user",
+    entityId: id,
+    entityLabel: name,
+    before,
+    after: { name, role, active, hourly_rate: hourlyRate },
+  });
+
   revalidatePath("/team");
 
   return { error: null };
@@ -155,13 +185,19 @@ export async function resetUserPassword(
   _prevState: ActionState,
   formData: FormData
 ): Promise<ActionState> {
-  await requireAdmin();
+  const actor = await requireAdmin();
 
   const password = cleanText(formData.get("password"));
 
   if (!password || password.length < 8) {
     return { error: "New password must be at least 8 characters." };
   }
+
+  const { data: target } = await supabaseServer
+    .from("users")
+    .select("name")
+    .eq("id", id)
+    .maybeSingle();
 
   const { error } = await supabaseServer
     .from("users")
@@ -174,6 +210,18 @@ export async function resetUserPassword(
   if (error) {
     return { error: `Failed to reset password: ${error.message}` };
   }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "user",
+    entityId: id,
+    entityLabel: target?.name ?? null,
+    note:
+      actor.id === id
+        ? "Changed own password"
+        : "Password reset by another admin",
+  });
 
   revalidatePath("/team");
 
@@ -192,7 +240,7 @@ export async function deleteUser(
 
   const { data: target, error: lookupError } = await supabaseServer
     .from("users")
-    .select("role, active")
+    .select("name, email, role, active, hourly_rate")
     .eq("id", id)
     .maybeSingle();
 
@@ -216,6 +264,15 @@ export async function deleteUser(
   if (error) {
     return { error: `Failed to delete user: ${error.message}` };
   }
+
+  await recordAuditLog({
+    actor: currentUser,
+    action: "delete",
+    entityType: "user",
+    entityId: id,
+    entityLabel: target?.name ?? null,
+    before: target,
+  });
 
   revalidatePath("/team");
 

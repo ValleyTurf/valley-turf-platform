@@ -86,6 +86,7 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
     icon: "⚙️",
     items: [
       { name: "Team", href: "/team", icon: "🧑‍🤝‍🧑" },
+      { name: "Audit Log", href: "/audit", icon: "🕵️" },
       { name: "Settings", href: "/settings", icon: "⚙️" },
     ],
   },

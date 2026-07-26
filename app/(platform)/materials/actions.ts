@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
+import { getCurrentUser } from "@/lib/currentUser";
+import { recordAuditLog } from "@/lib/auditLog";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
@@ -56,16 +58,33 @@ function parseQuantity(value: FormDataEntryValue | null): number {
 // ---------- Materials ----------
 
 export async function addMaterial(formData: FormData): Promise<void> {
-  const { error } = await supabaseServer.from("materials").insert({
+  const actor = await getCurrentUser();
+
+  const row = {
     name: cleanText(formData.get("name")),
     unit_label: cleanText(formData.get("unit_label")),
     unit_cost: cleanNumber(formData.get("unit_cost")),
     notes: cleanText(formData.get("notes")),
-  });
+  };
+
+  const { data, error } = await supabaseServer
+    .from("materials")
+    .insert(row)
+    .select("id")
+    .single();
 
   if (error) {
     throw new Error(`Failed to add material: ${error.message}`);
   }
+
+  await recordAuditLog({
+    actor,
+    action: "create",
+    entityType: "material",
+    entityId: data?.id ?? null,
+    entityLabel: row.name,
+    after: row,
+  });
 
   revalidatePath("/materials");
   revalidatePath("/job-costs");
@@ -75,31 +94,67 @@ export async function updateMaterial(
   id: string,
   formData: FormData
 ): Promise<void> {
+  const actor = await getCurrentUser();
+
+  const { data: before } = await supabaseServer
+    .from("materials")
+    .select("name, unit_label, unit_cost, notes")
+    .eq("id", id)
+    .maybeSingle();
+
+  const row = {
+    name: cleanText(formData.get("name")),
+    unit_label: cleanText(formData.get("unit_label")),
+    unit_cost: cleanNumber(formData.get("unit_cost")),
+    notes: cleanText(formData.get("notes")),
+  };
+
   const { error } = await supabaseServer
     .from("materials")
-    .update({
-      name: cleanText(formData.get("name")),
-      unit_label: cleanText(formData.get("unit_label")),
-      unit_cost: cleanNumber(formData.get("unit_cost")),
-      notes: cleanText(formData.get("notes")),
-      updated_at: new Date().toISOString(),
-    })
+    .update({ ...row, updated_at: new Date().toISOString() })
     .eq("id", id);
 
   if (error) {
     throw new Error(`Failed to update material: ${error.message}`);
   }
 
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "material",
+    entityId: id,
+    entityLabel: row.name,
+    before,
+    after: row,
+  });
+
   revalidatePath("/materials");
   revalidatePath("/job-costs");
 }
 
 export async function deleteMaterial(id: string): Promise<void> {
+  const actor = await getCurrentUser();
+
+  const { data: before } = await supabaseServer
+    .from("materials")
+    .select("name, unit_label, unit_cost, notes")
+    .eq("id", id)
+    .maybeSingle();
+
   const { error } = await supabaseServer.from("materials").delete().eq("id", id);
 
   if (error) {
     throw new Error(`Failed to delete material: ${error.message}`);
   }
+
+  await recordAuditLog({
+    actor,
+    action: "delete",
+    entityType: "material",
+    entityId: id,
+    entityLabel: before?.name ?? null,
+    before,
+  });
 
   revalidatePath("/materials");
   revalidatePath("/job-costs");
@@ -108,17 +163,34 @@ export async function deleteMaterial(id: string): Promise<void> {
 // ---------- Equipment ----------
 
 export async function addEquipment(formData: FormData): Promise<void> {
-  const { error } = await supabaseServer.from("equipment").insert({
+  const actor = await getCurrentUser();
+
+  const row = {
     name: cleanText(formData.get("name")),
     total_cost: cleanNumber(formData.get("total_cost")),
     in_service_date: cleanDate(formData.get("in_service_date")),
     retired_date: cleanDate(formData.get("retired_date")),
     notes: cleanText(formData.get("notes")),
-  });
+  };
+
+  const { data, error } = await supabaseServer
+    .from("equipment")
+    .insert(row)
+    .select("id")
+    .single();
 
   if (error) {
     throw new Error(`Failed to add equipment: ${error.message}`);
   }
+
+  await recordAuditLog({
+    actor,
+    action: "create",
+    entityType: "equipment",
+    entityId: data?.id ?? null,
+    entityLabel: row.name,
+    after: row,
+  });
 
   revalidatePath("/equipment");
   revalidatePath("/job-costs");
@@ -128,32 +200,68 @@ export async function updateEquipment(
   id: string,
   formData: FormData
 ): Promise<void> {
+  const actor = await getCurrentUser();
+
+  const { data: before } = await supabaseServer
+    .from("equipment")
+    .select("name, total_cost, in_service_date, retired_date, notes")
+    .eq("id", id)
+    .maybeSingle();
+
+  const row = {
+    name: cleanText(formData.get("name")),
+    total_cost: cleanNumber(formData.get("total_cost")),
+    in_service_date: cleanDate(formData.get("in_service_date")),
+    retired_date: cleanDate(formData.get("retired_date")),
+    notes: cleanText(formData.get("notes")),
+  };
+
   const { error } = await supabaseServer
     .from("equipment")
-    .update({
-      name: cleanText(formData.get("name")),
-      total_cost: cleanNumber(formData.get("total_cost")),
-      in_service_date: cleanDate(formData.get("in_service_date")),
-      retired_date: cleanDate(formData.get("retired_date")),
-      notes: cleanText(formData.get("notes")),
-      updated_at: new Date().toISOString(),
-    })
+    .update({ ...row, updated_at: new Date().toISOString() })
     .eq("id", id);
 
   if (error) {
     throw new Error(`Failed to update equipment: ${error.message}`);
   }
 
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "equipment",
+    entityId: id,
+    entityLabel: row.name,
+    before,
+    after: row,
+  });
+
   revalidatePath("/equipment");
   revalidatePath("/job-costs");
 }
 
 export async function deleteEquipment(id: string): Promise<void> {
+  const actor = await getCurrentUser();
+
+  const { data: before } = await supabaseServer
+    .from("equipment")
+    .select("name, total_cost, in_service_date, retired_date, notes")
+    .eq("id", id)
+    .maybeSingle();
+
   const { error } = await supabaseServer.from("equipment").delete().eq("id", id);
 
   if (error) {
     throw new Error(`Failed to delete equipment: ${error.message}`);
   }
+
+  await recordAuditLog({
+    actor,
+    action: "delete",
+    entityType: "equipment",
+    entityId: id,
+    entityLabel: before?.name ?? null,
+    before,
+  });
 
   revalidatePath("/equipment");
   revalidatePath("/job-costs");
@@ -294,6 +402,7 @@ export async function saveJobCosts(formData: FormData): Promise<void> {
 // ---------- Employees (stored as Labor materials under the hood) ----------
 
 export async function addEmployee(formData: FormData): Promise<void> {
+  const actor = await getCurrentUser();
   const employeeName = cleanText(formData.get("employee_name"));
   const hourlyRate = cleanNumber(formData.get("hourly_rate"));
 
@@ -301,15 +410,28 @@ export async function addEmployee(formData: FormData): Promise<void> {
     throw new Error("Employee name is required.");
   }
 
-  const { error } = await supabaseServer.from("materials").insert({
-    name: `Labor - ${employeeName}`,
-    unit_label: "hour",
-    unit_cost: hourlyRate,
-  });
+  const { data, error } = await supabaseServer
+    .from("materials")
+    .insert({
+      name: `Labor - ${employeeName}`,
+      unit_label: "hour",
+      unit_cost: hourlyRate,
+    })
+    .select("id")
+    .single();
 
   if (error) {
     throw new Error(`Failed to add employee: ${error.message}`);
   }
+
+  await recordAuditLog({
+    actor,
+    action: "create",
+    entityType: "employee_rate",
+    entityId: data?.id ?? null,
+    entityLabel: employeeName,
+    after: { employee_name: employeeName, hourly_rate: hourlyRate },
+  });
 
   revalidatePath("/employees");
   revalidatePath("/job-costs");
@@ -319,12 +441,19 @@ export async function updateEmployee(
   id: string,
   formData: FormData
 ): Promise<void> {
+  const actor = await getCurrentUser();
   const employeeName = cleanText(formData.get("employee_name"));
   const hourlyRate = cleanNumber(formData.get("hourly_rate"));
 
   if (!employeeName) {
     throw new Error("Employee name is required.");
   }
+
+  const { data: beforeRow } = await supabaseServer
+    .from("materials")
+    .select("name, unit_cost")
+    .eq("id", id)
+    .maybeSingle();
 
   const { error } = await supabaseServer
     .from("materials")
@@ -339,16 +468,53 @@ export async function updateEmployee(
     throw new Error(`Failed to update employee: ${error.message}`);
   }
 
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "employee_rate",
+    entityId: id,
+    entityLabel: employeeName,
+    before: beforeRow
+      ? {
+          employee_name: beforeRow.name?.replace(/^Labor - /, "") ?? null,
+          hourly_rate: beforeRow.unit_cost,
+        }
+      : null,
+    after: { employee_name: employeeName, hourly_rate: hourlyRate },
+  });
+
   revalidatePath("/employees");
   revalidatePath("/job-costs");
 }
 
 export async function deleteEmployee(id: string): Promise<void> {
+  const actor = await getCurrentUser();
+
+  const { data: before } = await supabaseServer
+    .from("materials")
+    .select("name, unit_cost")
+    .eq("id", id)
+    .maybeSingle();
+
   const { error } = await supabaseServer.from("materials").delete().eq("id", id);
 
   if (error) {
     throw new Error(`Failed to delete employee: ${error.message}`);
   }
+
+  await recordAuditLog({
+    actor,
+    action: "delete",
+    entityType: "employee_rate",
+    entityId: id,
+    entityLabel: before?.name?.replace(/^Labor - /, "") ?? null,
+    before: before
+      ? {
+          employee_name: before.name?.replace(/^Labor - /, "") ?? null,
+          hourly_rate: before.unit_cost,
+        }
+      : null,
+  });
 
   revalidatePath("/employees");
   revalidatePath("/job-costs");

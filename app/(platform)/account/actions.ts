@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
 import { hashPassword, verifyPassword } from "@/lib/passwords";
 import { getCurrentUser } from "@/lib/currentUser";
+import { recordAuditLog } from "@/lib/auditLog";
 
 // Returned instead of thrown so the form can show the message inline via
 // useActionState, rather than crashing to Next's generic error screen.
@@ -62,6 +63,15 @@ export async function changeOwnPassword(
       success: false,
     };
   }
+
+  await recordAuditLog({
+    actor: user,
+    action: "update",
+    entityType: "user",
+    entityId: user.id,
+    entityLabel: user.name,
+    note: "Changed own password",
+  });
 
   revalidatePath("/account");
 

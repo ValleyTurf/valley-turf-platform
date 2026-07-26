@@ -9,6 +9,8 @@ import { generateBrandedQrCode } from "@/lib/qrcode";
 import { getCampaignRoi } from "@/lib/campaignRoi";
 import CopyLinkButton from "@/app/components/CopyLinkButton";
 import { formatCurrency } from "@/lib/format";
+import { getCurrentUser } from "@/lib/currentUser";
+import { recordAuditLog } from "@/lib/auditLog";
 
 type Channel = "qr" | "social";
 
@@ -58,6 +60,15 @@ async function updateCampaign(formData: FormData) {
 
   if (!id || !name || !slug || !destination) return;
 
+  const [actor, { data: before }] = await Promise.all([
+    getCurrentUser(),
+    supabaseServer
+      .from("campaigns")
+      .select("name, alias, slug, destination, capture_leads, channel, spend")
+      .eq("id", id)
+      .maybeSingle(),
+  ]);
+
   await supabaseServer
     .from("campaigns")
     .update({
@@ -70,6 +81,24 @@ async function updateCampaign(formData: FormData) {
       spend,
     })
     .eq("id", id);
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "campaign",
+    entityId: id,
+    entityLabel: name,
+    before,
+    after: {
+      name,
+      alias: alias || null,
+      slug,
+      destination,
+      capture_leads: captureLeads,
+      channel,
+      spend,
+    },
+  });
 
   revalidatePath("/codes");
   revalidatePath("/dashboard");
