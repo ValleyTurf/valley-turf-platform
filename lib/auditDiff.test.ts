@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diffRecords } from "./auditLog";
+import { diffRecords } from "./auditDiff";
 
 describe("diffRecords", () => {
   it("returns only fields that actually changed", () => {

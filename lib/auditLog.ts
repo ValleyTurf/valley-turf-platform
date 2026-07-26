@@ -6,8 +6,13 @@
 // take down the underlying action it's describing (same philosophy as
 // lib/notifications.ts's lead alerts). Failures are logged to the server
 // console so they're visible without blocking the caller.
+//
+// The actual diff/redaction logic lives in lib/auditDiff.ts, kept separate
+// so it can be unit tested without pulling in lib/supabase-server.ts (see
+// that file's comment for why).
 
 import { supabaseServer } from "@/lib/supabase-server";
+import { diffRecords, sanitizeRecord, type PlainRecord } from "@/lib/auditDiff";
 
 export type AuditActor = {
   id: string;
@@ -16,87 +21,6 @@ export type AuditActor = {
 } | null;
 
 export type AuditAction = "create" | "update" | "delete";
-
-type PlainRecord = Record<string, unknown>;
-
-const REDACTED = "[redacted]";
-
-// Fields that should never have their real value stored in the log, even
-// though we still want the log to note that they changed.
-const REDACT_FIELDS = new Set([
-  "password_hash",
-  "password",
-  "current_password",
-  "new_password",
-]);
-
-// Pure bookkeeping timestamps that change on every write and would
-// otherwise show up as noise on every single diff.
-const SKIP_FIELDS = new Set([
-  "updated_at",
-  "created_at",
-  "last_synced_at",
-  "last_login_at",
-]);
-
-function sanitizeValue(key: string, value: unknown): unknown {
-  if (REDACT_FIELDS.has(key)) {
-    return value === undefined || value === null ? null : REDACTED;
-  }
-
-  return value ?? null;
-}
-
-function sanitizeRecord(record: PlainRecord | null | undefined): PlainRecord | null {
-  if (!record) {
-    return null;
-  }
-
-  const result: PlainRecord = {};
-
-  for (const [key, value] of Object.entries(record)) {
-    if (SKIP_FIELDS.has(key)) {
-      continue;
-    }
-
-    result[key] = sanitizeValue(key, value);
-  }
-
-  return result;
-}
-
-// Field-by-field diff between two records, after redacting secrets and
-// dropping bookkeeping timestamps. Only fields that actually changed make
-// it into the result.
-export function diffRecords(
-  before: PlainRecord | null | undefined,
-  after: PlainRecord | null | undefined
-): Record<string, { before: unknown; after: unknown }> {
-  const beforeObj = before ?? {};
-  const afterObj = after ?? {};
-
-  const keys = new Set([
-    ...Object.keys(beforeObj),
-    ...Object.keys(afterObj),
-  ]);
-
-  const changes: Record<string, { before: unknown; after: unknown }> = {};
-
-  for (const key of keys) {
-    if (SKIP_FIELDS.has(key)) {
-      continue;
-    }
-
-    const beforeValue = sanitizeValue(key, beforeObj[key]);
-    const afterValue = sanitizeValue(key, afterObj[key]);
-
-    if (JSON.stringify(beforeValue) !== JSON.stringify(afterValue)) {
-      changes[key] = { before: beforeValue, after: afterValue };
-    }
-  }
-
-  return changes;
-}
 
 export async function recordAuditLog(params: {
   actor: AuditActor;
