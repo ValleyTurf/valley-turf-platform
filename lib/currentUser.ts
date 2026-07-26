@@ -18,7 +18,12 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
   const name = headerList.get("x-user-name");
   const role = headerList.get("x-user-role") as Role | null;
 
-  if (!id || !email || !name || (role !== "admin" && role !== "staff")) {
+  if (
+    !id ||
+    !email ||
+    !name ||
+    (role !== "admin" && role !== "manager" && role !== "staff")
+  ) {
     return null;
   }
 

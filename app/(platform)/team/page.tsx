@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import {
@@ -14,7 +15,7 @@ type UserRow = {
   id: string;
   name: string;
   email: string;
-  role: "admin" | "staff";
+  role: "admin" | "manager" | "staff";
   active: boolean;
   hourly_rate: number | string | null;
   last_login_at: string | null;
@@ -71,9 +72,12 @@ export default async function TeamPage() {
           <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Team</h1>
 
           <p className="mt-2 max-w-2xl text-[#6b705c]">
-            Individual logins and access levels. Admins see everything;
-            staff accounts are locked out of financials, cost data, and
-            settings.
+            Individual logins and access levels. Admins see everything.
+            Manager and staff access is controlled section-by-section from{" "}
+            <Link href="/settings/permissions" className="underline">
+              Settings &gt; Permissions
+            </Link>
+            .
           </p>
         </header>
 

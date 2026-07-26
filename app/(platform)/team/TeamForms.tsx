@@ -72,6 +72,7 @@ export function AddUserForm() {
             className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
           >
             <option value="staff">Staff</option>
+            <option value="manager">Manager</option>
             <option value="admin">Admin</option>
           </select>
         </div>
@@ -107,7 +108,7 @@ export function AddUserForm() {
 type UserForForm = {
   id: string;
   name: string;
-  role: "admin" | "staff";
+  role: "admin" | "manager" | "staff";
   active: boolean;
   hourly_rate: number | string | null;
 };
@@ -152,6 +153,7 @@ export function UpdateUserForm({
             className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20 disabled:opacity-60"
           >
             <option value="staff">Staff</option>
+            <option value="manager">Manager</option>
             <option value="admin">Admin</option>
           </select>
         </div>

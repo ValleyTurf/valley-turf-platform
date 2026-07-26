@@ -37,6 +37,7 @@ const ENTITY_LABELS: Record<string, string> = {
   equipment: "Equipment",
   employee_rate: "Labor Rate",
   customer: "Customer Profile",
+  role_permissions: "Role Permissions",
 };
 
 const ENTITY_TYPES = Object.keys(ENTITY_LABELS);

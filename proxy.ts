@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/auth";
-import { isAdminOnlyPath } from "@/lib/permissions";
+import { getRolePermissions, isPathAllowedForRole } from "@/lib/permissions";
 
 const PUBLIC_PATHS = [
   "/login",
@@ -83,10 +83,14 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (user.role !== "admin" && isAdminOnlyPath(pathname)) {
-    const dashboardUrl = new URL("/dashboard", request.url);
+  if (user.role !== "admin") {
+    const permissions = await getRolePermissions();
 
-    return NextResponse.redirect(dashboardUrl);
+    if (!isPathAllowedForRole(pathname, user.role, permissions)) {
+      const dashboardUrl = new URL("/dashboard", request.url);
+
+      return NextResponse.redirect(dashboardUrl);
+    }
   }
 
   // Hand the verified identity to server components/actions via request

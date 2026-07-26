@@ -22,8 +22,12 @@ function cleanText(value: FormDataEntryValue | null): string | null {
   return trimmed ? trimmed : null;
 }
 
-function cleanRole(value: FormDataEntryValue | null): "admin" | "staff" {
-  return value === "admin" ? "admin" : "staff";
+function cleanRole(value: FormDataEntryValue | null): "admin" | "manager" | "staff" {
+  if (value === "admin" || value === "manager") {
+    return value;
+  }
+
+  return "staff";
 }
 
 function cleanHourlyRate(value: FormDataEntryValue | null): number | null {

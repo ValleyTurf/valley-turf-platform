@@ -12,7 +12,7 @@
 // serverless function. Password *hashing* (which is Node-only) lives in
 // lib/passwords.ts and is never imported here.
 
-export type Role = "admin" | "staff";
+export type Role = "admin" | "manager" | "staff";
 
 export type SessionUser = {
   id: string;
@@ -78,7 +78,9 @@ function decodePayload(encoded: string): SessionPayload | null {
       typeof parsed.id !== "string" ||
       typeof parsed.email !== "string" ||
       typeof parsed.name !== "string" ||
-      (parsed.role !== "admin" && parsed.role !== "staff") ||
+      (parsed.role !== "admin" &&
+        parsed.role !== "manager" &&
+        parsed.role !== "staff") ||
       typeof parsed.exp !== "number"
     ) {
       return null;

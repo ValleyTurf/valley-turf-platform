@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { getCurrentUser } from "@/lib/currentUser";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -10,6 +11,10 @@ type SettingsSection = {
   icon: string;
   status: string;
   external?: boolean;
+  // Structurally admin-only sections (Team, Data Backup) that stay
+  // hidden from managers even though they can otherwise view this page —
+  // these aren't part of the editable role_permissions table.
+  adminOnly?: boolean;
 };
 
 const settingsSections: SettingsSection[] = [
@@ -20,6 +25,16 @@ const settingsSections: SettingsSection[] = [
     href: "/team",
     icon: "🧑‍🤝‍🧑",
     status: "Manage",
+    adminOnly: true,
+  },
+  {
+    title: "Permissions",
+    description:
+      "Control which feature groups Manager and Staff logins can see.",
+    href: "/settings/permissions",
+    icon: "🔐",
+    status: "Manage",
+    adminOnly: true,
   },
   {
     title: "Jobber Sync",
@@ -45,10 +60,18 @@ const settingsSections: SettingsSection[] = [
     icon: "💾",
     status: "Download",
     external: true,
+    adminOnly: true,
   },
 ];
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  const user = await getCurrentUser();
+  const isAdmin = user?.role === "admin";
+
+  const visibleSections = settingsSections.filter(
+    (section) => !section.adminOnly || isAdmin
+  );
+
   return (
     <main
       className="px-4 py-6 sm:p-8"
@@ -98,7 +121,7 @@ export default function SettingsPage() {
             gap: "20px",
           }}
         >
-          {settingsSections.map((section) => {
+          {visibleSections.map((section) => {
             const CardTag = section.external ? "a" : Link;
 
             return (

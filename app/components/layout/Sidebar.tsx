@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { isAdminOnlyPath } from "@/lib/permissions";
+import { isPathAllowedForRole, type RolePermissionsMap } from "@/lib/permissions";
 import type { SessionUser } from "@/lib/auth";
 
 type NavItem = {
@@ -88,6 +88,11 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
       { name: "Team", href: "/team", icon: "🧑‍🤝‍🧑" },
       { name: "Audit Log", href: "/audit", icon: "🕵️" },
       { name: "Settings", href: "/settings", icon: "⚙️" },
+      {
+        name: "Permissions",
+        href: "/settings/permissions",
+        icon: "🔐",
+      },
     ],
   },
 ];
@@ -111,26 +116,38 @@ function groupContainsActiveItem(
   return items.some((item) => isItemActive(pathname, item.href));
 }
 
-export default function Sidebar({ user }: { user: SessionUser | null }) {
+export default function Sidebar({
+  user,
+  permissions,
+}: {
+  user: SessionUser | null;
+  permissions: RolePermissionsMap;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
 
-  // Staff never see nav links to admin-only pages — keeps the sidebar
-  // honest about what they can actually reach (middleware enforces the
-  // real gate; this just avoids dead-end links).
+  // Manager/staff never see nav links to pages their role can't reach —
+  // keeps the sidebar honest about what they can actually use (the proxy
+  // enforces the real gate; this just avoids dead-end links). Uses the
+  // same section-permission logic as the server-side gate so the two
+  // never drift.
   const visibleGroups = useMemo(() => {
     if (user?.role === "admin") {
       return groups;
     }
 
+    const role = user?.role ?? "staff";
+
     return groups
       .map((group) => ({
         ...group,
-        items: group.items.filter((item) => !isAdminOnlyPath(item.href)),
+        items: group.items.filter((item) =>
+          isPathAllowedForRole(item.href, role, permissions)
+        ),
       }))
       .filter((group) => group.items.length > 0);
-  }, [user?.role]);
+  }, [user?.role, permissions]);
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(
