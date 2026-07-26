@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isPathAllowedForRole,
   type RolePermissionsMap,
-} from "./permissions";
+} from "./permissionRules";
 
 const ALL_ALLOWED: RolePermissionsMap = {
   manager: {

@@ -3,7 +3,15 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { isPathAllowedForRole, type RolePermissionsMap } from "@/lib/permissions";
+// Deliberately from lib/permissionRules, NOT lib/permissions — this is a
+// "use client" component, and lib/permissions.ts pulls in
+// lib/supabase-server.ts (which calls createClient() at module scope).
+// That would ship a Supabase client construction into the browser
+// bundle with SUPABASE_SERVICE_ROLE_KEY undefined, crashing on load.
+import {
+  isPathAllowedForRole,
+  type RolePermissionsMap,
+} from "@/lib/permissionRules";
 import type { SessionUser } from "@/lib/auth";
 
 type NavItem = {
