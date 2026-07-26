@@ -1392,14 +1392,14 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
 
                 <p className="mt-1 text-[#6b705c]">
                   Recurring revenue projected from active customer schedules,
-                  plus seasonal one-off work estimated from last year's pattern.
+                  plus seasonal one-off work estimated from last year&apos;s pattern.
                 </p>
 
                 <Link
                   href="/recurring-services"
                   className="mt-2 inline-block text-sm font-semibold text-[#9c7a20] hover:underline"
                 >
-                  See who's actually scheduled for recurring service in the
+                  See who&apos;s actually scheduled for recurring service in the
                   next 30 days →
                 </Link>
               </div>
@@ -1508,7 +1508,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
               <h2 className="text-2xl font-bold">Customer Value Depth</h2>
 
               <p className="mt-1 text-[#6b705c]">
-                How many customers come back, and what they're worth.
+                How many customers come back, and what they&apos;re worth.
               </p>
 
               <div className="mt-6 grid gap-4 sm:grid-cols-2">

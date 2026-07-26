@@ -200,7 +200,7 @@ export default async function SchedulePage({
             <h1 className="mt-2 text-4xl font-bold">Daily Schedule</h1>
 
             <p className="mt-2 max-w-2xl text-[#6b705c]">
-              Real visit data synced from Jobber — who's scheduled where,
+              Real visit data synced from Jobber — who&apos;s scheduled where,
               and when.
             </p>
           </div>
