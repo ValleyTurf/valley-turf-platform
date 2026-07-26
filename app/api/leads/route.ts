@@ -73,7 +73,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ ok: true, lead: data });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { ok: false, error: "Invalid request" },
       { status: 400 }

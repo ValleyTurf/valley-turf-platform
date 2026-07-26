@@ -365,7 +365,7 @@ export default async function CodesPage() {
           {socialCampaigns.length === 0 ? (
             <p className="mt-4 rounded-2xl border border-[#e7e2d5] bg-white p-6 text-sm text-[#6b705c] shadow-sm">
               No social/bio link campaigns yet. Create one above with type
-              "Social Media / Bio Link".
+              &quot;Social Media / Bio Link&quot;.
             </p>
           ) : (
             <div className="mt-4 space-y-3">

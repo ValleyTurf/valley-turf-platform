@@ -45,12 +45,12 @@ export default async function EmployeesPage() {
               <Link href="/job-costs" className="font-semibold underline">
                 job entries
               </Link>
-              . Add anyone new here and they'll show up as a time field on
+              . Add anyone new here and they&apos;ll show up as a time field on
               every job.
             </p>
 
             <p className="mt-2 max-w-2xl text-sm text-[#9c7a20]">
-              Looking for logins, roles, or pay profiles instead? That's{" "}
+              Looking for logins, roles, or pay profiles instead? That&apos;s{" "}
               <Link href="/team" className="font-semibold underline">
                 Team
               </Link>

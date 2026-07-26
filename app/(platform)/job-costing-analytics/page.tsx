@@ -428,7 +428,7 @@ export default async function JobCostingAnalyticsPage({
                   {formatNumber(totals.invoices)} invoices (
                   {(unloggedRate * 100).toFixed(0)}%) have no material,
                   labor, or fuel logged against them. Profit numbers below
-                  only reflect overhead so far for those — they'll get more
+                  only reflect overhead so far for those — they&apos;ll get more
                   accurate as you log usage on{" "}
                   <Link href="/job-costs" className="font-semibold underline">
                     /job-costs

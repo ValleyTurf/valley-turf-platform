@@ -173,7 +173,7 @@ export default async function CampaignDetailPage({
             Campaign ROI
           </h2>
           <p className="mt-1 text-sm text-[#6b705c]">
-            Revenue counts invoices billed on or after each customer's first
+            Revenue counts invoices billed on or after each customer&apos;s first
             touch on this campaign — not their full history.
           </p>
 
@@ -359,7 +359,7 @@ export default async function CampaignDetailPage({
                 className="mt-1 w-full rounded-xl border border-[#e7e2d5] p-3 outline-none focus:border-[#d4af37]"
               />
               <p className="mt-1 text-xs text-[#6b705c]">
-                Changing this changes the tracking URL and this page's address.
+                Changing this changes the tracking URL and this page&apos;s address.
               </p>
             </div>
 

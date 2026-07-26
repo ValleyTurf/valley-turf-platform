@@ -5,6 +5,20 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  {
+    // Server actions bound for useActionState/useFormState (e.g.
+    // deleteUser in team/actions.ts) require a prevState parameter in
+    // their signature even when the action doesn't use it — an
+    // underscore prefix is the established way to mark that
+    // intentional, so unused-vars should respect it instead of
+    // flagging every one of these as an error.
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+      ],
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

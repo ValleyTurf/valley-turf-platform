@@ -496,7 +496,7 @@ export default async function CustomersPage({
 
             {search && (
               <p className="text-sm text-[#6b705c]">
-                Search results for "{search}"
+                Search results for &quot;{search}&quot;
               </p>
             )}
           </div>

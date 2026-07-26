@@ -918,11 +918,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       )
       .slice(0, 10);
 
-    const maxMarketMetric = Math.max(
-      1,
-      ...topMarkets.map((market) => marketMetricValue(market, rankMetric)),
-    );
-
     const timeframeOptions: Array<{ value: Timeframe; label: string }> = [
       { value: "last-7-days", label: "Last 7 Days" },
       { value: "last-month", label: "Last Month" },
@@ -1249,10 +1244,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                 <div className="mt-7 space-y-4">
                   {topMarkets.map((market, index) => {
                     const metricValue = marketMetricValue(market, rankMetric);
-                    const width = Math.max(
-                      2,
-                      (metricValue / maxMarketMetric) * 100,
-                    );
                     const revenueShare =
                       totalMarketRevenue > 0
                         ? market.revenue / totalMarketRevenue

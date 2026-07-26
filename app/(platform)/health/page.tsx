@@ -408,7 +408,7 @@ export default async function HealthPage() {
             <h1 className="mt-2 text-4xl font-bold">System Health</h1>
 
             <p className="mt-2 max-w-2xl text-[#6b705c]">
-              Diagnostic checks on your synced data, based on issues we've
+              Diagnostic checks on your synced data, based on issues we&apos;ve
               actually run into — data drift, missing config, and sync
               staleness.
             </p>

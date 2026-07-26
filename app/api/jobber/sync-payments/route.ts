@@ -14,15 +14,6 @@ export const maxDuration = 300;
 
 const SYNC_TYPE = "payments";
 
-type SyncResult = {
-  invoicesReceived: number;
-  paymentsReceived: number;
-  paymentsSaved: number;
-  pagesProcessed: number;
-  throttleRetries: number;
-  warnings: string[];
-};
-
 type JobberClient = {
   id: string;
   name: string | null;
