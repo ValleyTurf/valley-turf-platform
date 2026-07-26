@@ -12,14 +12,12 @@ type RecurringServicesPageProps = {
     range?: string;
     start?: string;
     end?: string;
-    category?: string;
   }>;
 };
 
 type JobCategoryRow = {
   jobber_job_id: string;
   service_category: string | null;
-  title: string | null;
 };
 
 type VisitRow = {
@@ -27,23 +25,12 @@ type VisitRow = {
   jobber_job_id: string | null;
   jobber_client_id: string | null;
   customer_name: string | null;
-  job_number: string | null;
-  title: string | null;
-  visit_status: string | null;
   start_at: string | null;
 };
 
-type CustomerContact = {
+type CustomerEntry = {
   jobber_client_id: string;
-  phone: string | null;
-  city: string | null;
-  state: string | null;
-};
-
-type CategoryBucket = {
-  key: CategoryKey;
-  label: string;
-  visits: VisitRow[];
+  customer_name: string;
 };
 
 const CATEGORY_LABELS: Record<CategoryKey, string> = {
@@ -146,37 +133,80 @@ function formatRangeLabel(start: Date, end: Date): string {
   return `${formatter.format(start)} – ${formatter.format(end)}`;
 }
 
-function formatDateHeading(value: string): string {
-  const date = new Date(value);
+function uniqueCustomersFor(visits: VisitRow[]): CustomerEntry[] {
+  const byId = new Map<string, string>();
 
-  if (Number.isNaN(date.getTime())) {
-    return value;
+  for (const visit of visits) {
+    if (!visit.jobber_client_id) {
+      continue;
+    }
+
+    if (!byId.has(visit.jobber_client_id)) {
+      byId.set(
+        visit.jobber_client_id,
+        visit.customer_name || "Unnamed Customer"
+      );
+    }
   }
 
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Phoenix",
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  }).format(date);
+  return Array.from(byId.entries())
+    .map(([jobber_client_id, customer_name]) => ({
+      jobber_client_id,
+      customer_name,
+    }))
+    .sort((a, b) => a.customer_name.localeCompare(b.customer_name));
 }
 
-function formatTime(value: string | null): string {
-  if (!value) {
-    return "Unscheduled";
-  }
+function CategoryBox({
+  categoryKey,
+  visits,
+  size,
+}: {
+  categoryKey: CategoryKey;
+  visits: VisitRow[];
+  size: "large" | "small";
+}) {
+  const customers = uniqueCustomersFor(visits);
 
-  const date = new Date(value);
+  return (
+    <div
+      className={`rounded-2xl bg-white shadow ${
+        size === "large" ? "p-6" : "p-4"
+      }`}
+    >
+      <p className="text-sm font-semibold uppercase tracking-wide text-[#9c7a20]">
+        {CATEGORY_LABELS[categoryKey]}
+      </p>
 
-  if (Number.isNaN(date.getTime())) {
-    return "Unscheduled";
-  }
+      <p
+        className={`mt-2 font-bold ${
+          size === "large" ? "text-3xl" : "text-xl"
+        }`}
+      >
+        {visits.length} visit{visits.length === 1 ? "" : "s"}
+      </p>
 
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Phoenix",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
+      <p className="text-sm text-[#6b705c]">
+        {customers.length} customer{customers.length === 1 ? "" : "s"}
+      </p>
+
+      {customers.length > 0 && (
+        <div className="mt-4 max-h-72 space-y-1 overflow-y-auto border-t border-[#eee9dc] pt-3">
+          {customers.map((customer) => (
+            <Link
+              key={customer.jobber_client_id}
+              href={`/customers/${encodeURIComponent(
+                customer.jobber_client_id
+              )}`}
+              className="block text-sm font-semibold text-[#9c7a20] hover:underline"
+            >
+              {customer.customer_name}
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default async function RecurringServicesPage({
@@ -197,11 +227,6 @@ export default async function RecurringServicesPage({
   const rangeStart = `${toDateInput(start)}T00:00:00-07:00`;
   const rangeEnd = `${toDateInput(end)}T23:59:59-07:00`;
 
-  const selectedCategory: CategoryKey | null =
-    params.category && params.category in CATEGORY_LABELS
-      ? (params.category as CategoryKey)
-      : null;
-
   // job_service_category already computes a service_category per job (the
   // same categorization the revenue dashboard's "Revenue by Service" and
   // forecast logic use), plus job_type — Jobber's own ONE_OFF/RECURRING
@@ -209,7 +234,7 @@ export default async function RecurringServicesPage({
   // rather than trusting the category keyword-match for that part.
   const { data: jobsData, error: jobsError } = await supabaseServer
     .from("job_service_category")
-    .select("jobber_job_id, service_category, title")
+    .select("jobber_job_id, service_category")
     .ilike("job_type", "%recur%");
 
   const recurringJobs = (jobsData ?? []) as JobCategoryRow[];
@@ -222,16 +247,12 @@ export default async function RecurringServicesPage({
     ])
   );
 
-  const jobTitleById = new Map(
-    recurringJobs.map((job) => [job.jobber_job_id, job.title])
-  );
-
   const { data: visitsData, error: visitsError } =
     recurringJobIds.length > 0
       ? await supabaseServer
           .from("jobber_visits")
           .select(
-            "jobber_visit_id, jobber_job_id, jobber_client_id, customer_name, job_number, title, visit_status, start_at"
+            "jobber_visit_id, jobber_job_id, jobber_client_id, customer_name, start_at"
           )
           .in("jobber_job_id", recurringJobIds)
           .gte("start_at", rangeStart)
@@ -257,50 +278,19 @@ export default async function RecurringServicesPage({
     buckets[key].push(visit);
   }
 
-  const clientIds = Array.from(
-    new Set(visits.map((visit) => visit.jobber_client_id).filter(Boolean))
-  ) as string[];
-
-  const { data: contactsData } =
-    clientIds.length > 0
-      ? await supabaseServer
-          .from("customers")
-          .select("jobber_client_id, phone, city, state")
-          .in("jobber_client_id", clientIds)
-      : { data: [] as CustomerContact[] };
-
-  const contactMap = new Map<string, CustomerContact>(
-    ((contactsData ?? []) as CustomerContact[]).map((contact) => [
-      contact.jobber_client_id,
-      contact,
-    ])
-  );
-
   const uniqueCustomers = new Set(
     visits.map((visit) => visit.jobber_client_id).filter(Boolean)
   ).size;
 
   const error = jobsError || visitsError;
 
-  function hrefFor(overrides: {
-    range?: RangeKey;
-    category?: CategoryKey | null;
-  }): string {
+  function hrefFor(nextRange: RangeKey): string {
     const next = new URLSearchParams();
-    const nextRange = overrides.range ?? range;
-
     next.set("range", nextRange);
 
     if (nextRange === "custom") {
       next.set("start", toDateInput(start));
       next.set("end", toDateInput(end));
-    }
-
-    const nextCategory =
-      overrides.category === undefined ? selectedCategory : overrides.category;
-
-    if (nextCategory) {
-      next.set("category", nextCategory);
     }
 
     return `/recurring-services?${next.toString()}`;
@@ -313,16 +303,6 @@ export default async function RecurringServicesPage({
         : "border border-[#d8d3c6] bg-white text-[#174734] hover:bg-[#f7f6f1]"
     }`;
   }
-
-  const categoryOrder: { key: CategoryKey; big: boolean }[] = [
-    { key: "monthly", big: true },
-    { key: "quarterly", big: true },
-    { key: "bimonthly", big: false },
-    { key: "semiannual", big: false },
-    { key: "other", big: false },
-  ];
-
-  const activeVisits = selectedCategory ? buckets[selectedCategory] : [];
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
@@ -341,26 +321,20 @@ export default async function RecurringServicesPage({
         </header>
 
         <section className="mt-6 flex flex-wrap gap-2">
-          <Link
-            href={hrefFor({ range: "7", category: null })}
-            className={rangePillClasses(range === "7")}
-          >
+          <Link href={hrefFor("7")} className={rangePillClasses(range === "7")}>
             Next 7 Days
           </Link>
-          <Link
-            href={hrefFor({ range: "30", category: null })}
-            className={rangePillClasses(range === "30")}
-          >
+          <Link href={hrefFor("30")} className={rangePillClasses(range === "30")}>
             Next 30 Days
           </Link>
           <Link
-            href={hrefFor({ range: "month", category: null })}
+            href={hrefFor("month")}
             className={rangePillClasses(range === "month")}
           >
             Next Month
           </Link>
           <Link
-            href={hrefFor({ range: "custom", category: null })}
+            href={hrefFor("custom")}
             className={rangePillClasses(range === "custom")}
           >
             Custom
@@ -431,194 +405,34 @@ export default async function RecurringServicesPage({
             </p>
           </section>
         ) : (
-          <>
-            <section className="mt-6 grid gap-4 lg:grid-cols-3">
-              <div className="grid gap-4 lg:col-span-2 lg:grid-cols-2">
-                {categoryOrder
-                  .filter((entry) => entry.big)
-                  .map((entry) => {
-                    const bucketVisits = buckets[entry.key];
-                    const active = selectedCategory === entry.key;
+          <section className="mt-6 grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-4 lg:col-span-2 lg:grid-cols-2">
+              <CategoryBox
+                categoryKey="monthly"
+                visits={buckets.monthly}
+                size="large"
+              />
+              <CategoryBox
+                categoryKey="quarterly"
+                visits={buckets.quarterly}
+                size="large"
+              />
+            </div>
 
-                    return (
-                      <Link
-                        key={entry.key}
-                        href={hrefFor({
-                          category: active ? null : entry.key,
-                        })}
-                        className={`rounded-2xl p-6 shadow transition ${
-                          active
-                            ? "bg-[#174734] text-white"
-                            : "bg-white text-[#174734] hover:bg-[#f7f6f1]"
-                        }`}
-                      >
-                        <p
-                          className={`text-sm font-semibold uppercase tracking-wide ${
-                            active ? "text-green-100" : "text-[#9c7a20]"
-                          }`}
-                        >
-                          {CATEGORY_LABELS[entry.key]}
-                        </p>
-                        <p className="mt-3 text-4xl font-bold">
-                          {bucketVisits.length}
-                        </p>
-                        <p
-                          className={`mt-1 text-sm ${
-                            active ? "text-green-100" : "text-[#6b705c]"
-                          }`}
-                        >
-                          visit{bucketVisits.length === 1 ? "" : "s"} ·{" "}
-                          {
-                            new Set(
-                              bucketVisits.map((v) => v.jobber_client_id)
-                            ).size
-                          }{" "}
-                          customers
-                        </p>
-                      </Link>
-                    );
-                  })}
-              </div>
-
-              <div className="grid gap-4">
-                {categoryOrder
-                  .filter((entry) => !entry.big)
-                  .map((entry) => {
-                    const bucketVisits = buckets[entry.key];
-                    const active = selectedCategory === entry.key;
-
-                    return (
-                      <Link
-                        key={entry.key}
-                        href={hrefFor({
-                          category: active ? null : entry.key,
-                        })}
-                        className={`flex items-center justify-between rounded-2xl p-4 shadow transition ${
-                          active
-                            ? "bg-[#174734] text-white"
-                            : "bg-white text-[#174734] hover:bg-[#f7f6f1]"
-                        }`}
-                      >
-                        <div>
-                          <p
-                            className={`text-xs font-semibold uppercase tracking-wide ${
-                              active ? "text-green-100" : "text-[#9c7a20]"
-                            }`}
-                          >
-                            {CATEGORY_LABELS[entry.key]}
-                          </p>
-                          <p
-                            className={`mt-1 text-xs ${
-                              active ? "text-green-100" : "text-[#6b705c]"
-                            }`}
-                          >
-                            {
-                              new Set(
-                                bucketVisits.map((v) => v.jobber_client_id)
-                              ).size
-                            }{" "}
-                            customers
-                          </p>
-                        </div>
-
-                        <p className="text-2xl font-bold">
-                          {bucketVisits.length}
-                        </p>
-                      </Link>
-                    );
-                  })}
-              </div>
-            </section>
-
-            <section className="mt-6">
-              {!selectedCategory ? (
-                <p className="rounded-2xl bg-white p-5 text-center text-sm text-[#6b705c] shadow">
-                  Click a category above to see who's scheduled.
-                </p>
-              ) : (
-                <>
-                  <div className="mb-3 flex items-center justify-between">
-                    <h2 className="text-lg font-bold">
-                      {CATEGORY_LABELS[selectedCategory]} · {activeVisits.length}{" "}
-                      visit{activeVisits.length === 1 ? "" : "s"}
-                    </h2>
-
-                    <Link
-                      href={hrefFor({ category: null })}
-                      className="text-sm font-semibold text-[#9c7a20] hover:underline"
-                    >
-                      Clear ✕
-                    </Link>
-                  </div>
-
-                  <div className="space-y-2">
-                    {activeVisits.map((visit) => {
-                      const contact = visit.jobber_client_id
-                        ? contactMap.get(visit.jobber_client_id)
-                        : null;
-
-                      const service =
-                        visit.title ||
-                        (visit.jobber_job_id
-                          ? jobTitleById.get(visit.jobber_job_id)
-                          : null) ||
-                        "Recurring Service";
-
-                      return (
-                        <div
-                          key={visit.jobber_visit_id}
-                          className="flex flex-col gap-2 rounded-xl bg-white p-4 shadow sm:flex-row sm:items-center sm:justify-between"
-                        >
-                          <div className="min-w-0">
-                            <span className="text-sm font-bold text-[#9c7a20]">
-                              {visit.start_at
-                                ? `${formatDateHeading(
-                                    visit.start_at
-                                  )} · ${formatTime(visit.start_at)}`
-                                : "Unscheduled"}
-                            </span>
-                            <span className="mx-2 text-[#d9d4c6]">·</span>
-                            <span className="font-semibold">
-                              {visit.customer_name || "Unnamed Customer"}
-                            </span>
-                            <span className="mx-2 text-[#d9d4c6]">·</span>
-                            <span className="text-sm text-[#6b705c]">
-                              {service}
-                            </span>
-                          </div>
-
-                          <div className="flex shrink-0 items-center gap-3">
-                            {contact?.phone && (
-                              <a
-                                href={`tel:${contact.phone.replace(
-                                  /[^\d+]/g,
-                                  ""
-                                )}`}
-                                className="text-sm font-semibold text-[#9c7a20] hover:underline"
-                              >
-                                {contact.phone}
-                              </a>
-                            )}
-
-                            {visit.jobber_client_id && (
-                              <Link
-                                href={`/customers/${encodeURIComponent(
-                                  visit.jobber_client_id
-                                )}`}
-                                className="text-sm font-semibold text-[#9c7a20] hover:underline"
-                              >
-                                View →
-                              </Link>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-            </section>
-          </>
+            <div className="grid gap-4">
+              <CategoryBox
+                categoryKey="bimonthly"
+                visits={buckets.bimonthly}
+                size="small"
+              />
+              <CategoryBox
+                categoryKey="semiannual"
+                visits={buckets.semiannual}
+                size="small"
+              />
+              <CategoryBox categoryKey="other" visits={buckets.other} size="small" />
+            </div>
+          </section>
         )}
       </div>
     </main>
