@@ -1292,73 +1292,55 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                     );
 
                     return (
-                      <div
+                      <details
                         key={market.market}
-                        className="rounded-2xl border border-[#e7e2d5] p-5"
+                        className="group rounded-2xl border border-[#e7e2d5] px-5 py-3"
                       >
-                        <div className="grid gap-4 lg:grid-cols-[44px_120px_1fr_180px] lg:items-center">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f7f6f1] font-bold">
+                        <summary className="flex cursor-pointer list-none items-center gap-4">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#f7f6f1] text-sm font-bold">
                             {index + 1}
                           </div>
 
-                          <div>
-                            <p className="text-xs font-semibold uppercase tracking-[0.15em] text-[#9c7a20]">
-                              {marketMode === "zip" ? "ZIP Code" : "City"}
-                            </p>
-                            <p className="mt-1 text-lg font-bold">
-                              {market.market}
-                            </p>
-                          </div>
-                          <div>
+                          <p className="min-w-0 flex-1 truncate font-bold">
+                            {market.market}
+                          </p>
 
-                            <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-[#6b705c]">
-                              <span>
-                                {formatCurrency(market.revenue)} revenue
-                              </span>
-                              <span>
-                                {formatNumber(market.invoiceCount)} invoices
-                              </span>
-                              <span>
-                                {formatNumber(market.customerIds.size)}{" "}
-                                customers
-                              </span>
-                              <span>
-                                {formatCurrency(market.averageTicket)} avg
-                                ticket
-                              </span>
-                            </div>
-                          </div>
+                          <p className="shrink-0 text-lg font-bold text-[#9c7a20]">
+                            {formatMarketMetric(metricValue, rankMetric)}
+                          </p>
 
-                          <div className="text-left lg:text-right">
-                            <p className="text-2xl font-bold text-[#9c7a20]">
-                              {formatMarketMetric(metricValue, rankMetric)}
-                            </p>
-                            <div className="mt-2 flex flex-wrap items-center gap-2 lg:justify-end">
+                          <span className="shrink-0 text-[#9c9887] transition group-open:rotate-90">
+                            ›
+                          </span>
+                        </summary>
+
+                        <div className="mt-4 border-t border-[#eee9dc] pt-4">
+                          <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-[#6b705c]">
+                            <span>
+                              {formatNumber(market.customerIds.size)} customer
+                              {market.customerIds.size === 1 ? "" : "s"}
+                            </span>
+                            <span>
+                              {formatCurrency(market.averageTicket)} avg
+                              ticket
+                            </span>
+                            <span>
+                              {formatPercent(revenueShare)} of located revenue
+                            </span>
+                            <span className="flex items-center gap-1.5">
                               <span
-                                className={`rounded-full px-2.5 py-1 text-xs font-bold ${comparisonClasses(
+                                className={`rounded-full px-2 py-0.5 font-bold ${comparisonClasses(
                                   metricChange,
                                 )}`}
                               >
                                 {formatComparison(metricChange)}
                               </span>
-                              <span className="text-xs text-[#6b705c]">
-                                vs previous period
-                              </span>
-                            </div>
-                            <p className="mt-2 text-xs text-[#6b705c]">
-                              {formatPercent(revenueShare)} of located revenue
-                            </p>
+                              vs previous period
+                            </span>
                           </div>
-                        </div>
 
-                        {market.customerIds.size > 0 && (
-                          <details className="mt-3">
-                            <summary className="cursor-pointer text-xs font-semibold text-[#9c7a20] hover:underline">
-                              Show {market.customerIds.size} customer
-                              {market.customerIds.size === 1 ? "" : "s"}
-                            </summary>
-
-                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 border-t border-[#eee9dc] pt-2">
+                          {market.customerIds.size > 0 && (
+                            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-[#eee9dc] pt-3">
                               {namesForCustomerIds(market.customerIds).map(
                                 (customer) => (
                                   <Link
@@ -1373,9 +1355,9 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                                 ),
                               )}
                             </div>
-                          </details>
-                        )}
-                      </div>
+                          )}
+                        </div>
+                      </details>
                     );
                   })}
                 </div>
