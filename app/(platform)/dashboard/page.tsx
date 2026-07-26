@@ -5,6 +5,8 @@ import Link from "next/link";
 import KpiCard from "@/app/components/dashboard/KpiCard";
 import ActivityFeed from "@/app/components/dashboard/ActivityFeed";
 import { supabaseServer } from "@/lib/supabase-server";
+import { getAllCampaignRoi } from "@/lib/campaignRoi";
+import { formatCurrency, formatNumber } from "@/lib/format";
 
 const PHOENIX_TIME_ZONE = "America/Phoenix";
 
@@ -30,6 +32,13 @@ type DashboardData = {
   scansToday: number;
   scansWeek: number;
   activity: ActivityItem[];
+  outstandingBalance: number;
+  outstandingCount: number;
+  revenueThisMonth: number;
+  revenueLastMonthToDate: number;
+  recurringCustomersThisMonth: number;
+  campaignRevenue: number;
+  campaignLeads: number;
 };
 
 function getPhoenixDateParts(date = new Date()) {
@@ -61,6 +70,146 @@ function getPhoenixStartOfDayUtc(date = new Date()): Date {
   );
 }
 
+function formatDateInput(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function toNumber(value: number | string | null | undefined): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatRevenueComparison(current: number, previous: number): string {
+  if (previous === 0) {
+    return current === 0 ? "No change" : "New";
+  }
+
+  const change = (current - previous) / previous;
+
+  if (change > 0) return `↑ ${Math.round(change * 100)}%`;
+  if (change < 0) return `↓ ${Math.round(Math.abs(change) * 100)}%`;
+
+  return "No change";
+}
+
+async function fetchOutstandingSummary(): Promise<{
+  total: number;
+  count: number;
+}> {
+  const { data, error } = await supabaseServer
+    .from("outstanding_invoices")
+    .select("outstanding_balance");
+
+  if (error) throw error;
+
+  const rows = (data ?? []) as { outstanding_balance: number | string }[];
+
+  return {
+    total: rows.reduce((sum, row) => sum + toNumber(row.outstanding_balance), 0),
+    count: rows.length,
+  };
+}
+
+// This-month-to-date vs the same number of days into last month, so a
+// snapshot taken on the 5th doesn't compare against a full prior month.
+async function fetchMonthlyRevenue(): Promise<{
+  thisMonth: number;
+  lastMonthToDate: number;
+}> {
+  const { year, month, day } = getPhoenixDateParts();
+
+  const thisMonthStart = formatDateInput(new Date(Date.UTC(year, month - 1, 1)));
+  const today = formatDateInput(new Date(Date.UTC(year, month - 1, day)));
+  const lastMonthStart = formatDateInput(new Date(Date.UTC(year, month - 2, 1)));
+  const lastMonthSameDay = formatDateInput(new Date(Date.UTC(year, month - 2, day)));
+
+  const [thisMonthResult, lastMonthResult] = await Promise.all([
+    supabaseServer
+      .from("invoice_financials")
+      .select("invoice_total")
+      .gte("issue_date", thisMonthStart)
+      .lte("issue_date", today),
+    supabaseServer
+      .from("invoice_financials")
+      .select("invoice_total")
+      .gte("issue_date", lastMonthStart)
+      .lte("issue_date", lastMonthSameDay),
+  ]);
+
+  if (thisMonthResult.error) throw thisMonthResult.error;
+  if (lastMonthResult.error) throw lastMonthResult.error;
+
+  const sum = (rows: { invoice_total: number | string }[] | null) =>
+    (rows ?? []).reduce((total, row) => total + toNumber(row.invoice_total), 0);
+
+  return {
+    thisMonth: sum(thisMonthResult.data),
+    lastMonthToDate: sum(lastMonthResult.data),
+  };
+}
+
+// Same "is this job recurring" signal used on /recurring-services — a
+// job's own job_type from Jobber, not the fragile category-keyword match.
+async function fetchRecurringCustomersThisMonth(): Promise<number> {
+  const { year, month } = getPhoenixDateParts();
+
+  const monthStart = `${formatDateInput(
+    new Date(Date.UTC(year, month - 1, 1)),
+  )}T00:00:00-07:00`;
+  const monthEnd = `${formatDateInput(
+    new Date(Date.UTC(year, month, 0)),
+  )}T23:59:59-07:00`;
+
+  const { data: jobsData, error: jobsError } = await supabaseServer
+    .from("job_service_category")
+    .select("jobber_job_id")
+    .ilike("job_type", "%recur%");
+
+  if (jobsError) throw jobsError;
+
+  const recurringJobIds = (jobsData ?? []).map(
+    (row: { jobber_job_id: string }) => row.jobber_job_id,
+  );
+
+  if (recurringJobIds.length === 0) {
+    return 0;
+  }
+
+  const { data: visitsData, error: visitsError } = await supabaseServer
+    .from("jobber_visits")
+    .select("jobber_client_id")
+    .in("jobber_job_id", recurringJobIds)
+    .gte("start_at", monthStart)
+    .lte("start_at", monthEnd);
+
+  if (visitsError) throw visitsError;
+
+  const uniqueCustomers = new Set(
+    (visitsData ?? [])
+      .map((row: { jobber_client_id: string | null }) => row.jobber_client_id)
+      .filter(Boolean),
+  );
+
+  return uniqueCustomers.size;
+}
+
+async function fetchCampaignSummary(): Promise<{
+  revenue: number;
+  leads: number;
+}> {
+  const allRoi = await getAllCampaignRoi();
+
+  let revenue = 0;
+  let leads = 0;
+
+  for (const roi of allRoi.values()) {
+    revenue += roi.revenue;
+    leads += roi.totalLeads;
+  }
+
+  return { revenue, leads };
+}
+
 async function getDashboardData(): Promise<DashboardData> {
   const phoenixTodayStart = getPhoenixStartOfDayUtc();
 
@@ -77,6 +226,10 @@ async function getDashboardData(): Promise<DashboardData> {
     scansTodayResult,
     scansWeekResult,
     activityResult,
+    outstandingSummary,
+    monthlyRevenue,
+    recurringCustomersThisMonth,
+    campaignSummary,
   ] = await Promise.all([
     supabaseServer
       .from("customers")
@@ -139,6 +292,11 @@ async function getDashboardData(): Promise<DashboardData> {
         ascending: false,
       })
       .limit(10),
+
+    fetchOutstandingSummary(),
+    fetchMonthlyRevenue(),
+    fetchRecurringCustomersThisMonth(),
+    fetchCampaignSummary(),
   ]);
 
   const errors = [
@@ -166,6 +324,13 @@ async function getDashboardData(): Promise<DashboardData> {
     scansToday: scansTodayResult.count ?? 0,
     scansWeek: scansWeekResult.count ?? 0,
     activity: (activityResult.data ?? []) as ActivityItem[],
+    outstandingBalance: outstandingSummary.total,
+    outstandingCount: outstandingSummary.count,
+    revenueThisMonth: monthlyRevenue.thisMonth,
+    revenueLastMonthToDate: monthlyRevenue.lastMonthToDate,
+    recurringCustomersThisMonth,
+    campaignRevenue: campaignSummary.revenue,
+    campaignLeads: campaignSummary.leads,
   };
 }
 
@@ -246,12 +411,21 @@ export default async function DashboardPage() {
           </div>
         </header>
 
-        <section className="mt-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-5">
+        <section className="mt-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-6">
           <KpiCard
             title="Customers"
             value={data.customers}
             icon="👥"
             subtitle="Synced from Jobber"
+          />
+
+          <KpiCard
+            title="Outstanding"
+            value={formatCurrency(data.outstandingBalance)}
+            icon="💸"
+            subtitle={`${formatNumber(data.outstandingCount)} unpaid invoice${
+              data.outstandingCount === 1 ? "" : "s"
+            }`}
           />
 
           <KpiCard
@@ -287,38 +461,65 @@ export default async function DashboardPage() {
           <ActivityFeed activity={data.activity} />
 
           <div className="rounded-3xl bg-white p-8 shadow">
-            <h2 className="text-2xl font-bold">Coming Next</h2>
+            <h2 className="text-2xl font-bold">Snapshot</h2>
 
             <div className="mt-6 space-y-4">
-              <div className="rounded-2xl bg-[#f7f6f1] p-5">
+              <Link
+                href="/revenue"
+                className="block rounded-2xl bg-[#f7f6f1] p-5 transition hover:bg-[#eef4ee]"
+              >
                 <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
                   Revenue
                 </p>
 
-                <p className="mt-2 text-[#6b705c]">
-                  Revenue this month, average ticket, and lifetime value.
+                <p className="mt-2 text-2xl font-bold text-[#174734]">
+                  {formatCurrency(data.revenueThisMonth)}
                 </p>
-              </div>
 
-              <div className="rounded-2xl bg-[#f7f6f1] p-5">
+                <p className="mt-1 text-sm text-[#6b705c]">
+                  {formatRevenueComparison(
+                    data.revenueThisMonth,
+                    data.revenueLastMonthToDate,
+                  )}{" "}
+                  vs last month to date
+                </p>
+              </Link>
+
+              <Link
+                href="/recurring-services"
+                className="block rounded-2xl bg-[#f7f6f1] p-5 transition hover:bg-[#eef4ee]"
+              >
                 <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
-                  Subscriptions
+                  Recurring Service
                 </p>
 
-                <p className="mt-2 text-[#6b705c]">
-                  Active recurring customers and service-plan breakdown.
+                <p className="mt-2 text-2xl font-bold text-[#174734]">
+                  {formatNumber(data.recurringCustomersThisMonth)} customer
+                  {data.recurringCustomersThisMonth === 1 ? "" : "s"}
                 </p>
-              </div>
 
-              <div className="rounded-2xl bg-[#f7f6f1] p-5">
+                <p className="mt-1 text-sm text-[#6b705c]">
+                  Scheduled for recurring service this month
+                </p>
+              </Link>
+
+              <Link
+                href="/codes"
+                className="block rounded-2xl bg-[#f7f6f1] p-5 transition hover:bg-[#eef4ee]"
+              >
                 <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
                   Campaign ROI
                 </p>
 
-                <p className="mt-2 text-[#6b705c]">
-                  Scans, leads, customers, revenue, and conversion rates.
+                <p className="mt-2 text-2xl font-bold text-[#174734]">
+                  {formatCurrency(data.campaignRevenue)}
                 </p>
-              </div>
+
+                <p className="mt-1 text-sm text-[#6b705c]">
+                  Attributed revenue from {formatNumber(data.campaignLeads)}{" "}
+                  campaign lead{data.campaignLeads === 1 ? "" : "s"}
+                </p>
+              </Link>
             </div>
           </div>
         </section>
