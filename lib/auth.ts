@@ -11,6 +11,16 @@
 // run unchanged in both middleware's Edge runtime and the login route's
 // serverless function. Password *hashing* (which is Node-only) lives in
 // lib/passwords.ts and is never imported here.
+//
+// Deliberately does NOT `import "server-only"` the way
+// lib/supabase-server.ts/lib/jobber.ts/lib/notifications.ts now do:
+// this file is imported by proxy.ts, which runs in Next's Edge
+// runtime, and "server-only"'s browser-bundle guard hasn't been
+// verified here against that runtime — getting it wrong would break
+// session verification for every request, a worse outage than the one
+// this guard exists to prevent. lib/clientServerBoundary.test.ts (the
+// process.env-reachability smoke test) already covers this file
+// without that risk.
 
 export type Role = "admin" | "manager" | "staff";
 

@@ -1,4 +1,7 @@
-﻿import { supabaseServer } from "@/lib/supabase-server";
+﻿// See the comment at the top of lib/supabase-server.ts — same guard,
+// same reason. This file also reads JOBBER_CLIENT_SECRET directly.
+import "server-only";
+import { supabaseServer } from "@/lib/supabase-server";
 
 type JobberTokenRow = {
   id: string;

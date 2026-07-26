@@ -4,6 +4,10 @@
 // those are configured in Vercel, this quietly does nothing. That lets
 // email go live as soon as RESEND_API_KEY is set, without waiting on
 // Twilio's carrier registration (A2P 10DLC) to clear.
+//
+// See the comment at the top of lib/supabase-server.ts — same guard,
+// same reason. This file reads RESEND_API_KEY/TWILIO_* directly.
+import "server-only";
 
 // Overridable via env vars so who gets alerted doesn't require a code
 // change + redeploy. Falls back to the original hardcoded values if unset.
