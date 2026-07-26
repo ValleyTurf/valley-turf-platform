@@ -24,6 +24,11 @@ const topLevelItems: NavItem[] = [
     icon: "📅",
   },
   {
+    name: "Recurring Services",
+    href: "/recurring-services",
+    icon: "🔁",
+  },
+  {
     name: "Customer Map",
     href: "/map",
     icon: "🗺️",

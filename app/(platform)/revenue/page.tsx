@@ -1403,6 +1403,14 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                   Recurring revenue projected from active customer schedules,
                   plus seasonal one-off work estimated from last year's pattern.
                 </p>
+
+                <Link
+                  href="/recurring-services"
+                  className="mt-2 inline-block text-sm font-semibold text-[#9c7a20] hover:underline"
+                >
+                  See who's actually scheduled for recurring service in the
+                  next 30 days →
+                </Link>
               </div>
 
               <div className="text-right">
