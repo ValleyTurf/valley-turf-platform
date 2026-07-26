@@ -959,7 +959,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
 
     const rankOptions: Array<{ value: RankMetric; label: string }> = [
       { value: "revenue", label: "Revenue" },
-      { value: "invoices", label: "Invoices" },
       { value: "average-ticket", label: "Average Ticket" },
       { value: "customers", label: "Customers" },
       { value: "revenue-per-customer", label: "Revenue / Customer" },
@@ -1360,14 +1359,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                       </details>
                     );
                   })}
-                </div>
-
-                <div className="mt-6 rounded-2xl bg-[#f7f6f1] p-5 text-sm text-[#6b705c]">
-                  Market revenue includes invoices whose customer record has a{" "}
-                  {marketMode === "zip" ? "postal code" : "city"}. Customers
-                  without location data are excluded. Comparison percentages
-                  use the currently selected ranking metric against the matching
-                  previous period.
                 </div>
               </>
             )}
