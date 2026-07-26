@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import Sidebar from "@/app/components/layout/Sidebar";
+import ServiceWorkerRegister from "@/app/components/ServiceWorkerRegister";
+import InstallPrompt from "@/app/components/InstallPrompt";
 import { getCurrentUser } from "@/lib/currentUser";
 import { getRolePermissions, isPathAllowedForRole } from "@/lib/permissions";
 
@@ -30,6 +32,9 @@ export default async function PlatformLayout({
 
   return (
     <div className="flex min-h-screen flex-col bg-[#f5f4ef] md:flex-row">
+      <ServiceWorkerRegister />
+      <InstallPrompt />
+
       <Sidebar user={user} permissions={permissions} />
 
       <div className="min-w-0 flex-1">

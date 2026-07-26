@@ -19,6 +19,18 @@ const PUBLIC_PATHS = [
   // LEADS_WEBHOOK_SECRET bearer check (see route.ts) rather than a
   // session cookie, since the caller has no browser session.
   "/api/leads",
+  // PWA installability assets — none of these carry sensitive data, and
+  // all of them need to be fetchable with no session cookie present.
+  // Before this, they all silently 302'd to /login (HTML) instead of
+  // returning the actual manifest/icon/script, which meant Chrome/iOS
+  // could never see a valid manifest or service worker on a first visit
+  // (no cookie yet) and installability checks failed. /offline.html
+  // specifically also needs to survive a session that has since expired
+  // while the device was offline.
+  "/manifest.json",
+  "/icons",
+  "/sw.js",
+  "/offline.html",
 ];
 
 // Routes Vercel Cron calls on a schedule (see vercel.json) that have no
