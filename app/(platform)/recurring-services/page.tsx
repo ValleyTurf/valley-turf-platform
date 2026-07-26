@@ -3,6 +3,7 @@ export const revalidate = 0;
 
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
+import { formatCurrency } from "@/lib/format";
 
 type RangeKey = "7" | "30" | "month" | "custom";
 type CategoryKey = "monthly" | "quarterly" | "bimonthly" | "semiannual" | "other";
@@ -31,6 +32,13 @@ type VisitRow = {
 type CustomerEntry = {
   jobber_client_id: string;
   customer_name: string;
+  visitCount: number;
+  estimatedAmount: number | null;
+};
+
+type InvoicePriceRow = {
+  service_category: string | null;
+  total: number | string | null;
 };
 
 const CATEGORY_LABELS: Record<CategoryKey, string> = {
@@ -133,26 +141,50 @@ function formatRangeLabel(start: Date, end: Date): string {
   return `${formatter.format(start)} – ${formatter.format(end)}`;
 }
 
-function uniqueCustomersFor(visits: VisitRow[]): CustomerEntry[] {
-  const byId = new Map<string, string>();
+function uniqueCustomersFor(
+  visits: VisitRow[],
+  realCategoryByJobId: Map<string, string | null>,
+  avgPriceByCategory: Map<string, number>
+): CustomerEntry[] {
+  const byId = new Map<
+    string,
+    { customer_name: string; visitCount: number; amountTotal: number; hasAnyKnownPrice: boolean }
+  >();
 
   for (const visit of visits) {
     if (!visit.jobber_client_id) {
       continue;
     }
 
-    if (!byId.has(visit.jobber_client_id)) {
-      byId.set(
-        visit.jobber_client_id,
-        visit.customer_name || "Unnamed Customer"
-      );
+    const realCategory = visit.jobber_job_id
+      ? realCategoryByJobId.get(visit.jobber_job_id) ?? null
+      : null;
+    const price = realCategory ? avgPriceByCategory.get(realCategory) : undefined;
+
+    const existing = byId.get(visit.jobber_client_id);
+
+    if (existing) {
+      existing.visitCount += 1;
+      if (typeof price === "number") {
+        existing.amountTotal += price;
+        existing.hasAnyKnownPrice = true;
+      }
+    } else {
+      byId.set(visit.jobber_client_id, {
+        customer_name: visit.customer_name || "Unnamed Customer",
+        visitCount: 1,
+        amountTotal: typeof price === "number" ? price : 0,
+        hasAnyKnownPrice: typeof price === "number",
+      });
     }
   }
 
   return Array.from(byId.entries())
-    .map(([jobber_client_id, customer_name]) => ({
+    .map(([jobber_client_id, entry]) => ({
       jobber_client_id,
-      customer_name,
+      customer_name: entry.customer_name,
+      visitCount: entry.visitCount,
+      estimatedAmount: entry.hasAnyKnownPrice ? entry.amountTotal : null,
     }))
     .sort((a, b) => a.customer_name.localeCompare(b.customer_name));
 }
@@ -161,12 +193,28 @@ function CategoryBox({
   categoryKey,
   visits,
   size,
+  realCategoryByJobId,
+  avgPriceByCategory,
 }: {
   categoryKey: CategoryKey;
   visits: VisitRow[];
   size: "large" | "small";
+  realCategoryByJobId: Map<string, string | null>;
+  avgPriceByCategory: Map<string, number>;
 }) {
-  const customers = uniqueCustomersFor(visits);
+  const customers = uniqueCustomersFor(
+    visits,
+    realCategoryByJobId,
+    avgPriceByCategory
+  );
+
+  const boxTotal = customers.reduce(
+    (sum, customer) => sum + (customer.estimatedAmount ?? 0),
+    0
+  );
+  const hasAnyKnownPrice = customers.some(
+    (customer) => customer.estimatedAmount !== null
+  );
 
   return (
     <div
@@ -174,40 +222,66 @@ function CategoryBox({
         size === "large" ? "p-6" : "p-4"
       }`}
     >
-      <p className="text-sm font-semibold uppercase tracking-wide text-[#9c7a20]">
-        {CATEGORY_LABELS[categoryKey]}
-      </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-wide text-[#9c7a20]">
+            {CATEGORY_LABELS[categoryKey]}
+          </p>
 
-      <p
-        className={`mt-2 font-bold ${
-          size === "large" ? "text-3xl" : "text-xl"
-        }`}
-      >
-        {visits.length} visit{visits.length === 1 ? "" : "s"}
-      </p>
+          <p
+            className={`mt-2 font-bold ${
+              size === "large" ? "text-3xl" : "text-xl"
+            }`}
+          >
+            {visits.length} visit{visits.length === 1 ? "" : "s"}
+          </p>
 
-      <p className="text-sm text-[#6b705c]">
-        {customers.length} customer{customers.length === 1 ? "" : "s"}
-      </p>
+          <p className="text-sm text-[#6b705c]">
+            {customers.length} customer{customers.length === 1 ? "" : "s"}
+          </p>
+        </div>
+
+        {hasAnyKnownPrice && (
+          <p
+            className={`shrink-0 text-right font-bold text-[#174734] ${
+              size === "large" ? "text-2xl" : "text-lg"
+            }`}
+          >
+            ~{formatCurrency(boxTotal)}
+          </p>
+        )}
+      </div>
 
       {customers.length > 0 && (
-        <div
-          className={`mt-4 border-t border-[#eee9dc] pt-3 ${
-            size === "large" ? "columns-2 xl:columns-3" : "columns-1 sm:columns-2"
-          } gap-x-6`}
-        >
+        <div className="mt-4 space-y-1 border-t border-[#eee9dc] pt-3">
           {customers.map((customer) => (
             <Link
               key={customer.jobber_client_id}
               href={`/customers/${encodeURIComponent(
                 customer.jobber_client_id
               )}`}
-              className="mb-1.5 block break-inside-avoid text-sm font-semibold text-[#9c7a20] hover:underline"
+              className="flex items-baseline justify-between gap-3 rounded-lg px-1 py-1 text-sm hover:bg-[#f7f6f1]"
             >
-              {customer.customer_name}
+              <span className="truncate font-semibold text-[#9c7a20] hover:underline">
+                {customer.customer_name}
+                {customer.visitCount > 1 ? ` ×${customer.visitCount}` : ""}
+              </span>
+
+              {customer.estimatedAmount !== null && (
+                <span className="shrink-0 text-[#6b705c]">
+                  ~{formatCurrency(customer.estimatedAmount)}
+                </span>
+              )}
             </Link>
           ))}
         </div>
+      )}
+
+      {hasAnyKnownPrice && (
+        <p className="mt-3 text-xs text-[#9c9887]">
+          Amounts are estimated from this category's average historical
+          price, not each customer's exact contracted rate.
+        </p>
       )}
     </div>
   );
@@ -251,6 +325,10 @@ export default async function RecurringServicesPage({
     ])
   );
 
+  const realCategoryByJobId = new Map<string, string | null>(
+    recurringJobs.map((job) => [job.jobber_job_id, job.service_category])
+  );
+
   const { data: visitsData, error: visitsError } =
     recurringJobIds.length > 0
       ? await supabaseServer
@@ -265,6 +343,63 @@ export default async function RecurringServicesPage({
       : { data: [] as VisitRow[], error: null };
 
   const visits = (visitsData ?? []) as VisitRow[];
+
+  // Visits aren't invoiced yet at scheduling time, so there's no real
+  // per-visit dollar amount to pull. Instead, estimate each customer's
+  // upcoming visit(s) using that job's actual service category's average
+  // historical invoice total — clearly labeled as an estimate in the UI,
+  // not presented as an exact contracted rate.
+  const categoriesNeeded = Array.from(
+    new Set(
+      visits
+        .map((visit) =>
+          visit.jobber_job_id
+            ? realCategoryByJobId.get(visit.jobber_job_id)
+            : null
+        )
+        .filter((category): category is string => Boolean(category))
+    )
+  );
+
+  const { data: priceData } =
+    categoriesNeeded.length > 0
+      ? await supabaseServer
+          .from("invoice_service_category")
+          .select("service_category, total")
+          .in("service_category", categoriesNeeded)
+      : { data: [] as InvoicePriceRow[] };
+
+  const priceRows = (priceData ?? []) as InvoicePriceRow[];
+
+  const priceSumsByCategory = new Map<string, { sum: number; count: number }>();
+
+  for (const row of priceRows) {
+    if (!row.service_category) {
+      continue;
+    }
+
+    const total = Number(row.total ?? 0);
+
+    if (!Number.isFinite(total)) {
+      continue;
+    }
+
+    const existing = priceSumsByCategory.get(row.service_category);
+
+    if (existing) {
+      existing.sum += total;
+      existing.count += 1;
+    } else {
+      priceSumsByCategory.set(row.service_category, { sum: total, count: 1 });
+    }
+  }
+
+  const avgPriceByCategory = new Map<string, number>(
+    Array.from(priceSumsByCategory.entries()).map(([category, { sum, count }]) => [
+      category,
+      count > 0 ? sum / count : 0,
+    ])
+  );
 
   const buckets: Record<CategoryKey, VisitRow[]> = {
     monthly: [],
@@ -415,11 +550,15 @@ export default async function RecurringServicesPage({
                 categoryKey="monthly"
                 visits={buckets.monthly}
                 size="large"
+                realCategoryByJobId={realCategoryByJobId}
+                avgPriceByCategory={avgPriceByCategory}
               />
               <CategoryBox
                 categoryKey="quarterly"
                 visits={buckets.quarterly}
                 size="large"
+                realCategoryByJobId={realCategoryByJobId}
+                avgPriceByCategory={avgPriceByCategory}
               />
             </div>
 
@@ -428,13 +567,23 @@ export default async function RecurringServicesPage({
                 categoryKey="bimonthly"
                 visits={buckets.bimonthly}
                 size="small"
+                realCategoryByJobId={realCategoryByJobId}
+                avgPriceByCategory={avgPriceByCategory}
               />
               <CategoryBox
                 categoryKey="semiannual"
                 visits={buckets.semiannual}
                 size="small"
+                realCategoryByJobId={realCategoryByJobId}
+                avgPriceByCategory={avgPriceByCategory}
               />
-              <CategoryBox categoryKey="other" visits={buckets.other} size="small" />
+              <CategoryBox
+                categoryKey="other"
+                visits={buckets.other}
+                size="small"
+                realCategoryByJobId={realCategoryByJobId}
+                avgPriceByCategory={avgPriceByCategory}
+              />
             </div>
           </section>
         )}
