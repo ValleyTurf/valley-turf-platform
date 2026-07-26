@@ -12,10 +12,7 @@ import {
   canEditQuote,
   type QuoteStatus,
 } from "@/lib/quotes";
-
-export type ActionState = { error: string | null };
-
-export const initialActionState: ActionState = { error: null };
+import type { ActionState } from "./actionState";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") return null;

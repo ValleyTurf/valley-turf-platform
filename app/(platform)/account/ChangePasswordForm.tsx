@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState } from "react";
-import { changeOwnPassword, initialChangePasswordState } from "./actions";
+import { changeOwnPassword } from "./actions";
+import { initialChangePasswordState } from "./actionState";
 
 export default function ChangePasswordForm() {
   const [state, formAction, isPending] = useActionState(

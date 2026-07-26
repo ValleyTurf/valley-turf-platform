@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState } from "react";
-import { updatePermissions, initialActionState } from "./actions";
+import { updatePermissions } from "./actions";
+import { initialActionState } from "./actionState";
 import type { PermissionSection } from "@/lib/permissions";
 
 type SectionInfo = {

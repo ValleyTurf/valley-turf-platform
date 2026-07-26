@@ -1,13 +1,8 @@
 "use client";
 
 import { useActionState } from "react";
-import {
-  addUser,
-  updateUser,
-  resetUserPassword,
-  deleteUser,
-  initialActionState,
-} from "./actions";
+import { addUser, updateUser, resetUserPassword, deleteUser } from "./actions";
+import { initialActionState } from "./actionState";
 
 function ErrorText({ message }: { message: string | null }) {
   if (!message) return null;

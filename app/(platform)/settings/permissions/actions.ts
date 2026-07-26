@@ -10,10 +10,7 @@ import {
   invalidatePermissionsCache,
   type PermissionSection,
 } from "@/lib/permissions";
-
-export type ActionState = { error: string | null };
-
-export const initialActionState: ActionState = { error: null };
+import type { ActionState } from "./actionState";
 
 const ROLES = ["manager", "staff"] as const;
 

@@ -5,12 +5,7 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { hashPassword } from "@/lib/passwords";
 import { requireAdmin } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
-
-// Returned instead of thrown so forms can show the message inline via
-// useActionState, rather than crashing to Next's generic error screen.
-export type ActionState = { error: string | null };
-
-export const initialActionState: ActionState = { error: null };
+import type { ActionState } from "./actionState";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
