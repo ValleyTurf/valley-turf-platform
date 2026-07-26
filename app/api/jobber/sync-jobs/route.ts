@@ -16,6 +16,10 @@ type JobberClient = {
   name: string | null;
 };
 
+type JobberLineItem = {
+  totalCost: number | string | null;
+};
+
 type JobberJob = {
   id: string;
   jobNumber: number | string | null;
@@ -26,6 +30,7 @@ type JobberJob = {
   endAt: string | null;
   completedAt: string | null;
   client: JobberClient | null;
+  lineItems: { nodes: JobberLineItem[] } | null;
 };
 
 type JobsPage = {
@@ -59,6 +64,7 @@ type JobUpsert = {
   jobber_web_uri: string | null;
   end_at: string | null;
   completed_at: string | null;
+  total: number | null;
   updated_at: string;
 };
 
@@ -100,6 +106,12 @@ const JOBS_QUERY = `
           id
           name
         }
+
+        lineItems(first: 50) {
+          nodes {
+            totalCost
+          }
+        }
       }
 
       pageInfo {
@@ -128,6 +140,23 @@ function cleanText(
   return cleaned ? cleaned : null;
 }
 
+function sumLineItemTotal(
+  lineItems: { nodes: JobberLineItem[] } | null
+): number | null {
+  const nodes = lineItems?.nodes ?? [];
+
+  if (nodes.length === 0) {
+    return null;
+  }
+
+  const sum = nodes.reduce(
+    (total, item) => total + Number(item.totalCost ?? 0),
+    0
+  );
+
+  return Number.isFinite(sum) ? sum : null;
+}
+
 function formatJob(job: JobberJob): JobUpsert {
   return {
     jobber_job_id: job.id,
@@ -140,6 +169,7 @@ function formatJob(job: JobberJob): JobUpsert {
     jobber_web_uri: cleanText(job.jobberWebUri),
     end_at: job.endAt ?? null,
     completed_at: job.completedAt ?? null,
+    total: sumLineItemTotal(job.lineItems),
     updated_at: new Date().toISOString(),
   };
 }

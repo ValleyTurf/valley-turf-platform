@@ -154,6 +154,11 @@ const JOB_QUERY = `
         id
         name
       }
+      lineItems(first: 50) {
+        nodes {
+          totalCost
+        }
+      }
     }
   }
 `;
@@ -353,6 +358,7 @@ async function syncSingleJob(jobberJobId: string): Promise<void> {
       endAt: string | null;
       completedAt: string | null;
       client: { id: string; name: string | null } | null;
+      lineItems: { nodes: { totalCost: number | string | null }[] } | null;
     } | null;
   }>(JOB_QUERY, { id: jobberJobId });
 
@@ -370,6 +376,15 @@ async function syncSingleJob(jobberJobId: string): Promise<void> {
     throw new Error(`Jobber job ${jobberJobId} was not found.`);
   }
 
+  const lineItemNodes = job.lineItems?.nodes ?? [];
+  const jobTotal =
+    lineItemNodes.length > 0
+      ? lineItemNodes.reduce(
+          (sum, item) => sum + Number(item.totalCost ?? 0),
+          0
+        )
+      : null;
+
   const jobRow = {
     jobber_job_id: job.id,
     jobber_client_id: job.client?.id ?? null,
@@ -381,6 +396,7 @@ async function syncSingleJob(jobberJobId: string): Promise<void> {
     jobber_web_uri: cleanText(job.jobberWebUri),
     end_at: job.endAt ?? null,
     completed_at: job.completedAt ?? null,
+    total: Number.isFinite(jobTotal) ? jobTotal : null,
     updated_at: new Date().toISOString(),
   };
 

@@ -36,8 +36,8 @@ type CustomerEntry = {
   estimatedAmount: number | null;
 };
 
-type InvoicePriceRow = {
-  service_category: string | null;
+type JobTotalRow = {
+  jobber_job_id: string;
   total: number | string | null;
 };
 
@@ -143,8 +143,7 @@ function formatRangeLabel(start: Date, end: Date): string {
 
 function uniqueCustomersFor(
   visits: VisitRow[],
-  realCategoryByJobId: Map<string, string | null>,
-  avgPriceByCategory: Map<string, number>
+  jobTotalByJobId: Map<string, number>
 ): CustomerEntry[] {
   const byId = new Map<
     string,
@@ -156,10 +155,9 @@ function uniqueCustomersFor(
       continue;
     }
 
-    const realCategory = visit.jobber_job_id
-      ? realCategoryByJobId.get(visit.jobber_job_id) ?? null
-      : null;
-    const price = realCategory ? avgPriceByCategory.get(realCategory) : undefined;
+    const price = visit.jobber_job_id
+      ? jobTotalByJobId.get(visit.jobber_job_id)
+      : undefined;
 
     const existing = byId.get(visit.jobber_client_id);
 
@@ -193,20 +191,14 @@ function CategoryBox({
   categoryKey,
   visits,
   size,
-  realCategoryByJobId,
-  avgPriceByCategory,
+  jobTotalByJobId,
 }: {
   categoryKey: CategoryKey;
   visits: VisitRow[];
   size: "large" | "small";
-  realCategoryByJobId: Map<string, string | null>;
-  avgPriceByCategory: Map<string, number>;
+  jobTotalByJobId: Map<string, number>;
 }) {
-  const customers = uniqueCustomersFor(
-    visits,
-    realCategoryByJobId,
-    avgPriceByCategory
-  );
+  const customers = uniqueCustomersFor(visits, jobTotalByJobId);
 
   const boxTotal = customers.reduce(
     (sum, customer) => sum + (customer.estimatedAmount ?? 0),
@@ -247,7 +239,7 @@ function CategoryBox({
               size === "large" ? "text-2xl" : "text-lg"
             }`}
           >
-            ~{formatCurrency(boxTotal)}
+{formatCurrency(boxTotal)}
           </p>
         )}
       </div>
@@ -269,7 +261,7 @@ function CategoryBox({
 
               {customer.estimatedAmount !== null && (
                 <span className="shrink-0 text-[#6b705c]">
-                  ~{formatCurrency(customer.estimatedAmount)}
+                  {formatCurrency(customer.estimatedAmount)}
                 </span>
               )}
             </Link>
@@ -277,10 +269,10 @@ function CategoryBox({
         </div>
       )}
 
-      {hasAnyKnownPrice && (
+      {customers.some((customer) => customer.estimatedAmount === null) && (
         <p className="mt-3 text-xs text-[#9c9887]">
-          Amounts are estimated from this category's average historical
-          price, not each customer's exact contracted rate.
+          Some visits are missing a job total from Jobber and show no
+          amount — worth checking that job's line items in Jobber.
         </p>
       )}
     </div>
@@ -325,10 +317,6 @@ export default async function RecurringServicesPage({
     ])
   );
 
-  const realCategoryByJobId = new Map<string, string | null>(
-    recurringJobs.map((job) => [job.jobber_job_id, job.service_category])
-  );
-
   const { data: visitsData, error: visitsError } =
     recurringJobIds.length > 0
       ? await supabaseServer
@@ -344,62 +332,34 @@ export default async function RecurringServicesPage({
 
   const visits = (visitsData ?? []) as VisitRow[];
 
-  // Visits aren't invoiced yet at scheduling time, so there's no real
-  // per-visit dollar amount to pull. Instead, estimate each customer's
-  // upcoming visit(s) using that job's actual service category's average
-  // historical invoice total — clearly labeled as an estimate in the UI,
-  // not presented as an exact contracted rate.
-  const categoriesNeeded = Array.from(
-    new Set(
-      visits
-        .map((visit) =>
-          visit.jobber_job_id
-            ? realCategoryByJobId.get(visit.jobber_job_id)
-            : null
-        )
-        .filter((category): category is string => Boolean(category))
-    )
-  );
+  // Each customer's own job carries its actual price (summed from that
+  // job's Jobber line items via sync-jobs / the job-update webhook), so
+  // pull totals straight off jobber_jobs for the specific jobs behind
+  // these visits instead of any category-wide average — this is each
+  // customer's real rate, not an estimate.
+  const jobIdsNeeded = Array.from(
+    new Set(visits.map((visit) => visit.jobber_job_id).filter(Boolean))
+  ) as string[];
 
-  const { data: priceData } =
-    categoriesNeeded.length > 0
+  const { data: jobTotalData } =
+    jobIdsNeeded.length > 0
       ? await supabaseServer
-          .from("invoice_service_category")
-          .select("service_category, total")
-          .in("service_category", categoriesNeeded)
-      : { data: [] as InvoicePriceRow[] };
+          .from("jobber_jobs")
+          .select("jobber_job_id, total")
+          .in("jobber_job_id", jobIdsNeeded)
+      : { data: [] as JobTotalRow[] };
 
-  const priceRows = (priceData ?? []) as InvoicePriceRow[];
+  const jobTotalRows = (jobTotalData ?? []) as JobTotalRow[];
 
-  const priceSumsByCategory = new Map<string, { sum: number; count: number }>();
+  const jobTotalByJobId = new Map<string, number>();
 
-  for (const row of priceRows) {
-    if (!row.service_category) {
-      continue;
-    }
+  for (const row of jobTotalRows) {
+    const total = Number(row.total);
 
-    const total = Number(row.total ?? 0);
-
-    if (!Number.isFinite(total)) {
-      continue;
-    }
-
-    const existing = priceSumsByCategory.get(row.service_category);
-
-    if (existing) {
-      existing.sum += total;
-      existing.count += 1;
-    } else {
-      priceSumsByCategory.set(row.service_category, { sum: total, count: 1 });
+    if (Number.isFinite(total) && row.total !== null) {
+      jobTotalByJobId.set(row.jobber_job_id, total);
     }
   }
-
-  const avgPriceByCategory = new Map<string, number>(
-    Array.from(priceSumsByCategory.entries()).map(([category, { sum, count }]) => [
-      category,
-      count > 0 ? sum / count : 0,
-    ])
-  );
 
   const buckets: Record<CategoryKey, VisitRow[]> = {
     monthly: [],
@@ -550,15 +510,13 @@ export default async function RecurringServicesPage({
                 categoryKey="monthly"
                 visits={buckets.monthly}
                 size="large"
-                realCategoryByJobId={realCategoryByJobId}
-                avgPriceByCategory={avgPriceByCategory}
+                jobTotalByJobId={jobTotalByJobId}
               />
               <CategoryBox
                 categoryKey="quarterly"
                 visits={buckets.quarterly}
                 size="large"
-                realCategoryByJobId={realCategoryByJobId}
-                avgPriceByCategory={avgPriceByCategory}
+                jobTotalByJobId={jobTotalByJobId}
               />
             </div>
 
@@ -567,22 +525,19 @@ export default async function RecurringServicesPage({
                 categoryKey="bimonthly"
                 visits={buckets.bimonthly}
                 size="small"
-                realCategoryByJobId={realCategoryByJobId}
-                avgPriceByCategory={avgPriceByCategory}
+                jobTotalByJobId={jobTotalByJobId}
               />
               <CategoryBox
                 categoryKey="semiannual"
                 visits={buckets.semiannual}
                 size="small"
-                realCategoryByJobId={realCategoryByJobId}
-                avgPriceByCategory={avgPriceByCategory}
+                jobTotalByJobId={jobTotalByJobId}
               />
               <CategoryBox
                 categoryKey="other"
                 visits={buckets.other}
                 size="small"
-                realCategoryByJobId={realCategoryByJobId}
-                avgPriceByCategory={avgPriceByCategory}
+                jobTotalByJobId={jobTotalByJobId}
               />
             </div>
           </section>
