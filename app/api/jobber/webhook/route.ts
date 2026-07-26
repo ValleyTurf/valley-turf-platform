@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
 import { supabaseServer } from "@/lib/supabase-server";
+import { processPendingWebhookEvents } from "@/lib/jobberWebhookProcessor";
 
 export const dynamic = "force-dynamic";
 
@@ -100,6 +101,14 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+
+  // Process the queue right away instead of waiting for the next cron
+  // tick (up to ~12 hours away) — scheduled after the response so
+  // Jobber gets a fast ack rather than waiting on our processing. The
+  // cron-triggered GET on this same processor is still there as a
+  // backstop in case this in-process trigger doesn't run to completion
+  // (e.g. the function gets recycled mid-processing).
+  after(() => processPendingWebhookEvents());
 
   return NextResponse.json({ received: true });
 }

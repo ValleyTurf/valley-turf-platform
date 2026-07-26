@@ -694,6 +694,13 @@ export default async function JobberSyncPage() {
                 </div>
               </div>
             </div>
+
+            <SyncButton
+              syncType="Webhook Queue"
+              endpoint="/api/jobber/process-webhooks"
+              buttonLabel="Process Pending Webhooks"
+              runningLabel="Processing..."
+            />
           </div>
         </section>
 

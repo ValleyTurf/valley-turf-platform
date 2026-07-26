@@ -6,11 +6,15 @@ import { useRouter } from "next/navigation";
 type SyncButtonProps = {
   syncType: string;
   endpoint: string;
+  buttonLabel?: string;
+  runningLabel?: string;
 };
 
 export default function SyncButton({
   syncType,
   endpoint,
+  buttonLabel = "Sync Now",
+  runningLabel = "Syncing...",
 }: SyncButtonProps) {
   const router = useRouter();
 
@@ -100,9 +104,7 @@ export default function SyncButton({
             : "pointer",
         }}
       >
-        {isSyncing
-          ? "Syncing..."
-          : "Sync Now"}
+        {isSyncing ? runningLabel : buttonLabel}
       </button>
 
       {message ? (

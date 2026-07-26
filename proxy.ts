@@ -8,11 +8,6 @@ const PUBLIC_PATHS = [
   "/api/logout",
   // Jobber POSTs directly to this one — no session, no cron secret.
   "/api/jobber/webhook",
-  // Guards itself internally with its own JOBBER_SYNC_SECRET bearer
-  // check (see route.ts) — that's a different secret than CRON_SECRET
-  // below, and Vercel's automatic cron auth only ever sends CRON_SECRET,
-  // so this one has to stay public here and rely on its own check.
-  "/api/jobber/process-webhooks",
   "/api/scan-leads",
   // Called by an external automation (Jobber automation / Zapier), not
   // from inside this app. Guards itself internally with its own
@@ -34,6 +29,7 @@ const CRON_PATHS = [
   "/api/jobber/sync-jobs",
   "/api/jobber/sync-payments",
   "/api/jobber/sync-visits",
+  "/api/jobber/process-webhooks",
 ];
 
 function matchesPrefix(pathname: string, prefixes: string[]): boolean {
