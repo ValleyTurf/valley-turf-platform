@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/auth";
-import { getRolePermissions, isPathAllowedForRole } from "@/lib/permissions";
+
+// Deliberately no lib/permissions or lib/supabase-server import here.
+// This file runs in a restricted (Edge-like) runtime that can't load the
+// Supabase client — the role/section permission check now happens in
+// app/(platform)/layout.tsx instead (a real Node.js server component),
+// using the x-pathname header set below to know what was requested.
 
 const PUBLIC_PATHS = [
   "/login",
@@ -83,24 +88,22 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (user.role !== "admin") {
-    const permissions = await getRolePermissions();
-
-    if (!isPathAllowedForRole(pathname, user.role, permissions)) {
-      const dashboardUrl = new URL("/dashboard", request.url);
-
-      return NextResponse.redirect(dashboardUrl);
-    }
-  }
+  // Role/section permission enforcement lives in
+  // app/(platform)/layout.tsx now, not here — see note at the top of this
+  // file. This layer only handles authentication (is there a valid
+  // session at all).
 
   // Hand the verified identity to server components/actions via request
   // headers, so pages that need to know "who's logged in" (Team page,
   // audit trails, nav gating) don't have to re-verify or hit the DB.
+  // x-pathname lets the (platform) layout — which has no other way to
+  // see the current path — run the permission check against it.
   const headers = new Headers(request.headers);
   headers.set("x-user-id", user.id);
   headers.set("x-user-email", user.email);
   headers.set("x-user-name", user.name);
   headers.set("x-user-role", user.role);
+  headers.set("x-pathname", pathname);
 
   return NextResponse.next({ request: { headers } });
 }
