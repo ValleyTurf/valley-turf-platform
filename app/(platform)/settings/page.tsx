@@ -3,7 +3,16 @@ import Link from "next/link";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const settingsSections = [
+type SettingsSection = {
+  title: string;
+  description: string;
+  href: string;
+  icon: string;
+  status: string;
+  external?: boolean;
+};
+
+const settingsSections: SettingsSection[] = [
   {
     title: "Team",
     description:
@@ -27,6 +36,15 @@ const settingsSections = [
     href: "/health",
     icon: "🩺",
     status: "Monitor",
+  },
+  {
+    title: "Data Backup",
+    description:
+      "Download a ZIP of CSV files covering customers, leads, campaigns, materials, job costing data, and everything else that only lives here — not in Jobber.",
+    href: "/api/backup/export",
+    icon: "💾",
+    status: "Download",
+    external: true,
   },
 ];
 
@@ -80,8 +98,11 @@ export default function SettingsPage() {
             gap: "20px",
           }}
         >
-          {settingsSections.map((section) => (
-            <Link
+          {settingsSections.map((section) => {
+            const CardTag = section.external ? "a" : Link;
+
+            return (
+            <CardTag
               key={section.href}
               href={section.href}
               style={{
@@ -177,10 +198,11 @@ export default function SettingsPage() {
                   fontWeight: 700,
                 }}
               >
-                Open settings →
+                {section.external ? "Download →" : "Open settings →"}
               </div>
-            </Link>
-          ))}
+            </CardTag>
+            );
+          })}
         </div>
       </div>
     </main>
