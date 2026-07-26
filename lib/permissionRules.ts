@@ -24,7 +24,8 @@ export type PermissionSection =
   | "financials"
   | "marketing_analytics"
   | "customer_intelligence"
-  | "settings_audit";
+  | "settings_audit"
+  | "quotes";
 
 export const SECTIONS: { id: PermissionSection; label: string; description: string }[] = [
   {
@@ -54,6 +55,12 @@ export const SECTIONS: { id: PermissionSection; label: string; description: stri
     description:
       "Jobber Sync status, System Health, and the Audit Log. Does not include Team or Data Backup — those stay admin-only.",
   },
+  {
+    id: "quotes",
+    label: "Quotes",
+    description:
+      "Creating and managing customer/lead quotes and their shareable accept/decline links.",
+  },
 ];
 
 const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
@@ -68,6 +75,11 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
   marketing_analytics: ["/analytics"],
   customer_intelligence: ["/customers/intelligence"],
   settings_audit: ["/settings", "/audit"],
+  // The public accept/decline page (/q/[token]) is a separate,
+  // unauthenticated route handled by proxy.ts's PUBLIC_PATHS, not this
+  // section gate — this only covers the internal /quotes management
+  // pages.
+  quotes: ["/quotes"],
 };
 
 // Structurally admin-only, always — not editable via role_permissions.
@@ -94,6 +106,7 @@ export function emptyPermissions(): RolePermissionsMap {
     marketing_analytics: false,
     customer_intelligence: false,
     settings_audit: false,
+    quotes: false,
   };
 
   return { manager: { ...blank }, staff: { ...blank } };

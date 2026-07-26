@@ -77,8 +77,12 @@ export async function proxy(request: NextRequest) {
 
   const isPublicPath = matchesPrefix(pathname, PUBLIC_PATHS);
   const isPublicRedirect = pathname.startsWith("/r/");
+  // Public quote view/accept/decline — same unguessable-token trust
+  // model as /r/ above. Covers both the page and its Server Actions,
+  // since those POST back to this same /q/[token] path.
+  const isPublicQuote = pathname.startsWith("/q/");
 
-  if (isPublicPath || isPublicRedirect) {
+  if (isPublicPath || isPublicRedirect || isPublicQuote) {
     return NextResponse.next();
   }
 

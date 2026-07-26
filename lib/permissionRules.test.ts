@@ -11,6 +11,7 @@ const ALL_ALLOWED: RolePermissionsMap = {
     marketing_analytics: true,
     customer_intelligence: true,
     settings_audit: true,
+    quotes: true,
   },
   staff: {
     job_costing: true,
@@ -18,6 +19,7 @@ const ALL_ALLOWED: RolePermissionsMap = {
     marketing_analytics: true,
     customer_intelligence: true,
     settings_audit: true,
+    quotes: true,
   },
 };
 
@@ -28,6 +30,7 @@ const NONE_ALLOWED: RolePermissionsMap = {
     marketing_analytics: false,
     customer_intelligence: false,
     settings_audit: false,
+    quotes: false,
   },
   staff: {
     job_costing: false,
@@ -35,6 +38,7 @@ const NONE_ALLOWED: RolePermissionsMap = {
     marketing_analytics: false,
     customer_intelligence: false,
     settings_audit: false,
+    quotes: false,
   },
 };
 
@@ -73,6 +77,16 @@ describe("isPathAllowedForRole", () => {
     expect(isPathAllowedForRole("/revenue", "staff", NONE_ALLOWED)).toBe(
       false
     );
+  });
+
+  it("gates /quotes the same way as any other section", () => {
+    expect(isPathAllowedForRole("/quotes", "staff", NONE_ALLOWED)).toBe(
+      false
+    );
+    expect(isPathAllowedForRole("/quotes", "staff", ALL_ALLOWED)).toBe(true);
+    expect(
+      isPathAllowedForRole("/quotes/new", "manager", NONE_ALLOWED)
+    ).toBe(false);
   });
 
   it("matches nested paths under a gated section prefix", () => {
