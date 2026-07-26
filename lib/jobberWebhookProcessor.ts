@@ -156,7 +156,8 @@ const JOB_QUERY = `
       }
       lineItems(first: 50) {
         nodes {
-          totalCost
+          unitPrice
+          quantity
         }
       }
     }
@@ -358,7 +359,12 @@ async function syncSingleJob(jobberJobId: string): Promise<void> {
       endAt: string | null;
       completedAt: string | null;
       client: { id: string; name: string | null } | null;
-      lineItems: { nodes: { totalCost: number | string | null }[] } | null;
+      lineItems: {
+        nodes: {
+          unitPrice: number | string | null;
+          quantity: number | string | null;
+        }[];
+      } | null;
     } | null;
   }>(JOB_QUERY, { id: jobberJobId });
 
@@ -376,11 +382,15 @@ async function syncSingleJob(jobberJobId: string): Promise<void> {
     throw new Error(`Jobber job ${jobberJobId} was not found.`);
   }
 
+  // unitPrice (customer-facing charge) * quantity — not unitCost, which
+  // is Jobber's internal-cost field and is usually blank for this
+  // business, which is why totals were showing as $0.
   const lineItemNodes = job.lineItems?.nodes ?? [];
   const jobTotal =
     lineItemNodes.length > 0
       ? lineItemNodes.reduce(
-          (sum, item) => sum + Number(item.totalCost ?? 0),
+          (sum, item) =>
+            sum + Number(item.unitPrice ?? 0) * Number(item.quantity ?? 1),
           0
         )
       : null;

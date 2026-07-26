@@ -209,12 +209,8 @@ function CategoryBox({
   );
 
   return (
-    <div
-      className={`rounded-2xl bg-white shadow ${
-        size === "large" ? "p-6" : "p-4"
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3">
+    <div className="rounded-2xl bg-white p-6 shadow">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-[#9c7a20]">
             {CATEGORY_LABELS[categoryKey]}

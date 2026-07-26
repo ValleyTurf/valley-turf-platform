@@ -17,7 +17,8 @@ type JobberClient = {
 };
 
 type JobberLineItem = {
-  totalCost: number | string | null;
+  unitPrice: number | string | null;
+  quantity: number | string | null;
 };
 
 type JobberJob = {
@@ -109,7 +110,8 @@ const JOBS_QUERY = `
 
         lineItems(first: 50) {
           nodes {
-            totalCost
+            unitPrice
+            quantity
           }
         }
       }
@@ -140,6 +142,11 @@ function cleanText(
   return cleaned ? cleaned : null;
 }
 
+// Jobber's JobLineItem carries both unitCost (what the job cost the
+// business — internal COGS) and unitPrice (what's charged to the
+// customer). We want the customer-facing amount, so this sums
+// unitPrice * quantity across the job's line items — the same
+// calculation Jobber's own "Total price" UI uses.
 function sumLineItemTotal(
   lineItems: { nodes: JobberLineItem[] } | null
 ): number | null {
@@ -149,10 +156,12 @@ function sumLineItemTotal(
     return null;
   }
 
-  const sum = nodes.reduce(
-    (total, item) => total + Number(item.totalCost ?? 0),
-    0
-  );
+  const sum = nodes.reduce((total, item) => {
+    const unitPrice = Number(item.unitPrice ?? 0);
+    const quantity = Number(item.quantity ?? 1);
+
+    return total + unitPrice * quantity;
+  }, 0);
 
   return Number.isFinite(sum) ? sum : null;
 }
