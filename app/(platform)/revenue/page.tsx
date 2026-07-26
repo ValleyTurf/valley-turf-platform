@@ -24,6 +24,7 @@ type DashboardPayment = {
 
 type MarketCustomer = {
   jobber_client_id: string;
+  full_name: string | null;
   city: string | null;
   postal_code: string | null;
 };
@@ -441,6 +442,7 @@ type ServiceCategoryRevenue = {
   category: string;
   revenue: number;
   invoiceCount: number;
+  customerIds: Set<string>;
 };
 
 async function fetchServiceCategoryRevenue(
@@ -450,13 +452,14 @@ async function fetchServiceCategoryRevenue(
   const pageSize = 1000;
   const invoiceRows: {
     jobber_invoice_id: string;
+    jobber_client_id: string | null;
     invoice_total: number | string;
   }[] = [];
 
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabaseServer
       .from("invoice_financials")
-      .select("jobber_invoice_id, invoice_total")
+      .select("jobber_invoice_id, jobber_client_id, invoice_total")
       .gte("issue_date", startDate)
       .lte("issue_date", endDate)
       .range(from, from + pageSize - 1);
@@ -465,6 +468,7 @@ async function fetchServiceCategoryRevenue(
 
     const batch = (data ?? []) as {
       jobber_invoice_id: string;
+      jobber_client_id: string | null;
       invoice_total: number | string;
     }[];
 
@@ -512,7 +516,7 @@ async function fetchServiceCategoryRevenue(
 
   const totals = new Map<
     string,
-    { revenue: number; invoiceCount: number }
+    { revenue: number; invoiceCount: number; customerIds: Set<string> }
   >();
 
   for (const row of invoiceRows) {
@@ -521,10 +525,14 @@ async function fetchServiceCategoryRevenue(
     const existing = totals.get(category) ?? {
       revenue: 0,
       invoiceCount: 0,
+      customerIds: new Set<string>(),
     };
 
     existing.revenue += Number(row.invoice_total ?? 0);
     existing.invoiceCount += 1;
+    if (row.jobber_client_id) {
+      existing.customerIds.add(row.jobber_client_id);
+    }
     totals.set(category, existing);
   }
 
@@ -533,6 +541,7 @@ async function fetchServiceCategoryRevenue(
       category,
       revenue: values.revenue,
       invoiceCount: values.invoiceCount,
+      customerIds: values.customerIds,
     }))
     .sort((a, b) => b.revenue - a.revenue);
 }
@@ -569,7 +578,7 @@ async function fetchMarketCustomers(): Promise<MarketCustomer[]> {
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabaseServer
       .from("customers")
-      .select("jobber_client_id, city, postal_code")
+      .select("jobber_client_id, full_name, city, postal_code")
       .not("jobber_client_id", "is", null)
       .range(from, from + pageSize - 1);
 
@@ -886,6 +895,27 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
     const customerLocationMap = new Map(
       marketCustomers.map((customer) => [customer.jobber_client_id, customer]),
     );
+
+    // Shared by the Revenue by Market and Revenue by Service drill-downs
+    // below — both only have client IDs from their revenue aggregation,
+    // so this is what turns those IDs back into clickable names.
+    const customerNameMap = new Map(
+      marketCustomers.map((customer) => [
+        customer.jobber_client_id,
+        customer.full_name || "Unnamed Customer",
+      ]),
+    );
+
+    function namesForCustomerIds(
+      customerIds: Set<string>,
+    ): { id: string; name: string }[] {
+      return Array.from(customerIds)
+        .map((id) => ({
+          id,
+          name: customerNameMap.get(id) ?? "Unnamed Customer",
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    }
 
     const marketSummaries = buildMarketSummaries(
       marketInvoices,
@@ -1320,6 +1350,31 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                             </p>
                           </div>
                         </div>
+
+                        {market.customerIds.size > 0 && (
+                          <details className="mt-3">
+                            <summary className="cursor-pointer text-xs font-semibold text-[#9c7a20] hover:underline">
+                              Show {market.customerIds.size} customer
+                              {market.customerIds.size === 1 ? "" : "s"}
+                            </summary>
+
+                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 border-t border-[#eee9dc] pt-2">
+                              {namesForCustomerIds(market.customerIds).map(
+                                (customer) => (
+                                  <Link
+                                    key={customer.id}
+                                    href={`/customers/${encodeURIComponent(
+                                      customer.id,
+                                    )}`}
+                                    className="text-xs font-semibold text-[#9c7a20] hover:underline"
+                                  >
+                                    {customer.name}
+                                  </Link>
+                                ),
+                              )}
+                            </div>
+                          </details>
+                        )}
                       </div>
                     );
                   })}
@@ -1356,26 +1411,53 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                 {serviceCategoryRevenue.map((service, index) => (
                   <div
                     key={service.category}
-                    className="flex items-center justify-between gap-4 rounded-2xl border border-[#e7e2d5] p-4"
+                    className="rounded-2xl border border-[#e7e2d5] p-4"
                   >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f7f6f1] text-sm font-bold">
-                        {index + 1}
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f7f6f1] text-sm font-bold">
+                          {index + 1}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate font-bold">
+                            {service.category}
+                          </p>
+                          <p className="text-xs text-[#6b705c]">
+                            {formatNumber(service.invoiceCount)} invoice
+                            {service.invoiceCount === 1 ? "" : "s"}
+                          </p>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="truncate font-bold">
-                          {service.category}
-                        </p>
-                        <p className="text-xs text-[#6b705c]">
-                          {formatNumber(service.invoiceCount)} invoice
-                          {service.invoiceCount === 1 ? "" : "s"}
-                        </p>
-                      </div>
+
+                      <p className="shrink-0 text-xl font-bold text-[#9c7a20]">
+                        {formatCurrency(service.revenue)}
+                      </p>
                     </div>
 
-                    <p className="shrink-0 text-xl font-bold text-[#9c7a20]">
-                      {formatCurrency(service.revenue)}
-                    </p>
+                    {service.customerIds.size > 0 && (
+                      <details className="mt-3">
+                        <summary className="cursor-pointer text-xs font-semibold text-[#9c7a20] hover:underline">
+                          Show {service.customerIds.size} customer
+                          {service.customerIds.size === 1 ? "" : "s"}
+                        </summary>
+
+                        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 border-t border-[#eee9dc] pt-2">
+                          {namesForCustomerIds(service.customerIds).map(
+                            (customer) => (
+                              <Link
+                                key={customer.id}
+                                href={`/customers/${encodeURIComponent(
+                                  customer.id,
+                                )}`}
+                                className="text-xs font-semibold text-[#9c7a20] hover:underline"
+                              >
+                                {customer.name}
+                              </Link>
+                            ),
+                          )}
+                        </div>
+                      </details>
+                    )}
                   </div>
                 ))}
               </div>
