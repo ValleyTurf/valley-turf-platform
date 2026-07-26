@@ -31,7 +31,7 @@ export const SECTIONS: { id: PermissionSection; label: string; description: stri
     id: "job_costing",
     label: "Job Costing",
     description:
-      "Materials, Labor Rates, Equipment, Overhead Costs, Job Costing Analytics.",
+      "Materials, Labor Rates, Equipment, Overhead Costs, Job Costing Analytics, Seasonal Trends.",
   },
   {
     id: "financials",

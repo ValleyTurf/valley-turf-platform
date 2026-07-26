@@ -83,6 +83,11 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
         href: "/job-costing-analytics",
         icon: "📈",
       },
+      {
+        name: "Seasonal Trends",
+        href: "/job-costing-analytics/trends",
+        icon: "📆",
+      },
       { name: "Materials", href: "/materials", icon: "🧪" },
       { name: "Labor Rates", href: "/employees", icon: "🧑‍🔧" },
       { name: "Equipment", href: "/equipment", icon: "🧹" },

@@ -393,6 +393,13 @@ export default async function JobCostingAnalyticsPage({
             </Link>
 
             <Link
+              href="/job-costing-analytics/trends"
+              className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold transition hover:bg-white"
+            >
+              Seasonal Trends
+            </Link>
+
+            <Link
               href="/revenue"
               className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
             >
