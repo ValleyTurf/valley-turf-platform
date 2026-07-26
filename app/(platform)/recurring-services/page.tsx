@@ -272,7 +272,7 @@ function CategoryBox({
       {customers.some((customer) => customer.estimatedAmount === null) && (
         <p className="mt-3 text-xs text-[#9c9887]">
           Some visits are missing a job total from Jobber and show no
-          amount — worth checking that job's line items in Jobber.
+          amount — worth checking that job&apos;s line items in Jobber.
         </p>
       )}
     </div>
@@ -414,7 +414,7 @@ export default async function RecurringServicesPage({
           <h1 className="mt-2 text-4xl font-bold">Upcoming Recurring Services</h1>
 
           <p className="mt-2 max-w-2xl text-[#6b705c]">
-            Who's getting recurring service (per Jobber's own job type) and
+            Who&apos;s getting recurring service (per Jobber&apos;s own job type) and
             what kind, without waiting on a revenue forecast.
           </p>
         </header>
@@ -498,9 +498,9 @@ export default async function RecurringServicesPage({
               No recurring-job visits scheduled in this window.
             </p>
             <p className="mt-2 text-sm text-[#9c9887]">
-              If this looks low, it may mean Jobber jobs aren't consistently
-              marked as "Recurring" — worth spot-checking a known recurring
-              customer's job in Jobber.
+              If this looks low, it may mean Jobber jobs aren&apos;t consistently
+              marked as &quot;Recurring&quot; — worth spot-checking a known recurring
+              customer&apos;s job in Jobber.
             </p>
           </section>
         ) : (
