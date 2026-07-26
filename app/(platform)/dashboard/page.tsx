@@ -349,9 +349,9 @@ export default async function DashboardPage() {
 
   if (!data || errorMessage) {
     return (
-      <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
+      <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
         <div className="mx-auto max-w-7xl">
-          <section className="rounded-3xl bg-white p-8 shadow">
+          <section className="rounded-3xl bg-white p-5 shadow sm:p-8">
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
               Business Intelligence
             </p>
@@ -377,7 +377,7 @@ export default async function DashboardPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
+    <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
       <div className="mx-auto max-w-7xl">
         <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
@@ -385,7 +385,7 @@ export default async function DashboardPage() {
               Business Intelligence
             </p>
 
-            <h1 className="mt-2 text-4xl font-bold">
+            <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
               Valley Turf Revival Dashboard
             </h1>
 
@@ -460,7 +460,7 @@ export default async function DashboardPage() {
         <section className="mt-8 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <ActivityFeed activity={data.activity} />
 
-          <div className="rounded-3xl bg-white p-8 shadow">
+          <div className="rounded-3xl bg-white p-5 shadow sm:p-8">
             <h2 className="text-2xl font-bold">Snapshot</h2>
 
             <div className="mt-6 space-y-4">

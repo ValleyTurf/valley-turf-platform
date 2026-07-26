@@ -148,7 +148,7 @@ export default async function CampaignDetailPage({
     channel === "qr" ? await generateBrandedQrCode(trackingUrl) : null;
 
   return (
-    <main className="min-h-screen bg-[#f5f4ef] p-8 text-[#174734]">
+    <main className="min-h-screen bg-[#f5f4ef] p-4 text-[#174734] sm:p-8">
       <div className="mx-auto max-w-5xl">
         <Link
           href="/codes"
@@ -161,7 +161,7 @@ export default async function CampaignDetailPage({
           <p className="text-sm font-semibold uppercase tracking-widest text-[#d4af37]">
             Campaign
           </p>
-          <h1 className="mt-2 text-4xl font-bold">
+          <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
             {campaign.alias || campaign.name}
           </h1>
           <p className="mt-3 text-green-50">/r/{campaign.slug}</p>

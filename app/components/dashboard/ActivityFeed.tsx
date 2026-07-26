@@ -52,7 +52,7 @@ export default function ActivityFeed({
   activity,
 }: Props) {
   return (
-    <div className="rounded-3xl bg-white p-8 shadow">
+    <div className="rounded-3xl bg-white p-5 shadow sm:p-8">
       <h2 className="text-2xl font-bold text-[#174734]">
         Recent Activity
       </h2>

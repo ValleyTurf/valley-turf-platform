@@ -299,7 +299,7 @@ export default async function JobCostingAnalyticsPage({
   }
 
   return (
-    <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
+    <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
       <div className="mx-auto max-w-6xl">
         <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
@@ -307,7 +307,7 @@ export default async function JobCostingAnalyticsPage({
               Valley Turf Revival OS
             </p>
 
-            <h1 className="mt-2 text-4xl font-bold">
+            <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
               Job Costing Analytics
             </h1>
 
@@ -484,7 +484,7 @@ export default async function JobCostingAnalyticsPage({
               </article>
             </section>
 
-            <section className="mt-8 rounded-3xl bg-white p-8 shadow">
+            <section className="mt-8 rounded-3xl bg-white p-5 shadow sm:p-8">
               <h2 className="text-2xl font-bold">
                 Profit by Service Category
               </h2>

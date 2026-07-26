@@ -831,9 +831,9 @@ export default async function CustomerDetailPage({
 
   if (!client) {
     return (
-      <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
+      <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
         <div className="mx-auto max-w-5xl">
-          <section className="rounded-3xl bg-white p-8 shadow">
+          <section className="rounded-3xl bg-white p-5 shadow sm:p-8">
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
               Customer Profile
             </p>
@@ -896,7 +896,7 @@ export default async function CustomerDetailPage({
     : null;
 
   return (
-    <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
+    <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
       <div className="mx-auto max-w-7xl">
         <header className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
@@ -904,7 +904,7 @@ export default async function CustomerDetailPage({
               Customer Intelligence
             </p>
 
-            <h1 className="mt-2 text-4xl font-bold">
+            <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
               {client.name || "Unnamed Customer"}
             </h1>
 

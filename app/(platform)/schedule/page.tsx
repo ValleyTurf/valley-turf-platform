@@ -189,7 +189,7 @@ export default async function SchedulePage({
   const todayStr = formatDateInput(today);
 
   return (
-    <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
+    <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
       <div className="mx-auto max-w-4xl">
         <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
@@ -197,7 +197,7 @@ export default async function SchedulePage({
               Valley Turf Revival OS
             </p>
 
-            <h1 className="mt-2 text-4xl font-bold">Daily Schedule</h1>
+            <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Daily Schedule</h1>
 
             <p className="mt-2 max-w-2xl text-[#6b705c]">
               Real visit data synced from Jobber — who&apos;s scheduled where,
@@ -207,7 +207,7 @@ export default async function SchedulePage({
 
           <Link
             href="/job-costs"
-            className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
+            className="w-full rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246] lg:w-auto"
           >
             Log Job Costs
           </Link>

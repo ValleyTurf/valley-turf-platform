@@ -130,13 +130,13 @@ export default async function LeadsPage() {
   const matchedCount = leads.filter((lead) => matchCustomer(lead)).length;
 
   return (
-    <main className="min-h-screen bg-[#f5f4ef] p-8 text-[#174734]">
+    <main className="min-h-screen bg-[#f5f4ef] p-4 text-[#174734] sm:p-8">
       <div className="mx-auto max-w-7xl">
         <section className="rounded-3xl bg-gradient-to-r from-[#174734] to-[#226246] p-8 text-white shadow-lg">
           <p className="text-sm font-semibold uppercase tracking-widest text-[#d4af37]">
             Valley Turf Revival
           </p>
-          <h1 className="mt-2 text-4xl font-bold">Leads</h1>
+          <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Leads</h1>
           <p className="mt-3 max-w-2xl text-green-50">
             Everyone captured from QR scans, tracked links, and future intake
             forms, matched against your customer list.

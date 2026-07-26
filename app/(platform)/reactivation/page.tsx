@@ -601,8 +601,8 @@ export default async function ReactivationPage({
 
   return (
     <main
+      className="px-4 py-6 sm:p-8"
       style={{
-        padding: "32px",
         minHeight: "100vh",
         background: "#f8fafc",
       }}
@@ -631,11 +631,8 @@ export default async function ReactivationPage({
       </div>
 
       <section
+        className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5"
         style={{
-          display: "grid",
-          gridTemplateColumns:
-            "repeat(5, minmax(0, 1fr))",
-          gap: "16px",
           marginBottom: "32px",
         }}
       >
@@ -666,11 +663,8 @@ export default async function ReactivationPage({
       </section>
 
       <section
+        className="grid grid-cols-1 gap-4 sm:grid-cols-3"
         style={{
-          display: "grid",
-          gridTemplateColumns:
-            "repeat(3, minmax(0, 1fr))",
-          gap: "16px",
           marginBottom: "32px",
         }}
       >

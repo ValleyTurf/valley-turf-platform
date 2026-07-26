@@ -273,10 +273,10 @@ export default async function JobberSyncPage() {
 
   return (
     <main
+      className="px-4 py-6 sm:p-8"
       style={{
         minHeight: "100vh",
         background: "#f8fafc",
-        padding: "32px",
       }}
     >
       <div
@@ -533,7 +533,7 @@ export default async function JobberSyncPage() {
           style={{
             display: "grid",
             gridTemplateColumns:
-              "repeat(auto-fit, minmax(320px, 1fr))",
+              "repeat(auto-fit, minmax(260px, 1fr))",
             gap: "18px",
             marginBottom: "32px",
           }}

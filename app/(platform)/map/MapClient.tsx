@@ -197,7 +197,7 @@ export default function MapClient({
                   onClick={() => handleToggleStatus(drop.id, drop.status)}
                   disabled={isPending}
                   style={{
-                    fontSize: "0.75rem",
+                    fontSize: "0.8rem",
                     fontWeight: "bold",
                     color: "#2563eb",
                     textDecoration: "underline",
@@ -205,6 +205,7 @@ export default function MapClient({
                     border: "none",
                     cursor: "pointer",
                     textAlign: "left",
+                    padding: "6px 0",
                   }}
                 >
                   {drop.status === "door_hanger"
@@ -215,7 +216,7 @@ export default function MapClient({
                   onClick={() => handleDelete(drop.id)}
                   disabled={isPending}
                   style={{
-                    fontSize: "0.75rem",
+                    fontSize: "0.8rem",
                     fontWeight: "bold",
                     color: "#dc2626",
                     textDecoration: "underline",
@@ -223,6 +224,7 @@ export default function MapClient({
                     border: "none",
                     cursor: "pointer",
                     textAlign: "left",
+                    padding: "6px 0",
                   }}
                 >
                   Remove Pin
@@ -247,7 +249,7 @@ export default function MapClient({
       </MapContainer>
 
       {actionError && (
-        <div className="absolute top-4 left-1/2 z-[1000] w-80 -translate-x-1/2 rounded-2xl border border-red-200 bg-red-50 p-3 shadow-lg">
+        <div className="absolute top-4 left-1/2 z-[1000] w-[calc(100vw-2rem)] max-w-80 -translate-x-1/2 rounded-2xl border border-red-200 bg-red-50 p-3 shadow-lg">
           <div className="flex items-start justify-between gap-2">
             <p className="text-sm font-semibold text-red-700">
               {actionError}
@@ -264,7 +266,7 @@ export default function MapClient({
       )}
 
       {addingAt && (
-        <div className="absolute bottom-4 left-1/2 z-[1000] w-80 -translate-x-1/2 rounded-2xl bg-white p-4 shadow-lg">
+        <div className="absolute bottom-4 left-1/2 z-[1000] w-[calc(100vw-2rem)] max-w-80 -translate-x-1/2 rounded-2xl bg-white p-4 shadow-lg">
           <p className="text-sm font-bold text-[#174734]">
             Drop a door hanger pin here?
           </p>

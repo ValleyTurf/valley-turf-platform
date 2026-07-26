@@ -98,16 +98,16 @@ export default async function CustomerMapPage() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col bg-[#f5f4ef] p-8">
+    <main className="flex min-h-screen flex-col bg-[#f5f4ef] p-4 sm:p-8">
       <div className="mx-auto w-full max-w-7xl">
         <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
           Valley Turf Revival OS
         </p>
-        <h1 className="mt-2 text-4xl font-bold text-[#174734]">
+        <h1 className="mt-2 text-3xl font-bold text-[#174734] sm:text-4xl">
           Customer Map
         </h1>
 
-        <div className="mt-4 flex flex-wrap gap-4 text-sm">
+        <div className="mt-4 flex flex-wrap gap-3 text-sm sm:gap-4">
           <span className="flex items-center gap-2">
             <span className="h-3 w-3 rounded-full bg-[#16a34a]" />
             Current ({tierCounts.current})
@@ -135,7 +135,7 @@ export default async function CustomerMapPage() {
         </div>
       </div>
 
-      <div className="mx-auto mt-6 h-[75vh] w-full max-w-7xl overflow-hidden rounded-3xl border border-[#e7e2d5] shadow">
+      <div className="mx-auto mt-6 h-[65vh] w-full max-w-7xl overflow-hidden rounded-3xl border border-[#e7e2d5] shadow sm:h-[75vh]">
         <MapLoader customers={customers} doorHangers={doorHangers} />
       </div>
     </main>

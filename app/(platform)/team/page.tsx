@@ -61,14 +61,14 @@ export default async function TeamPage() {
   const users = (data ?? []) as UserRow[];
 
   return (
-    <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
+    <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
       <div className="mx-auto max-w-3xl">
         <header>
           <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
             Valley Turf Revival OS
           </p>
 
-          <h1 className="mt-2 text-4xl font-bold">Team</h1>
+          <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Team</h1>
 
           <p className="mt-2 max-w-2xl text-[#6b705c]">
             Individual logins and access levels. Admins see everything;

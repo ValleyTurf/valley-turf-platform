@@ -8,14 +8,14 @@ export default async function AccountPage() {
   const user = await getCurrentUser();
 
   return (
-    <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
+    <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
       <div className="mx-auto max-w-lg">
         <header>
           <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
             Valley Turf Revival OS
           </p>
 
-          <h1 className="mt-2 text-4xl font-bold">Account</h1>
+          <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Account</h1>
         </header>
 
         <section className="mt-6 rounded-2xl bg-white p-5 shadow">

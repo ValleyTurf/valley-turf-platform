@@ -65,7 +65,7 @@ export default async function AlertsPage() {
     thinMarginCategories.length > 0;
 
   return (
-    <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
+    <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
       <div className="mx-auto max-w-5xl">
         <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
@@ -73,7 +73,7 @@ export default async function AlertsPage() {
               Valley Turf Revival OS
             </p>
 
-            <h1 className="mt-2 text-4xl font-bold">Profitability Alerts</h1>
+            <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Profitability Alerts</h1>
 
             <p className="mt-2 max-w-2xl text-[#6b705c]">
               Customers and service categories running at a loss or on a
@@ -116,7 +116,7 @@ export default async function AlertsPage() {
           </section>
         ) : (
           <>
-            <section className="mt-6 rounded-3xl bg-white p-8 shadow">
+            <section className="mt-6 rounded-3xl bg-white p-5 shadow sm:p-8">
               <h2 className="text-2xl font-bold">
                 Customers Running at a Loss
               </h2>
@@ -159,7 +159,7 @@ export default async function AlertsPage() {
               </div>
             </section>
 
-            <section className="mt-8 rounded-3xl bg-white p-8 shadow">
+            <section className="mt-8 rounded-3xl bg-white p-5 shadow sm:p-8">
               <h2 className="text-2xl font-bold">
                 Service Categories Running at a Loss
               </h2>
@@ -194,7 +194,7 @@ export default async function AlertsPage() {
               </div>
             </section>
 
-            <section className="mt-8 rounded-3xl bg-white p-8 shadow">
+            <section className="mt-8 rounded-3xl bg-white p-5 shadow sm:p-8">
               <h2 className="text-2xl font-bold">
                 Thin-Margin Service Categories
               </h2>

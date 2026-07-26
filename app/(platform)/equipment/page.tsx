@@ -40,7 +40,7 @@ export default async function EquipmentPage() {
   const equipment = (data ?? []) as EquipmentSummary[];
 
   return (
-    <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
+    <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
       <div className="mx-auto max-w-4xl">
         <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
@@ -48,7 +48,7 @@ export default async function EquipmentPage() {
               Valley Turf Revival OS
             </p>
 
-            <h1 className="mt-2 text-4xl font-bold">Equipment</h1>
+            <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Equipment</h1>
 
             <p className="mt-2 max-w-2xl text-[#6b705c]">
               Equipment like the vacuum and power broom, where cost per use

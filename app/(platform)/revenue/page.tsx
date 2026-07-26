@@ -994,7 +994,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
     ];
 
     return (
-      <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
+      <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
         <div className="mx-auto max-w-7xl">
           <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
             <div>
@@ -1002,7 +1002,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                 Valley Turf Revival OS
               </p>
 
-              <h1 className="mt-2 text-4xl font-bold">Financial Dashboard</h1>
+              <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Financial Dashboard</h1>
             </div>
 
             <div className="flex flex-wrap gap-3">
@@ -1171,7 +1171,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
           <div className="mt-8 grid gap-6 lg:grid-cols-2">
           <section
             id="revenue-by-market"
-            className="scroll-mt-6 rounded-3xl bg-white p-8 shadow"
+            className="scroll-mt-6 rounded-3xl bg-white p-5 shadow sm:p-8"
           >
             <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
               <div>
@@ -1364,7 +1364,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
             )}
           </section>
 
-          <section className="rounded-3xl bg-white p-8 shadow">
+          <section className="rounded-3xl bg-white p-5 shadow sm:p-8">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
                 Market Intelligence
@@ -1438,7 +1438,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
           </section>
           </div>
 
-          <section className="mt-8 rounded-3xl bg-white p-8 shadow">
+          <section className="mt-8 rounded-3xl bg-white p-5 shadow sm:p-8">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h2 className="text-2xl font-bold">
@@ -1559,7 +1559,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
           </section>
 
           <section className="mt-8 grid gap-6 xl:grid-cols-2">
-            <article className="rounded-3xl bg-white p-8 shadow">
+            <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
               <h2 className="text-2xl font-bold">Customer Value Depth</h2>
 
               <p className="mt-1 text-[#6b705c]">
@@ -1614,7 +1614,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
               </div>
             </article>
 
-            <article className="rounded-3xl bg-white p-8 shadow">
+            <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
               <h2 className="text-2xl font-bold">Jobs by Service Type</h2>
 
               <p className="mt-1 text-[#6b705c]">
@@ -1697,7 +1697,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
           </section>
 
           <section className="mt-8 grid gap-6 xl:grid-cols-2">
-            <article className="rounded-3xl bg-white p-8 shadow">
+            <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <h2 className="text-2xl font-bold">Top Customers</h2>
@@ -1754,7 +1754,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
               </div>
             </article>
 
-            <article className="rounded-3xl bg-white p-8 shadow">
+            <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
               <div>
                 <h2 className="text-2xl font-bold">
                   Largest Outstanding Invoices
@@ -1829,9 +1829,9 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
         : "Financial metrics could not be loaded.";
 
     return (
-      <main className="min-h-screen bg-[#f5f4ef] px-6 py-8 text-[#174734]">
+      <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
         <div className="mx-auto max-w-7xl">
-          <section className="rounded-3xl bg-white p-8 shadow">
+          <section className="rounded-3xl bg-white p-5 shadow sm:p-8">
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
               Valley Turf Revival OS
             </p>

@@ -165,7 +165,7 @@ export default async function AnalyticsPage({
   );
 
   return (
-    <main className="min-h-screen bg-[#F7F6F2] p-8 text-[#1F2937]">
+    <main className="min-h-screen bg-[#F7F6F2] p-4 text-[#1F2937] sm:p-8">
       <div className="mx-auto max-w-6xl">
         <Link
           href="/dashboard"
@@ -178,7 +178,7 @@ export default async function AnalyticsPage({
           <p className="text-sm font-semibold uppercase tracking-widest text-[#F2C94C]">
             Valley Turf Revival
           </p>
-          <h1 className="mt-2 text-4xl font-bold">Analytics</h1>
+          <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Analytics</h1>
           <p className="mt-3 max-w-2xl text-green-50">
             Scan trends, campaign performance, and audience insights.
           </p>
