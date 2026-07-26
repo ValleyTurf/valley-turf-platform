@@ -25,7 +25,7 @@ describe("buildZip", () => {
       { name: "c.csv", data: Buffer.from("three", "utf8") },
     ]);
 
-    expect(zip.readUInt16LE(zip.length - 10)).toBe(3);
+    expect(zip.readUInt16LE(zip.length - 12)).toBe(3);
   });
 
   it("stores each entry's filename and raw (uncompressed) bytes so file sizes match", () => {

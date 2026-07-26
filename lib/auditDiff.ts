@@ -77,11 +77,18 @@ export function diffRecords(
       continue;
     }
 
-    const beforeValue = sanitizeValue(key, beforeObj[key]);
-    const afterValue = sanitizeValue(key, afterObj[key]);
+    // Compare the RAW values first — sanitizing before comparing would
+    // collapse a real change on a redacted field (e.g. an actual password
+    // reset) down to "[redacted]" === "[redacted]" and hide it entirely.
+    // Only the values actually stored in the result get sanitized.
+    const rawBefore = beforeObj[key] ?? null;
+    const rawAfter = afterObj[key] ?? null;
 
-    if (JSON.stringify(beforeValue) !== JSON.stringify(afterValue)) {
-      changes[key] = { before: beforeValue, after: afterValue };
+    if (JSON.stringify(rawBefore) !== JSON.stringify(rawAfter)) {
+      changes[key] = {
+        before: sanitizeValue(key, rawBefore),
+        after: sanitizeValue(key, rawAfter),
+      };
     }
   }
 
