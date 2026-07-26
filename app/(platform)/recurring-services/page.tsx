@@ -191,14 +191,18 @@ function CategoryBox({
       </p>
 
       {customers.length > 0 && (
-        <div className="mt-4 max-h-72 space-y-1 overflow-y-auto border-t border-[#eee9dc] pt-3">
+        <div
+          className={`mt-4 border-t border-[#eee9dc] pt-3 ${
+            size === "large" ? "columns-2 xl:columns-3" : "columns-1 sm:columns-2"
+          } gap-x-6`}
+        >
           {customers.map((customer) => (
             <Link
               key={customer.jobber_client_id}
               href={`/customers/${encodeURIComponent(
                 customer.jobber_client_id
               )}`}
-              className="block text-sm font-semibold text-[#9c7a20] hover:underline"
+              className="mb-1.5 block break-inside-avoid text-sm font-semibold text-[#9c7a20] hover:underline"
             >
               {customer.customer_name}
             </Link>
