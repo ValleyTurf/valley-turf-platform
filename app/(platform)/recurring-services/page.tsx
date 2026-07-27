@@ -147,7 +147,21 @@ function uniqueCustomersFor(
 ): CustomerEntry[] {
   const byId = new Map<
     string,
-    { customer_name: string; visitCount: number; amountTotal: number; hasAnyKnownPrice: boolean }
+    {
+      customer_name: string;
+      visitCount: number;
+      amountTotal: number;
+      hasAnyKnownPrice: boolean;
+      // A recurring Jobber Job carries ONE total, even though it can
+      // generate many Visits (e.g. a customer serviced twice a month
+      // under a single $200/mo job). Previously this summed the job's
+      // total once per visit, so a flat-rate customer with 2 visits
+      // from the same job showed $400 instead of $200. Track which
+      // job ids have already been counted per customer so each job's
+      // total is added exactly once, no matter how many of its visits
+      // fall in the window — visitCount still reflects every visit.
+      countedJobIds: Set<string>;
+    }
   >();
 
   for (const visit of visits) {
@@ -155,25 +169,32 @@ function uniqueCustomersFor(
       continue;
     }
 
-    const price = visit.jobber_job_id
-      ? jobTotalByJobId.get(visit.jobber_job_id)
-      : undefined;
+    const jobId = visit.jobber_job_id;
+    const price = jobId ? jobTotalByJobId.get(jobId) : undefined;
 
-    const existing = byId.get(visit.jobber_client_id);
+    let existing = byId.get(visit.jobber_client_id);
 
-    if (existing) {
-      existing.visitCount += 1;
-      if (typeof price === "number") {
-        existing.amountTotal += price;
-        existing.hasAnyKnownPrice = true;
-      }
-    } else {
-      byId.set(visit.jobber_client_id, {
+    if (!existing) {
+      existing = {
         customer_name: visit.customer_name || "Unnamed Customer",
-        visitCount: 1,
-        amountTotal: typeof price === "number" ? price : 0,
-        hasAnyKnownPrice: typeof price === "number",
-      });
+        visitCount: 0,
+        amountTotal: 0,
+        hasAnyKnownPrice: false,
+        countedJobIds: new Set<string>(),
+      };
+      byId.set(visit.jobber_client_id, existing);
+    }
+
+    existing.visitCount += 1;
+
+    if (
+      typeof price === "number" &&
+      jobId &&
+      !existing.countedJobIds.has(jobId)
+    ) {
+      existing.countedJobIds.add(jobId);
+      existing.amountTotal += price;
+      existing.hasAnyKnownPrice = true;
     }
   }
 
