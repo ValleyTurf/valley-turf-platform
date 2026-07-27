@@ -12,6 +12,7 @@ import {
   canEditQuote,
   type QuoteStatus,
 } from "@/lib/quotes";
+import { attemptQuoteJobConversion } from "@/lib/quoteJobConversion";
 import type { ActionState } from "./actionState";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
@@ -201,6 +202,43 @@ export async function markQuoteStatus(
     after: { status: nextStatus },
   });
 
+  if (nextStatus === "accepted") {
+    // Never blocks/fails this status change — see the top of
+    // lib/quoteJobConversion.ts.
+    await attemptQuoteJobConversion(id);
+  }
+
   revalidatePath("/quotes");
+  revalidatePath(`/quotes/${id}`);
+}
+
+// Manually re-attempts creating the Jobber job for an already-accepted
+// quote — for when the automatic attempt (in markQuoteStatus/acceptQuote)
+// failed, e.g. the Jobber connection was down or hadn't been granted
+// write access yet. Safe to click repeatedly: attemptQuoteJobConversion
+// is a no-op once jobber_job_id is set.
+export async function retryQuoteJobConversion(id: string): Promise<void> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    throw new Error("You must be signed in to retry job creation.");
+  }
+
+  const { data: existing } = await supabaseServer
+    .from("quotes")
+    .select("id, status")
+    .eq("id", id)
+    .single();
+
+  if (!existing) {
+    throw new Error("Quote not found.");
+  }
+
+  if (existing.status !== "accepted") {
+    throw new Error("Only accepted quotes can create a Jobber job.");
+  }
+
+  await attemptQuoteJobConversion(id);
+
   revalidatePath(`/quotes/${id}`);
 }

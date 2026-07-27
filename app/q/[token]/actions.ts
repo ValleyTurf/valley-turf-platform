@@ -15,6 +15,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
 import { recordAuditLog } from "@/lib/auditLog";
 import { computeDisplayStatus, isQuoteStatus } from "@/lib/quotes";
+import { attemptQuoteJobConversion } from "@/lib/quoteJobConversion";
 
 async function respond(
   token: string,
@@ -61,6 +62,13 @@ async function respond(
     after: { status: decision },
     note: "Responded via public quote link",
   });
+
+  if (decision === "accepted") {
+    // Never blocks/fails the customer's acceptance — see the top of
+    // lib/quoteJobConversion.ts for why this is safe to just await and
+    // move on regardless of outcome.
+    await attemptQuoteJobConversion(quote.id);
+  }
 
   revalidatePath("/quotes");
   revalidatePath(`/quotes/${quote.id}`);

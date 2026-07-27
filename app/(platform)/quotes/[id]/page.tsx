@@ -15,7 +15,11 @@ import {
   isQuoteStatus,
   type QuoteStatus,
 } from "@/lib/quotes";
-import { markQuoteStatus, deleteDraftQuote } from "../actions";
+import {
+  markQuoteStatus,
+  deleteDraftQuote,
+  retryQuoteJobConversion,
+} from "../actions";
 
 type QuoteDetail = {
   id: string;
@@ -37,6 +41,10 @@ type QuoteDetail = {
   public_token: string;
   created_by_name: string | null;
   created_at: string;
+  jobber_job_id: string | null;
+  jobber_job_number: string | null;
+  job_creation_error: string | null;
+  job_creation_attempted_at: string | null;
 };
 
 const STATUS_BADGE_CLASSES: Record<QuoteStatus, string> = {
@@ -65,7 +73,7 @@ export default async function QuoteDetailPage({
   const { data, error } = await supabaseServer
     .from("quotes")
     .select(
-      "id, quote_number, customer_id, lead_id, recipient_name, recipient_email, recipient_phone, recipient_address, service_category, description, price_total, status, expires_at, viewed_at, responded_at, response_note, public_token, created_by_name, created_at"
+      "id, quote_number, customer_id, lead_id, recipient_name, recipient_email, recipient_phone, recipient_address, service_category, description, price_total, status, expires_at, viewed_at, responded_at, response_note, public_token, created_by_name, created_at, jobber_job_id, jobber_job_number, job_creation_error, job_creation_attempted_at"
     )
     .eq("id", id)
     .single();
@@ -188,6 +196,48 @@ export default async function QuoteDetailPage({
             />
           </div>
         </section>
+
+        {quote.status === "accepted" && (
+          <section className="mt-6 rounded-2xl bg-white p-5 shadow">
+            <p className="text-xs font-bold text-[#9c7a20]">Jobber Job</p>
+
+            {quote.jobber_job_id ? (
+              <div className="mt-2 rounded-xl bg-green-50 p-4 text-sm text-green-800">
+                <p className="font-bold">
+                  Job {quote.jobber_job_number ? `#${quote.jobber_job_number}` : ""}{" "}
+                  created in Jobber
+                </p>
+                {quote.job_creation_attempted_at && (
+                  <p className="mt-1 text-green-700">
+                    {formatDateOnly(quote.job_creation_attempted_at)}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="mt-2 rounded-xl bg-amber-50 p-4 text-sm text-amber-800">
+                <p className="font-bold">
+                  {quote.job_creation_error
+                    ? "Job creation failed"
+                    : "Job hasn't been created in Jobber yet"}
+                </p>
+                {quote.job_creation_error && (
+                  <p className="mt-1 text-amber-700">{quote.job_creation_error}</p>
+                )}
+                <form
+                  action={retryQuoteJobConversion.bind(null, quote.id)}
+                  className="mt-3"
+                >
+                  <button
+                    type="submit"
+                    className="rounded-lg bg-[#174734] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#226246]"
+                  >
+                    {quote.job_creation_error ? "Retry" : "Create Job in Jobber"}
+                  </button>
+                </form>
+              </div>
+            )}
+          </section>
+        )}
 
         {(transitions.length > 0 || canEditQuote(quote.status)) && (
           <section className="mt-6 rounded-2xl bg-white p-5 shadow">
