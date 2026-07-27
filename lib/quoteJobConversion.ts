@@ -11,14 +11,29 @@
 // - Idempotent. If quotes.jobber_job_id is already set, this is a no-op,
 //   so accepting twice (double-click, retry after a partial failure)
 //   can't create two jobs.
-// - Minimal Jobber payloads. jobCreate technically supports far more
-//   (property, line items, scheduling) but this app has no reliable way
-//   to verify those exact input field names without live access to
-//   Jobber's GraphiQL schema explorer, and a single wrong field name
-//   fails the whole mutation. v1 only sends what Jobber's own docs
-//   confirm: clientId + title for the job, firstName/lastName/emails/
-//   phones for a new client. Property/pricing still get filled in
-//   manually in Jobber after creation.
+//
+// jobCreate's real requirements (confirmed via live introspection against
+// Jobber's own schema, not docs — see app/api/jobber/job-create-schema-check):
+// JobCreateAttributes needs a propertyId (NOT a clientId — jobs attach to
+// a property) and an invoicing object with two required enums. So this
+// module always resolves a propertyId before calling jobCreate:
+//   - Existing customer (quote.customer_id already a real Jobber client
+//     id): fetch their first existing property via client.clientProperties.
+//   - New client (lead-based quote, no Jobber client yet): create the
+//     client and, in the same clientCreate call, an initial property.
+//     quotes.recipient_address is only ever a flat string (see
+//     013_add_quotes.sql), so it goes into the property's street1 line
+//     as-is — there's no reliable way to split it into
+//     street1/city/province/postalCode here. Staff can clean up the
+//     individual address fields in Jobber afterward, same as pricing and
+//     scheduling already get filled in manually post-creation.
+//   - If neither resolves a property, job creation is skipped and
+//     recorded as a retryable error asking staff to add a property in
+//     Jobber first — never guessed at.
+// invoicing is set to { invoicingType: FIXED_PRICE, invoicingSchedule:
+// NEVER } so Jobber doesn't auto-generate an invoice off incomplete data;
+// staff creates the real invoice in Jobber once pricing/scheduling are
+// filled in, matching how this app already treats those fields.
 //
 // NOTE: this app's Jobber connection is currently configured read-only.
 // None of this will actually succeed until write access is enabled for
@@ -36,6 +51,7 @@ type QuoteForConversion = {
   recipient_name: string;
   recipient_email: string | null;
   recipient_phone: string | null;
+  recipient_address: string | null;
   service_category: string | null;
   jobber_job_id: string | null;
 };
@@ -49,6 +65,11 @@ const CLIENT_CREATE_MUTATION = `
     clientCreate(input: $input) {
       client {
         id
+        clientProperties(first: 1) {
+          nodes {
+            id
+          }
+        }
       }
       userErrors {
         message
@@ -57,15 +78,13 @@ const CLIENT_CREATE_MUTATION = `
   }
 `;
 
-// Two live attempts against Jobber's real schema each corrected one half
-// of this: the argument name is "input" (Jobber said so directly:
-// "Field 'jobCreate' is missing required arguments: input"), but its
-// type is the older "JobCreateAttributes" (Jobber's job-related mutations
-// predate their client-related ones and kept the pre-"*Input" naming
-// convention — confirmed via Jobber's public API changelog, which
-// references JobCreateAttributes/JobEditLineItemAttributes/etc.;
-// clientCreate below is a newer mutation and genuinely does use
-// ClientCreateInput). So: argument "input", type "JobCreateAttributes".
+// Argument name "input", type "JobCreateAttributes" — confirmed via two
+// live errors against Jobber's real schema (argument name from "Field
+// 'jobCreate' is missing required arguments: input"; type name from
+// Jobber's job mutations predating their client ones and keeping the
+// older "*Attributes" naming convention). propertyId + invoicing are
+// JobCreateAttributes' only two required fields, confirmed via
+// introspection (see app/api/jobber/job-create-schema-check).
 const JOB_CREATE_MUTATION = `
   mutation CreateJobFromQuote($input: JobCreateAttributes!) {
     jobCreate(input: $input) {
@@ -75,6 +94,21 @@ const JOB_CREATE_MUTATION = `
       }
       userErrors {
         message
+      }
+    }
+  }
+`;
+
+// Existing customers already have a real Jobber client id in
+// quotes.customer_id — this finds their first property so the job has
+// something to attach to without creating a duplicate property.
+const CLIENT_PROPERTY_QUERY = `
+  query GetClientProperty($id: EncodedId!) {
+    client(id: $id) {
+      clientProperties(first: 1) {
+        nodes {
+          id
+        }
       }
     }
   }
@@ -99,7 +133,7 @@ function splitName(fullName: string): {
 
 async function createJobberClientForQuote(
   quote: QuoteForConversion
-): Promise<MutationOutcome<string>> {
+): Promise<MutationOutcome<{ clientId: string; propertyId: string | null }>> {
   const { firstName, lastName } = splitName(quote.recipient_name || "Customer");
 
   const input: Record<string, unknown> = {
@@ -119,9 +153,23 @@ async function createJobberClientForQuote(
     ];
   }
 
+  // See the module comment: quotes.recipient_address is a flat string, so
+  // it goes into street1 as-is rather than being split into structured
+  // fields we don't have. PropertyAttributes.address is required, so we
+  // only attempt this when there's actually an address to send —
+  // otherwise leave properties unset and let the "no property" retry path
+  // below tell staff to add one in Jobber.
+  const trimmedAddress = quote.recipient_address?.trim();
+  if (trimmedAddress) {
+    input.properties = [{ address: { street1: trimmedAddress } }];
+  }
+
   const { data, errors } = await jobberGraphQL<{
     clientCreate: {
-      client: { id: string } | null;
+      client: {
+        id: string;
+        clientProperties: { nodes: { id: string }[] } | null;
+      } | null;
       userErrors: { message: string }[];
     };
   }>(CLIENT_CREATE_MUTATION, { input });
@@ -140,12 +188,34 @@ async function createJobberClientForQuote(
     return { ok: false, error: "Jobber did not return a client id." };
   }
 
-  return { ok: true, value: clientId };
+  const propertyId =
+    data?.clientCreate?.client?.clientProperties?.nodes?.[0]?.id ?? null;
+
+  return { ok: true, value: { clientId, propertyId } };
+}
+
+async function fetchExistingPropertyId(
+  clientId: string
+): Promise<string | null> {
+  try {
+    const { data, errors } = await jobberGraphQL<{
+      client: {
+        clientProperties: { nodes: { id: string }[] } | null;
+      } | null;
+    }>(CLIENT_PROPERTY_QUERY, { id: clientId });
+
+    if (errors?.length) return null;
+
+    return data?.client?.clientProperties?.nodes?.[0]?.id ?? null;
+  } catch (error) {
+    console.error("fetchExistingPropertyId failed:", error);
+    return null;
+  }
 }
 
 async function createJobberJobForQuote(
   quote: QuoteForConversion,
-  clientId: string
+  propertyId: string
 ): Promise<MutationOutcome<{ jobId: string; jobNumber: string | null }>> {
   // Matches the "{Customer} - {Service}" title convention the whole
   // schedule page's service-coloring logic already expects (see
@@ -155,8 +225,12 @@ async function createJobberJobForQuote(
   const title = `${quote.recipient_name} - ${quote.service_category || "Service"}`;
 
   const input: Record<string, unknown> = {
-    clientId,
+    propertyId,
     title,
+    invoicing: {
+      invoicingType: "FIXED_PRICE",
+      invoicingSchedule: "NEVER",
+    },
   };
 
   const { data, errors } = await jobberGraphQL<{
@@ -209,7 +283,7 @@ export async function attemptQuoteJobConversion(
     const { data: quote, error } = await supabaseServer
       .from("quotes")
       .select(
-        "id, customer_id, lead_id, recipient_name, recipient_email, recipient_phone, service_category, jobber_job_id"
+        "id, customer_id, lead_id, recipient_name, recipient_email, recipient_phone, recipient_address, service_category, jobber_job_id"
       )
       .eq("id", quoteId)
       .single();
@@ -230,6 +304,7 @@ export async function attemptQuoteJobConversion(
 
     const typedQuote = quote as QuoteForConversion;
     let clientId = typedQuote.customer_id;
+    let propertyId: string | null = null;
 
     if (!clientId && typedQuote.lead_id) {
       const clientResult = await createJobberClientForQuote(typedQuote);
@@ -242,7 +317,8 @@ export async function attemptQuoteJobConversion(
         return;
       }
 
-      clientId = clientResult.value;
+      clientId = clientResult.value.clientId;
+      propertyId = clientResult.value.propertyId;
 
       await supabaseServer
         .from("quotes")
@@ -263,7 +339,19 @@ export async function attemptQuoteJobConversion(
       return;
     }
 
-    const jobResult = await createJobberJobForQuote(typedQuote, clientId);
+    if (!propertyId) {
+      propertyId = await fetchExistingPropertyId(clientId);
+    }
+
+    if (!propertyId) {
+      await recordConversionFailure(
+        quoteId,
+        "Couldn't find a Jobber property for this customer. Add a property to their Jobber client record, then retry."
+      );
+      return;
+    }
+
+    const jobResult = await createJobberJobForQuote(typedQuote, propertyId);
 
     if (!jobResult.ok) {
       await recordConversionFailure(quoteId, jobResult.error);
