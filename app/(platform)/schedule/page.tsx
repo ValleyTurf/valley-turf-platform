@@ -200,6 +200,53 @@ function statusDotClass(status: string | null): string {
   return "bg-gray-400";
 }
 
+// Visit "type" isn't its own field — it's whatever free-text title was set
+// on the visit in Jobber ("Initial Full Cleaning", "Full Cleaning
+// Returning", "Full - Monthly", "Maintenance - Monthly", etc). Rather than
+// hardcoding that list (and silently falling back to gray the moment
+// someone adds a new service name in Jobber), colors are assigned by
+// hashing the title text into a fixed palette — every full class string
+// below is written out literally so Tailwind's build-time scanner picks it
+// up, since dynamically-built class names (e.g. `bg-${color}-100`) would
+// get purged from the production CSS.
+const VISIT_TYPE_PALETTE = [
+  "bg-green-100 text-green-800 border border-green-300",
+  "bg-blue-100 text-blue-800 border border-blue-300",
+  "bg-purple-100 text-purple-800 border border-purple-300",
+  "bg-orange-100 text-orange-800 border border-orange-300",
+  "bg-pink-100 text-pink-800 border border-pink-300",
+  "bg-teal-100 text-teal-800 border border-teal-300",
+  "bg-amber-100 text-amber-800 border border-amber-300",
+  "bg-rose-100 text-rose-800 border border-rose-300",
+  "bg-indigo-100 text-indigo-800 border border-indigo-300",
+  "bg-lime-100 text-lime-800 border border-lime-300",
+  "bg-cyan-100 text-cyan-800 border border-cyan-300",
+  "bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-300",
+  "bg-sky-100 text-sky-800 border border-sky-300",
+  "bg-emerald-100 text-emerald-800 border border-emerald-300",
+];
+
+function visitTypeLabel(title: string | null): string {
+  const trimmed = (title ?? "").trim();
+  return trimmed || "Other";
+}
+
+function hashString(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function visitTypeChipClassForLabel(label: string): string {
+  return VISIT_TYPE_PALETTE[hashString(label) % VISIT_TYPE_PALETTE.length];
+}
+
+function visitTypeChipClass(title: string | null): string {
+  return visitTypeChipClassForLabel(visitTypeLabel(title));
+}
+
 function addDays(date: Date, days: number): Date {
   const result = new Date(date);
   result.setUTCDate(result.getUTCDate() + days);
@@ -321,6 +368,13 @@ export default async function SchedulePage({
       visitsByDate.set(key, [visit]);
     }
   }
+
+  // Every distinct visit type showing on the grid right now, for the
+  // month-view legend — alphabetical so the legend order is stable
+  // regardless of which day each type first appears on.
+  const visitTypes = Array.from(
+    new Set(visits.map((v) => visitTypeLabel(v.title)))
+  ).sort((a, b) => a.localeCompare(b));
 
   // Stats reflect exactly what's on screen: the single day for day view,
   // the 7 fetched days for week view, and only the in-month days for month
@@ -627,70 +681,88 @@ export default async function SchedulePage({
             )}
           </section>
         ) : (
-          <section className="mt-6 overflow-hidden rounded-2xl bg-white shadow">
-            <div className="grid grid-cols-7 border-b border-[#eee9dc] bg-[#f7f6f1]">
-              {gridDates.slice(0, 7).map((day) => (
-                <div
-                  key={formatShortWeekday(day)}
-                  className="p-2 text-center text-xs font-bold uppercase tracking-wide text-[#9c7a20]"
-                >
-                  {formatShortWeekday(day)}
-                </div>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-7">
-              {gridDates.map((day) => {
-                const cellDateStr = formatDateInput(day);
-                const dayVisits = visitsByDate.get(cellDateStr) ?? [];
-                const inMonth = day.getUTCMonth() === monthStartDate.getUTCMonth();
-                const isToday = cellDateStr === todayStr;
-                const anyLate = dayVisits.some(
-                  (v) => (v.visit_status ?? "").toUpperCase() === "LATE"
-                );
-                const allCompleted =
-                  dayVisits.length > 0 &&
-                  dayVisits.every(
-                    (v) => (v.visit_status ?? "").toUpperCase() === "COMPLETED"
-                  );
-                const badgeClasses = anyLate
-                  ? "bg-red-100 text-red-800"
-                  : allCompleted
-                    ? "bg-green-100 text-green-800"
-                    : "bg-blue-100 text-blue-800";
-
-                return (
-                  <Link
-                    key={cellDateStr}
-                    href={scheduleUrl("day", cellDateStr)}
-                    className={`min-h-[72px] border-b border-r border-[#eee9dc] p-2 transition hover:bg-[#f7f6f1] ${
-                      inMonth ? "bg-white" : "bg-[#faf9f5]"
-                    }`}
+          <>
+            {visitTypes.length > 0 && (
+              <section className="mt-6 flex flex-wrap gap-2">
+                {visitTypes.map((label) => (
+                  <span
+                    key={label}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${visitTypeChipClassForLabel(
+                      label
+                    )}`}
                   >
-                    <span
-                      className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
-                        isToday
-                          ? "bg-[#d4af37] text-[#174734]"
-                          : inMonth
-                            ? "text-[#174734]"
-                            : "text-[#b5b09f]"
-                      }`}
-                    >
-                      {day.getUTCDate()}
-                    </span>
+                    {label}
+                  </span>
+                ))}
+              </section>
+            )}
 
-                    {dayVisits.length > 0 && (
-                      <span
-                        className={`mt-1 block w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${badgeClasses}`}
+            <section className="mt-3 overflow-hidden rounded-2xl bg-white shadow">
+              <div className="overflow-x-auto">
+                <div className="min-w-[840px]">
+                  <div className="grid grid-cols-7 border-b border-[#eee9dc] bg-[#f7f6f1]">
+                    {gridDates.slice(0, 7).map((day) => (
+                      <div
+                        key={formatShortWeekday(day)}
+                        className="p-2 text-center text-xs font-bold uppercase tracking-wide text-[#9c7a20]"
                       >
-                        {dayVisits.length} visit{dayVisits.length === 1 ? "" : "s"}
-                      </span>
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-          </section>
+                        {formatShortWeekday(day)}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-7">
+                    {gridDates.map((day) => {
+                      const cellDateStr = formatDateInput(day);
+                      const dayVisits = visitsByDate.get(cellDateStr) ?? [];
+                      const inMonth =
+                        day.getUTCMonth() === monthStartDate.getUTCMonth();
+                      const isToday = cellDateStr === todayStr;
+
+                      return (
+                        <Link
+                          key={cellDateStr}
+                          href={scheduleUrl("day", cellDateStr)}
+                          className={`min-h-[92px] border-b border-r border-[#eee9dc] p-2 transition hover:bg-[#f7f6f1] ${
+                            inMonth ? "bg-white" : "bg-[#faf9f5]"
+                          }`}
+                        >
+                          <span
+                            className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
+                              isToday
+                                ? "bg-[#d4af37] text-[#174734]"
+                                : inMonth
+                                  ? "text-[#174734]"
+                                  : "text-[#b5b09f]"
+                            }`}
+                          >
+                            {day.getUTCDate()}
+                          </span>
+
+                          <div className="mt-1 space-y-1">
+                            {dayVisits.map((visit) => (
+                              <div
+                                key={visit.jobber_visit_id}
+                                title={`${visitTypeLabel(visit.title)} — ${
+                                  visit.customer_name || "Unnamed Customer"
+                                }`}
+                                className={`truncate rounded px-1.5 py-0.5 text-[10px] font-semibold leading-tight ${visitTypeChipClass(
+                                  visit.title
+                                )}`}
+                              >
+                                {formatTime(visit.start_at)}{" "}
+                                {visit.customer_name || "Unnamed"}
+                              </div>
+                            ))}
+                          </div>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </section>
+          </>
         )}
       </div>
     </main>
