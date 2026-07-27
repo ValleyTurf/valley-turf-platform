@@ -241,52 +241,92 @@ function visitServiceLabel(title: string | null): string {
   return service || trimmed;
 }
 
-// Each entry pairs a Tailwind chip class (for the DOM) with the matching
-// hex value (for Leaflet map pins, which take real CSS colors, not
-// Tailwind classes — and Tailwind's build-time scanner needs the class
-// names written out literally rather than assembled with template
+// Named colors, each pairing a Tailwind chip class (for the DOM) with the
+// matching hex value (for Leaflet map pins, which take real CSS colors,
+// not Tailwind classes — and Tailwind's build-time scanner needs the
+// class names written out literally rather than assembled with template
 // strings, or they'd get purged from the production CSS).
-const SERVICE_PALETTE: { chip: string; hex: string }[] = [
-  { chip: "bg-green-100 text-green-800 border border-green-300", hex: "#16a34a" },
-  { chip: "bg-blue-100 text-blue-800 border border-blue-300", hex: "#2563eb" },
-  { chip: "bg-purple-100 text-purple-800 border border-purple-300", hex: "#9333ea" },
-  { chip: "bg-orange-100 text-orange-800 border border-orange-300", hex: "#ea580c" },
-  { chip: "bg-pink-100 text-pink-800 border border-pink-300", hex: "#db2777" },
-  { chip: "bg-teal-100 text-teal-800 border border-teal-300", hex: "#0d9488" },
-  { chip: "bg-amber-100 text-amber-800 border border-amber-300", hex: "#d97706" },
-  { chip: "bg-rose-100 text-rose-800 border border-rose-300", hex: "#e11d48" },
-  { chip: "bg-indigo-100 text-indigo-800 border border-indigo-300", hex: "#4f46e5" },
-  { chip: "bg-lime-100 text-lime-800 border border-lime-300", hex: "#65a30d" },
-  { chip: "bg-cyan-100 text-cyan-800 border border-cyan-300", hex: "#0891b2" },
-  { chip: "bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-300", hex: "#c026d3" },
-  { chip: "bg-sky-100 text-sky-800 border border-sky-300", hex: "#0284c7" },
-  { chip: "bg-emerald-100 text-emerald-800 border border-emerald-300", hex: "#059669" },
-  { chip: "bg-yellow-100 text-yellow-800 border border-yellow-300", hex: "#ca8a04" },
-  { chip: "bg-violet-100 text-violet-800 border border-violet-300", hex: "#7c3aed" },
+const NAMED_COLORS = {
+  green: { chip: "bg-green-100 text-green-800 border border-green-300", hex: "#16a34a" },
+  blue: { chip: "bg-blue-100 text-blue-800 border border-blue-300", hex: "#2563eb" },
+  orange: { chip: "bg-orange-100 text-orange-800 border border-orange-300", hex: "#ea580c" },
+  sky: { chip: "bg-sky-100 text-sky-800 border border-sky-300", hex: "#0284c7" },
+  purple: { chip: "bg-purple-100 text-purple-800 border border-purple-300", hex: "#9333ea" },
+  lime: { chip: "bg-lime-100 text-lime-800 border border-lime-300", hex: "#65a30d" },
+  yellow: { chip: "bg-yellow-100 text-yellow-800 border border-yellow-300", hex: "#ca8a04" },
+  pink: { chip: "bg-pink-100 text-pink-800 border border-pink-300", hex: "#db2777" },
+  rose: { chip: "bg-rose-100 text-rose-800 border border-rose-300", hex: "#e11d48" },
+  emerald: { chip: "bg-emerald-100 text-emerald-800 border border-emerald-300", hex: "#059669" },
+} as const;
+
+function normalizeServiceText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[-–—]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Fixed, explicit rules (checked in order — first match wins) rather than
+// an automatic per-view assignment: the business wants a given service to
+// always be the same color everywhere, permanently, not just distinct
+// from whatever else happens to be on screen. Matching is substring-based
+// against the normalized service label (hyphens collapsed to spaces) so
+// small wording differences in the Jobber title ("Bimonthly" vs
+// "Bi-Monthly") still hit the right rule. Anything that matches none of
+// these falls through to emerald.
+const SERVICE_COLOR_RULES: {
+  color: keyof typeof NAMED_COLORS;
+  test: (label: string) => boolean;
+}[] = [
+  {
+    color: "green",
+    test: (l) => l.includes("initial") && l.includes("full") && l.includes("clean"),
+  },
+  {
+    color: "blue",
+    test: (l) => l.includes("full") && l.includes("clean") && l.includes("return"),
+  },
+  {
+    color: "orange",
+    test: (l) => l.includes("bimonthly") || l.includes("bi monthly"),
+  },
+  {
+    color: "rose",
+    test: (l) => l.includes("semi annual") || l.includes("semiannual"),
+  },
+  {
+    color: "sky",
+    test: (l) => l.includes("quarterly"),
+  },
+  {
+    color: "purple",
+    test: (l) => l.includes("maintenance") && l.includes("monthly"),
+  },
+  {
+    color: "lime",
+    test: (l) => l.includes("full") && l.includes("monthly"),
+  },
+  {
+    color: "yellow",
+    test: (l) => l.includes("spray") && l.includes("only"),
+  },
+  {
+    color: "pink",
+    test: (l) => l.includes("weekly"),
+  },
 ];
 
-// Colors are assigned per-request from whatever distinct service labels
-// are actually in the current view (rather than hashing each label
-// independently), so two different services can never land on the same
-// color as long as there are 16 or fewer distinct services on screen at
-// once — hashing each label separately can't guarantee that (birthday-
-// paradox collisions start becoming likely well before 16 items), which
-// is exactly how "Full - Monthly" and "Returning Customer Full" ended up
-// sharing a color before. The tradeoff is that a given service's color
-// isn't necessarily identical across different months — a small cosmetic
-// cost for never showing two different services the same color within one
-// view.
-function assignServiceColors(
-  labels: string[]
-): Map<string, { chip: string; hex: string }> {
-  const unique = Array.from(new Set(labels)).sort((a, b) => a.localeCompare(b));
-  const colors = new Map<string, { chip: string; hex: string }>();
+function classifyService(
+  rawTitle: string | null
+): { label: string; chip: string; hex: string } {
+  const label = visitServiceLabel(rawTitle);
+  const normalized = normalizeServiceText(label);
 
-  unique.forEach((label, index) => {
-    colors.set(label, SERVICE_PALETTE[index % SERVICE_PALETTE.length]);
-  });
+  const rule = SERVICE_COLOR_RULES.find((r) => r.test(normalized));
+  const color = NAMED_COLORS[rule?.color ?? "emerald"];
 
-  return colors;
+  return { label, chip: color.chip, hex: color.hex };
 }
 
 function addDays(date: Date, days: number): Date {
@@ -305,8 +345,7 @@ function scheduleUrl(view: ViewMode, dateStr: string): string {
 
 function buildScheduleVisit(
   visit: VisitRow,
-  contact: CustomerContact | null,
-  serviceColors: Map<string, { chip: string; hex: string }>
+  contact: CustomerContact | null
 ): ScheduleVisit {
   const meta = statusMeta(visit.visit_status);
   const address = contact
@@ -316,8 +355,7 @@ function buildScheduleVisit(
     : null;
 
   const dateKey = phoenixDateKey(visit.start_at);
-  const label = visitServiceLabel(visit.title);
-  const color = serviceColors.get(label) ?? SERVICE_PALETTE[0];
+  const { label, chip, hex } = classifyService(visit.title);
   const timeLabel = formatTime(visit.start_at);
 
   const latitude = contact?.latitude != null ? Number(contact.latitude) : NaN;
@@ -342,8 +380,8 @@ function buildScheduleVisit(
     durationMinutes: toNumber(visit.duration_minutes),
     service: visit.title,
     serviceLabel: label,
-    serviceChipClass: color.chip,
-    serviceColorHex: color.hex,
+    serviceChipClass: chip,
+    serviceColorHex: hex,
     statusLabel: meta.label,
     statusClasses: meta.classes,
     statusDotClass: meta.dot,
@@ -465,15 +503,10 @@ export default async function SchedulePage({
     ])
   );
 
-  const serviceColors = assignServiceColors(
-    visits.map((v) => visitServiceLabel(v.title))
-  );
-
   const enrichedVisits: ScheduleVisit[] = visits.map((visit) =>
     buildScheduleVisit(
       visit,
-      visit.jobber_client_id ? contactMap.get(visit.jobber_client_id) ?? null : null,
-      serviceColors
+      visit.jobber_client_id ? contactMap.get(visit.jobber_client_id) ?? null : null
     )
   );
 
@@ -594,7 +627,7 @@ export default async function SchedulePage({
           </div>
 
           <section className="mt-3 rounded-2xl bg-white p-5 shadow">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="relative flex flex-col items-center gap-3 sm:flex-row">
               <div className="flex items-center gap-2">
                 <Link
                   href={prevHref}
@@ -620,7 +653,7 @@ export default async function SchedulePage({
                 </Link>
               </div>
 
-              <p className="text-lg font-bold">
+              <p className="text-center text-lg font-bold sm:absolute sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2">
                 {heading}
                 {isCurrentPeriod && (
                   <span className="ml-2 text-sm font-normal text-[#9c7a20]">
