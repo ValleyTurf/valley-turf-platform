@@ -3,6 +3,10 @@ export const revalidate = 0;
 
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
+import ScheduleGrids from "./ScheduleGrids";
+import ScheduleMapPanel from "./ScheduleMapPanel";
+import type { SchedulePin } from "./ScheduleMapLeaflet";
+import type { GridDate, ScheduleVisit } from "./types";
 
 type ViewMode = "day" | "week" | "month";
 
@@ -32,6 +36,10 @@ type CustomerContact = {
   address_line_1: string | null;
   city: string | null;
   state: string | null;
+  gate_code: string | null;
+  service_instructions: string | null;
+  latitude: number | string | null;
+  longitude: number | string | null;
 };
 
 function toNumber(value: number | string | null | undefined): number {
@@ -173,43 +181,66 @@ function formatTime(value: string | null): string {
 function statusMeta(status: string | null): {
   label: string;
   classes: string;
+  dot: string;
 } {
   const normalized = (status ?? "").toUpperCase();
 
   if (normalized === "COMPLETED") {
-    return { label: "Completed", classes: "bg-green-100 text-green-800" };
+    return {
+      label: "Completed",
+      classes: "bg-green-100 text-green-800",
+      dot: "bg-green-500",
+    };
   }
 
   if (normalized === "LATE") {
-    return { label: "Late", classes: "bg-red-100 text-red-800" };
+    return {
+      label: "Late",
+      classes: "bg-red-100 text-red-800",
+      dot: "bg-red-500",
+    };
   }
 
   if (normalized === "UPCOMING") {
-    return { label: "Upcoming", classes: "bg-blue-100 text-blue-800" };
+    return {
+      label: "Upcoming",
+      classes: "bg-blue-100 text-blue-800",
+      dot: "bg-blue-500",
+    };
   }
 
-  return { label: status || "Unknown", classes: "bg-gray-100 text-gray-700" };
+  return {
+    label: status || "Unknown",
+    classes: "bg-gray-100 text-gray-700",
+    dot: "bg-gray-400",
+  };
 }
 
-function statusDotClass(status: string | null): string {
-  const normalized = (status ?? "").toUpperCase();
+// Jobber visit titles follow "{Customer} - {Service}" — e.g. "Buttermore -
+// Quarterly Turf Cleaning" or "Hensley - Maintenance - Monthly" (the
+// service part can itself contain further " - " segments). Stripping off
+// just the first " - "-delimited segment recovers the actual service name,
+// so every visit for the same service lands on the same color regardless
+// of whose visit it is — this is what makes Jobber's own calendar color by
+// service rather than by customer. Coloring by the raw, unstripped title
+// (as an earlier version of this page did) put a near-unique string on
+// every visit and produced effectively random-looking colors.
+function visitServiceLabel(title: string | null): string {
+  const trimmed = (title ?? "").trim();
+  if (!trimmed) return "Other";
 
-  if (normalized === "COMPLETED") return "bg-green-500";
-  if (normalized === "LATE") return "bg-red-500";
-  if (normalized === "UPCOMING") return "bg-blue-500";
-  return "bg-gray-400";
+  const separatorIndex = trimmed.indexOf(" - ");
+  if (separatorIndex === -1) return trimmed;
+
+  const service = trimmed.slice(separatorIndex + 3).trim();
+  return service || trimmed;
 }
 
-// Visit "type" isn't its own field — it's whatever free-text title was set
-// on the visit in Jobber ("Initial Full Cleaning", "Full Cleaning
-// Returning", "Full - Monthly", "Maintenance - Monthly", etc). Rather than
-// hardcoding that list (and silently falling back to gray the moment
-// someone adds a new service name in Jobber), colors are assigned by
-// hashing the title text into a fixed palette — every full class string
-// below is written out literally so Tailwind's build-time scanner picks it
-// up, since dynamically-built class names (e.g. `bg-${color}-100`) would
-// get purged from the production CSS.
-const VISIT_TYPE_PALETTE = [
+// Every full class string below is written out literally (rather than
+// built with `bg-${color}-100` template strings) so Tailwind's build-time
+// scanner picks it up — dynamically-assembled class names get purged from
+// the production CSS.
+const SERVICE_PALETTE = [
   "bg-green-100 text-green-800 border border-green-300",
   "bg-blue-100 text-blue-800 border border-blue-300",
   "bg-purple-100 text-purple-800 border border-purple-300",
@@ -226,11 +257,6 @@ const VISIT_TYPE_PALETTE = [
   "bg-emerald-100 text-emerald-800 border border-emerald-300",
 ];
 
-function visitTypeLabel(title: string | null): string {
-  const trimmed = (title ?? "").trim();
-  return trimmed || "Other";
-}
-
 function hashString(value: string): number {
   let hash = 0;
   for (let i = 0; i < value.length; i++) {
@@ -239,12 +265,8 @@ function hashString(value: string): number {
   return Math.abs(hash);
 }
 
-function visitTypeChipClassForLabel(label: string): string {
-  return VISIT_TYPE_PALETTE[hashString(label) % VISIT_TYPE_PALETTE.length];
-}
-
-function visitTypeChipClass(title: string | null): string {
-  return visitTypeChipClassForLabel(visitTypeLabel(title));
+function serviceChipClass(label: string): string {
+  return SERVICE_PALETTE[hashString(label) % SERVICE_PALETTE.length];
 }
 
 function addDays(date: Date, days: number): Date {
@@ -261,6 +283,62 @@ function scheduleUrl(view: ViewMode, dateStr: string): string {
   return `/schedule?view=${view}&date=${dateStr}`;
 }
 
+function buildScheduleVisit(
+  visit: VisitRow,
+  contact: CustomerContact | null
+): ScheduleVisit {
+  const meta = statusMeta(visit.visit_status);
+  const address = contact
+    ? [contact.address_line_1, contact.city, contact.state]
+        .filter(Boolean)
+        .join(", ") || null
+    : null;
+
+  const dateKey = phoenixDateKey(visit.start_at);
+  const label = visitServiceLabel(visit.title);
+
+  const latitude = contact?.latitude != null ? Number(contact.latitude) : NaN;
+  const longitude =
+    contact?.longitude != null ? Number(contact.longitude) : NaN;
+
+  return {
+    id: visit.jobber_visit_id,
+    clientId: visit.jobber_client_id,
+    customerName: visit.customer_name || "Unnamed Customer",
+    address,
+    phone: contact?.phone ?? null,
+    dateStr: dateKey ?? "",
+    dateHeading: dateKey
+      ? formatDateHeading(new Date(`${dateKey}T00:00:00Z`))
+      : "Unscheduled",
+    startTimeLabel: formatTime(visit.start_at),
+    endTimeLabel: visit.end_at ? formatTime(visit.end_at) : null,
+    durationMinutes: toNumber(visit.duration_minutes),
+    service: visit.title,
+    serviceLabel: label,
+    serviceChipClass: serviceChipClass(label),
+    statusLabel: meta.label,
+    statusClasses: meta.classes,
+    statusDotClass: meta.dot,
+    gateCode: contact?.gate_code ?? null,
+    specialInstructions: contact?.service_instructions ?? null,
+    latitude: Number.isFinite(latitude) ? latitude : null,
+    longitude: Number.isFinite(longitude) ? longitude : null,
+  };
+}
+
+function toPins(visits: ScheduleVisit[]): SchedulePin[] {
+  return visits
+    .filter((v) => v.latitude != null && v.longitude != null)
+    .map((v) => ({
+      id: v.id,
+      name: v.customerName,
+      lat: v.latitude as number,
+      lng: v.longitude as number,
+      timeLabel: v.startTimeLabel,
+    }));
+}
+
 export default async function SchedulePage({
   searchParams,
 }: SchedulePageProps) {
@@ -273,9 +351,9 @@ export default async function SchedulePage({
   const todayStr = formatDateInput(today);
 
   // Compute the query window and nav targets for whichever view is active.
-  // All three views share one jobber_visits query — day queries a single
-  // day, week queries 7 days, month queries the full 6-week grid (including
-  // the leading/trailing days from adjacent months that fill it out).
+  // Month view queries only the actual month's days — not a padded 6-week
+  // grid — so visits from the tail end of the previous month or the start
+  // of the next never show up on a page showing "this month."
   let queryStartDate: Date;
   let queryEndDate: Date;
   let prevHref: string;
@@ -289,9 +367,11 @@ export default async function SchedulePage({
   const monthStartDate = new Date(
     Date.UTC(selectedDate.getUTCFullYear(), selectedDate.getUTCMonth(), 1)
   );
+  const monthEndDate = new Date(
+    Date.UTC(selectedDate.getUTCFullYear(), selectedDate.getUTCMonth() + 1, 0)
+  );
   const gridStartDate = addDays(monthStartDate, -monthStartDate.getUTCDay());
   const gridDates = Array.from({ length: 42 }, (_, i) => addDays(gridStartDate, i));
-  const gridEndDate = gridDates[41];
 
   if (view === "week") {
     queryStartDate = weekStartDate;
@@ -302,8 +382,8 @@ export default async function SchedulePage({
     heading = formatRangeHeading(weekStartDate, weekEndDate);
     isCurrentPeriod = today >= weekStartDate && today <= weekEndDate;
   } else if (view === "month") {
-    queryStartDate = gridStartDate;
-    queryEndDate = gridEndDate;
+    queryStartDate = monthStartDate;
+    queryEndDate = monthEndDate;
     prevHref = scheduleUrl("month", formatDateInput(addMonths(monthStartDate, -1)));
     nextHref = scheduleUrl("month", formatDateInput(addMonths(monthStartDate, 1)));
     todayHref = scheduleUrl("month", todayStr);
@@ -343,7 +423,9 @@ export default async function SchedulePage({
     clientIds.length > 0
       ? await supabaseServer
           .from("customers")
-          .select("jobber_client_id, phone, address_line_1, city, state")
+          .select(
+            "jobber_client_id, phone, address_line_1, city, state, gate_code, service_instructions, latitude, longitude"
+          )
           .in("jobber_client_id", clientIds)
       : { data: [] as CustomerContact[] };
 
@@ -354,44 +436,31 @@ export default async function SchedulePage({
     ])
   );
 
+  const enrichedVisits: ScheduleVisit[] = visits.map((visit) =>
+    buildScheduleVisit(
+      visit,
+      visit.jobber_client_id ? contactMap.get(visit.jobber_client_id) ?? null : null
+    )
+  );
+
   // Group every fetched visit by its Phoenix-local calendar day, for the
-  // week/month grids. Visits with no start_at never match the range filter
-  // above, so every row here always has one.
-  const visitsByDate = new Map<string, VisitRow[]>();
-  for (const visit of visits) {
-    const key = phoenixDateKey(visit.start_at);
-    if (!key) continue;
-    const existing = visitsByDate.get(key);
-    if (existing) {
-      existing.push(visit);
-    } else {
-      visitsByDate.set(key, [visit]);
-    }
+  // week/month grids.
+  const visitsByDate: Record<string, ScheduleVisit[]> = {};
+  for (const visit of enrichedVisits) {
+    if (!visit.dateStr) continue;
+    (visitsByDate[visit.dateStr] ??= []).push(visit);
   }
 
-  // Stats reflect exactly what's on screen: the single day for day view,
-  // the 7 fetched days for week view, and only the in-month days for month
-  // view (excluding the leading/trailing days from adjacent months that
-  // fill out the grid).
-  const statsVisits =
-    view === "month"
-      ? gridDates
-          .filter((d) => d.getUTCMonth() === monthStartDate.getUTCMonth())
-          .flatMap((d) => visitsByDate.get(formatDateInput(d)) ?? [])
-      : visits;
-
-  const completedCount = statsVisits.filter(
-    (v) => (v.visit_status ?? "").toUpperCase() === "COMPLETED"
+  const completedCount = enrichedVisits.filter(
+    (v) => v.statusLabel === "Completed"
   ).length;
-  const lateCount = statsVisits.filter(
-    (v) => (v.visit_status ?? "").toUpperCase() === "LATE"
-  ).length;
-  const upcomingCount = statsVisits.filter(
-    (v) => (v.visit_status ?? "").toUpperCase() === "UPCOMING"
+  const lateCount = enrichedVisits.filter((v) => v.statusLabel === "Late").length;
+  const upcomingCount = enrichedVisits.filter(
+    (v) => v.statusLabel === "Upcoming"
   ).length;
 
-  const totalMinutes = statsVisits.reduce(
-    (sum, v) => sum + toNumber(v.duration_minutes),
+  const totalMinutes = enrichedVisits.reduce(
+    (sum, v) => sum + v.durationMinutes,
     0
   );
   const totalHours = (totalMinutes / 60).toFixed(1);
@@ -407,339 +476,263 @@ export default async function SchedulePage({
     month: "This Month",
   };
 
+  const mapTitle =
+    view === "day"
+      ? `Stops for ${heading}`
+      : view === "week"
+        ? `Stops for ${heading}`
+        : `Stops in ${heading}`;
+
+  const pins = toPins(enrichedVisits);
+
+  // GridDate arrays for the week/month client component. Built here (not
+  // in the client) so all the Intl/date-math stays server-side and the
+  // client component only ever renders data it's handed.
+  const weekDates: GridDate[] = Array.from({ length: 7 }, (_, i) => {
+    const day = addDays(weekStartDate, i);
+    const cellDateStr = formatDateInput(day);
+    return {
+      dateStr: cellDateStr,
+      dayNumber: day.getUTCDate(),
+      weekdayShort: formatShortWeekday(day),
+      inMonth: true,
+      isToday: cellDateStr === todayStr,
+      dayHref: scheduleUrl("day", cellDateStr),
+    };
+  });
+
+  const monthDates: GridDate[] = gridDates.map((day) => {
+    const cellDateStr = formatDateInput(day);
+    return {
+      dateStr: cellDateStr,
+      dayNumber: day.getUTCDate(),
+      weekdayShort: formatShortWeekday(day),
+      inMonth: day.getUTCMonth() === monthStartDate.getUTCMonth(),
+      isToday: cellDateStr === todayStr,
+      dayHref: scheduleUrl("day", cellDateStr),
+    };
+  });
+
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
-      <div className={`mx-auto ${containerMaxWidth}`}>
-        <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
-              Valley Turf Revival OS
-            </p>
+      <div className="mx-auto flex max-w-[1600px] items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className={`mx-auto ${containerMaxWidth}`}>
+            <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
+                  Valley Turf Revival OS
+                </p>
 
-            <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Schedule</h1>
+                <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Schedule</h1>
 
-            <p className="mt-2 max-w-2xl text-[#6b705c]">
-              Real visit data synced from Jobber — who&apos;s scheduled where,
-              and when.
-            </p>
-          </div>
+                <p className="mt-2 max-w-2xl text-[#6b705c]">
+                  Real visit data synced from Jobber — who&apos;s scheduled where,
+                  and when.
+                </p>
+              </div>
 
-          <Link
-            href="/job-costs"
-            className="w-full rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246] lg:w-auto"
-          >
-            Log Job Costs
-          </Link>
-        </header>
-
-        <div className="mt-5 flex flex-wrap gap-2">
-          {(["day", "week", "month"] as ViewMode[]).map((mode) => (
-            <Link
-              key={mode}
-              href={scheduleUrl(mode, dateStr)}
-              className={`rounded-xl px-4 py-2 text-sm font-bold capitalize transition ${
-                view === mode
-                  ? "bg-[#174734] text-white"
-                  : "border border-[#d8d3c6] bg-white text-[#6b705c] hover:border-[#d4af37]"
-              }`}
-            >
-              {mode}
-            </Link>
-          ))}
-        </div>
-
-        <section className="mt-3 rounded-2xl bg-white p-5 shadow">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
               <Link
-                href={prevHref}
-                className="rounded-xl border border-[#d9d4c6] px-4 py-2 text-sm font-bold transition hover:bg-[#f7f6f1]"
+                href="/job-costs"
+                className="w-full rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246] lg:w-auto"
               >
-                ← Prev
+                Log Job Costs
               </Link>
+            </header>
 
-              {!isCurrentPeriod && (
+            <div className="mt-5 flex flex-wrap gap-2">
+              {(["day", "week", "month"] as ViewMode[]).map((mode) => (
                 <Link
-                  href={todayHref}
-                  className="rounded-xl bg-[#d4af37] px-4 py-2 text-sm font-bold text-[#174734] transition hover:bg-[#e6c766]"
+                  key={mode}
+                  href={scheduleUrl(mode, dateStr)}
+                  className={`rounded-xl px-4 py-2 text-sm font-bold capitalize transition ${
+                    view === mode
+                      ? "bg-[#174734] text-white"
+                      : "border border-[#d8d3c6] bg-white text-[#6b705c] hover:border-[#d4af37]"
+                  }`}
                 >
-                  {viewLabel[view]}
+                  {mode}
                 </Link>
-              )}
-
-              <Link
-                href={nextHref}
-                className="rounded-xl border border-[#d9d4c6] px-4 py-2 text-sm font-bold transition hover:bg-[#f7f6f1]"
-              >
-                Next →
-              </Link>
+              ))}
             </div>
 
-            <p className="text-lg font-bold">
-              {heading}
-              {isCurrentPeriod && (
-                <span className="ml-2 text-sm font-normal text-[#9c7a20]">
-                  ({viewLabel[view]})
-                </span>
-              )}
-            </p>
-          </div>
-        </section>
-
-        <section className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <div className="rounded-2xl bg-white p-4 text-center shadow">
-            <p className="text-2xl font-bold">{statsVisits.length}</p>
-            <p className="text-xs text-[#6b705c]">Total Visits</p>
-          </div>
-
-          <div className="rounded-2xl bg-blue-50 p-4 text-center shadow">
-            <p className="text-2xl font-bold text-blue-800">
-              {upcomingCount}
-            </p>
-            <p className="text-xs text-blue-700">Upcoming</p>
-          </div>
-
-          <div className="rounded-2xl bg-green-50 p-4 text-center shadow">
-            <p className="text-2xl font-bold text-green-800">
-              {completedCount}
-            </p>
-            <p className="text-xs text-green-700">Completed</p>
-          </div>
-
-          <div className="rounded-2xl bg-white p-4 text-center shadow">
-            <p className="text-2xl font-bold">{totalHours}</p>
-            <p className="text-xs text-[#6b705c]">Scheduled Hours</p>
-          </div>
-        </section>
-
-        {lateCount > 0 && (
-          <section className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-800 shadow-sm">
-            <p className="text-sm font-bold">
-              {lateCount} visit{lateCount === 1 ? "" : "s"} marked late{" "}
-              {periodLabel}
-            </p>
-          </section>
-        )}
-
-        {error ? (
-          <section className="mt-6 rounded-2xl border border-red-200 bg-white p-5 shadow">
-            <p className="font-bold text-red-700">
-              Schedule could not be loaded
-            </p>
-            <p className="mt-1 text-sm text-red-600">{error.message}</p>
-          </section>
-        ) : view === "day" ? (
-          visits.length === 0 ? (
-            <section className="mt-6 rounded-2xl bg-white p-8 text-center shadow">
-              <p className="text-[#6b705c]">No visits scheduled this day.</p>
-            </section>
-          ) : (
-            <section className="mt-6 space-y-3">
-              {visits.map((visit) => {
-                const meta = statusMeta(visit.visit_status);
-                const contact = visit.jobber_client_id
-                  ? contactMap.get(visit.jobber_client_id)
-                  : null;
-
-                const address = contact
-                  ? [contact.address_line_1, contact.city, contact.state]
-                      .filter(Boolean)
-                      .join(", ")
-                  : null;
-
-                return (
-                  <div
-                    key={visit.jobber_visit_id}
-                    className="rounded-2xl bg-white p-5 shadow"
+            <section className="mt-3 rounded-2xl bg-white p-5 shadow">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Link
+                    href={prevHref}
+                    className="rounded-xl border border-[#d9d4c6] px-4 py-2 text-sm font-bold transition hover:bg-[#f7f6f1]"
                   >
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="min-w-0">
-                        <p className="text-lg font-bold">
-                          {formatTime(visit.start_at)}
-                          {visit.duration_minutes
-                            ? ` · ${toNumber(visit.duration_minutes)} min`
-                            : ""}
-                        </p>
+                    ← Prev
+                  </Link>
 
-                        <p className="mt-1 font-semibold">
-                          {visit.customer_name || "Unnamed Customer"}
-                        </p>
-
-                        {visit.title && (
-                          <p className="text-sm text-[#6b705c]">
-                            {visit.title}
-                          </p>
-                        )}
-
-                        {address && (
-                          <p className="mt-1 text-sm text-[#6b705c]">
-                            {address}
-                          </p>
-                        )}
-
-                        {contact?.phone && (
-                          <a
-                            href={`tel:${contact.phone.replace(/[^\d+]/g, "")}`}
-                            className="mt-1 inline-block text-sm font-semibold text-[#9c7a20] hover:underline"
-                          >
-                            {contact.phone}
-                          </a>
-                        )}
-                      </div>
-
-                      <div className="flex shrink-0 flex-col items-end gap-2">
-                        <span
-                          className={`rounded-full px-3 py-1 text-xs font-bold ${meta.classes}`}
-                        >
-                          {meta.label}
-                        </span>
-
-                        {visit.jobber_client_id && (
-                          <Link
-                            href={`/customers/${encodeURIComponent(
-                              visit.jobber_client_id
-                            )}`}
-                            className="text-sm font-semibold text-[#9c7a20] hover:underline"
-                          >
-                            View Customer →
-                          </Link>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </section>
-          )
-        ) : view === "week" ? (
-          <section className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-7">
-            {Array.from({ length: 7 }, (_, i) => addDays(weekStartDate, i)).map(
-              (day) => {
-                const cellDateStr = formatDateInput(day);
-                const dayVisits = visitsByDate.get(cellDateStr) ?? [];
-                const isToday = cellDateStr === todayStr;
-                const visibleVisits = dayVisits.slice(0, 5);
-                const remaining = dayVisits.length - visibleVisits.length;
-
-                return (
-                  <div
-                    key={cellDateStr}
-                    className={`rounded-2xl bg-white p-3 shadow ${
-                      isToday ? "ring-2 ring-[#d4af37]" : ""
-                    }`}
-                  >
+                  {!isCurrentPeriod && (
                     <Link
-                      href={scheduleUrl("day", cellDateStr)}
-                      className="block hover:underline"
+                      href={todayHref}
+                      className="rounded-xl bg-[#d4af37] px-4 py-2 text-sm font-bold text-[#174734] transition hover:bg-[#e6c766]"
                     >
-                      <p className="text-xs font-semibold uppercase tracking-wide text-[#9c7a20]">
-                        {formatShortWeekday(day)}
-                      </p>
-                      <p className="text-lg font-bold">{day.getUTCDate()}</p>
+                      {viewLabel[view]}
                     </Link>
+                  )}
 
-                    <div className="mt-2 space-y-1.5">
-                      {dayVisits.length === 0 ? (
-                        <p className="text-xs text-[#6b705c]">No visits</p>
-                      ) : (
-                        <>
-                          {visibleVisits.map((visit) => (
-                            <div
-                              key={visit.jobber_visit_id}
-                              className="flex items-center gap-1.5 text-xs"
-                            >
-                              <span
-                                className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDotClass(
-                                  visit.visit_status
-                                )}`}
-                              />
-                              <span className="truncate">
-                                {formatTime(visit.start_at)}
-                                {" · "}
-                                {visit.customer_name || "Unnamed"}
-                              </span>
-                            </div>
-                          ))}
-                          {remaining > 0 && (
-                            <p className="text-xs font-semibold text-[#9c7a20]">
-                              +{remaining} more
+                  <Link
+                    href={nextHref}
+                    className="rounded-xl border border-[#d9d4c6] px-4 py-2 text-sm font-bold transition hover:bg-[#f7f6f1]"
+                  >
+                    Next →
+                  </Link>
+                </div>
+
+                <p className="text-lg font-bold">
+                  {heading}
+                  {isCurrentPeriod && (
+                    <span className="ml-2 text-sm font-normal text-[#9c7a20]">
+                      ({viewLabel[view]})
+                    </span>
+                  )}
+                </p>
+              </div>
+            </section>
+
+            <section className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <div className="rounded-2xl bg-white p-4 text-center shadow">
+                <p className="text-2xl font-bold">{enrichedVisits.length}</p>
+                <p className="text-xs text-[#6b705c]">Total Visits</p>
+              </div>
+
+              <div className="rounded-2xl bg-blue-50 p-4 text-center shadow">
+                <p className="text-2xl font-bold text-blue-800">
+                  {upcomingCount}
+                </p>
+                <p className="text-xs text-blue-700">Upcoming</p>
+              </div>
+
+              <div className="rounded-2xl bg-green-50 p-4 text-center shadow">
+                <p className="text-2xl font-bold text-green-800">
+                  {completedCount}
+                </p>
+                <p className="text-xs text-green-700">Completed</p>
+              </div>
+
+              <div className="rounded-2xl bg-white p-4 text-center shadow">
+                <p className="text-2xl font-bold">{totalHours}</p>
+                <p className="text-xs text-[#6b705c]">Scheduled Hours</p>
+              </div>
+            </section>
+
+            {lateCount > 0 && (
+              <section className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-red-800 shadow-sm">
+                <p className="text-sm font-bold">
+                  {lateCount} visit{lateCount === 1 ? "" : "s"} marked late{" "}
+                  {periodLabel}
+                </p>
+              </section>
+            )}
+
+            {error ? (
+              <section className="mt-6 rounded-2xl border border-red-200 bg-white p-5 shadow">
+                <p className="font-bold text-red-700">
+                  Schedule could not be loaded
+                </p>
+                <p className="mt-1 text-sm text-red-600">{error.message}</p>
+              </section>
+            ) : view === "day" ? (
+              enrichedVisits.length === 0 ? (
+                <section className="mt-6 rounded-2xl bg-white p-8 text-center shadow">
+                  <p className="text-[#6b705c]">No visits scheduled this day.</p>
+                </section>
+              ) : (
+                <section className="mt-6 space-y-3">
+                  {enrichedVisits.map((visit) => (
+                    <div
+                      key={visit.id}
+                      className="rounded-2xl bg-white p-5 shadow"
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="text-lg font-bold">
+                            {visit.startTimeLabel}
+                            {visit.durationMinutes
+                              ? ` · ${visit.durationMinutes} min`
+                              : ""}
+                          </p>
+
+                          <p className="mt-1 font-semibold">
+                            {visit.customerName}
+                          </p>
+
+                          {visit.service && (
+                            <p className="text-sm text-[#6b705c]">
+                              {visit.serviceLabel}
                             </p>
                           )}
-                        </>
-                      )}
-                    </div>
-                  </div>
-                );
-              }
-            )}
-          </section>
-        ) : (
-          <section className="mt-6 overflow-hidden rounded-2xl bg-white shadow">
-            <div className="overflow-x-auto">
-              <div className="min-w-[840px]">
-                <div className="grid grid-cols-7 border-b border-[#eee9dc] bg-[#f7f6f1]">
-                  {gridDates.slice(0, 7).map((day) => (
-                    <div
-                      key={formatShortWeekday(day)}
-                      className="p-2 text-center text-xs font-bold uppercase tracking-wide text-[#9c7a20]"
-                    >
-                      {formatShortWeekday(day)}
+
+                          {visit.address && (
+                            <p className="mt-1 text-sm text-[#6b705c]">
+                              {visit.address}
+                            </p>
+                          )}
+
+                          {visit.phone && (
+                            <a
+                              href={`tel:${visit.phone.replace(/[^\d+]/g, "")}`}
+                              className="mt-1 inline-block text-sm font-semibold text-[#9c7a20] hover:underline"
+                            >
+                              {visit.phone}
+                            </a>
+                          )}
+
+                          {visit.gateCode && (
+                            <p className="mt-1 text-sm text-[#6b705c]">
+                              <span className="font-semibold text-[#174734]">
+                                Gate Code:
+                              </span>{" "}
+                              {visit.gateCode}
+                            </p>
+                          )}
+
+                          {visit.specialInstructions && (
+                            <p className="mt-1 whitespace-pre-wrap text-sm text-[#6b705c]">
+                              <span className="font-semibold text-[#174734]">
+                                Special Instructions:
+                              </span>{" "}
+                              {visit.specialInstructions}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex shrink-0 flex-col items-end gap-2">
+                          <span
+                            className={`rounded-full px-3 py-1 text-xs font-bold ${visit.statusClasses}`}
+                          >
+                            {visit.statusLabel}
+                          </span>
+
+                          {visit.clientId && (
+                            <Link
+                              href={`/customers/${encodeURIComponent(visit.clientId)}`}
+                              className="text-sm font-semibold text-[#9c7a20] hover:underline"
+                            >
+                              View Customer →
+                            </Link>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   ))}
-                </div>
+                </section>
+              )
+            ) : (
+              <ScheduleGrids
+                view={view}
+                dates={view === "week" ? weekDates : monthDates}
+                visitsByDate={visitsByDate}
+              />
+            )}
+          </div>
+        </div>
 
-                <div className="grid grid-cols-7">
-                  {gridDates.map((day) => {
-                    const cellDateStr = formatDateInput(day);
-                    const dayVisits = visitsByDate.get(cellDateStr) ?? [];
-                    const inMonth =
-                      day.getUTCMonth() === monthStartDate.getUTCMonth();
-                    const isToday = cellDateStr === todayStr;
-
-                    return (
-                      <Link
-                        key={cellDateStr}
-                        href={scheduleUrl("day", cellDateStr)}
-                        className={`min-h-[92px] border-b border-r border-[#eee9dc] p-2 transition hover:bg-[#f7f6f1] ${
-                          inMonth ? "bg-white" : "bg-[#faf9f5]"
-                        }`}
-                      >
-                        <span
-                          className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
-                            isToday
-                              ? "bg-[#d4af37] text-[#174734]"
-                              : inMonth
-                                ? "text-[#174734]"
-                                : "text-[#b5b09f]"
-                          }`}
-                        >
-                          {day.getUTCDate()}
-                        </span>
-
-                        <div className="mt-1 space-y-1">
-                          {dayVisits.map((visit) => (
-                            <div
-                              key={visit.jobber_visit_id}
-                              title={`${visitTypeLabel(visit.title)} — ${
-                                visit.customer_name || "Unnamed Customer"
-                              }`}
-                              className={`truncate rounded px-1.5 py-0.5 text-[10px] font-semibold leading-tight ${visitTypeChipClass(
-                                visit.title
-                              )}`}
-                            >
-                              {formatTime(visit.start_at)}{" "}
-                              {visit.customer_name || "Unnamed"}
-                            </div>
-                          ))}
-                        </div>
-                      </Link>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
+        <ScheduleMapPanel pins={pins} title={mapTitle} />
       </div>
     </main>
   );
