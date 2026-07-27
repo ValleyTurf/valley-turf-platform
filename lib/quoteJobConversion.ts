@@ -13,10 +13,11 @@
 //   can't create two jobs.
 //
 // jobCreate's real requirements (confirmed via live introspection against
-// Jobber's own schema, not docs — see app/api/jobber/job-create-schema-check):
-// JobCreateAttributes needs a propertyId (NOT a clientId — jobs attach to
-// a property) and an invoicing object with two required enums. So this
-// module always resolves a propertyId before calling jobCreate:
+// Jobber's own schema, not docs — the one-off diagnostic route used for
+// this has since been deleted, its job done). JobCreateAttributes needs a
+// propertyId (NOT a clientId — jobs attach to a property) and an
+// invoicing object with two required enums. So this module always
+// resolves a propertyId before calling jobCreate:
 //   - Existing customer (quote.customer_id already a real Jobber client
 //     id): fetch their first existing property via client.clientProperties.
 //   - New client (lead-based quote, no Jobber client yet): create the
