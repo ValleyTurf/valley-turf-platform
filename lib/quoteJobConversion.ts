@@ -57,16 +57,18 @@ const CLIENT_CREATE_MUTATION = `
   }
 `;
 
-// Jobber's job-related mutations predate their client-related ones and
-// use an older "*Attributes" input naming convention instead of "*Input"
-// (confirmed via Jobber's public API changelog, which references
-// JobCreateAttributes/JobEditLineItemAttributes/etc. — clientCreate below
-// is a newer mutation and genuinely does use ClientCreateInput). The
-// first live attempt at this mutation guessed "JobCreateInput" and
-// Jobber's schema validation rejected it; this is the corrected shape.
+// Two live attempts against Jobber's real schema each corrected one half
+// of this: the argument name is "input" (Jobber said so directly:
+// "Field 'jobCreate' is missing required arguments: input"), but its
+// type is the older "JobCreateAttributes" (Jobber's job-related mutations
+// predate their client-related ones and kept the pre-"*Input" naming
+// convention — confirmed via Jobber's public API changelog, which
+// references JobCreateAttributes/JobEditLineItemAttributes/etc.;
+// clientCreate below is a newer mutation and genuinely does use
+// ClientCreateInput). So: argument "input", type "JobCreateAttributes".
 const JOB_CREATE_MUTATION = `
-  mutation CreateJobFromQuote($attributes: JobCreateAttributes!) {
-    jobCreate(attributes: $attributes) {
+  mutation CreateJobFromQuote($input: JobCreateAttributes!) {
+    jobCreate(input: $input) {
       job {
         id
         jobNumber
@@ -152,7 +154,7 @@ async function createJobberJobForQuote(
   // on our own schedule automatically.
   const title = `${quote.recipient_name} - ${quote.service_category || "Service"}`;
 
-  const attributes: Record<string, unknown> = {
+  const input: Record<string, unknown> = {
     clientId,
     title,
   };
@@ -162,7 +164,7 @@ async function createJobberJobForQuote(
       job: { id: string; jobNumber: string | number | null } | null;
       userErrors: { message: string }[];
     };
-  }>(JOB_CREATE_MUTATION, { attributes });
+  }>(JOB_CREATE_MUTATION, { input });
 
   if (errors?.length) {
     return { ok: false, error: errors.map((e) => e.message).join("; ") };
