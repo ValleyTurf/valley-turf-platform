@@ -369,13 +369,6 @@ export default async function SchedulePage({
     }
   }
 
-  // Every distinct visit type showing on the grid right now, for the
-  // month-view legend — alphabetical so the legend order is stable
-  // regardless of which day each type first appears on.
-  const visitTypes = Array.from(
-    new Set(visits.map((v) => visitTypeLabel(v.title)))
-  ).sort((a, b) => a.localeCompare(b));
-
   // Stats reflect exactly what's on screen: the single day for day view,
   // the 7 fetched days for week view, and only the in-month days for month
   // view (excluding the leading/trailing days from adjacent months that
@@ -681,88 +674,71 @@ export default async function SchedulePage({
             )}
           </section>
         ) : (
-          <>
-            {visitTypes.length > 0 && (
-              <section className="mt-6 flex flex-wrap gap-2">
-                {visitTypes.map((label) => (
-                  <span
-                    key={label}
-                    className={`rounded-full px-3 py-1 text-xs font-semibold ${visitTypeChipClassForLabel(
-                      label
-                    )}`}
-                  >
-                    {label}
-                  </span>
-                ))}
-              </section>
-            )}
+          <section className="mt-6 overflow-hidden rounded-2xl bg-white shadow">
+            <div className="overflow-x-auto">
+              <div className="min-w-[840px]">
+                <div className="grid grid-cols-7 border-b border-[#eee9dc] bg-[#f7f6f1]">
+                  {gridDates.slice(0, 7).map((day) => (
+                    <div
+                      key={formatShortWeekday(day)}
+                      className="p-2 text-center text-xs font-bold uppercase tracking-wide text-[#9c7a20]"
+                    >
+                      {formatShortWeekday(day)}
+                    </div>
+                  ))}
+                </div>
 
-            <section className="mt-3 overflow-hidden rounded-2xl bg-white shadow">
-              <div className="overflow-x-auto">
-                <div className="min-w-[840px]">
-                  <div className="grid grid-cols-7 border-b border-[#eee9dc] bg-[#f7f6f1]">
-                    {gridDates.slice(0, 7).map((day) => (
-                      <div
-                        key={formatShortWeekday(day)}
-                        className="p-2 text-center text-xs font-bold uppercase tracking-wide text-[#9c7a20]"
+                <div className="grid grid-cols-7">
+                  {gridDates.map((day) => {
+                    const cellDateStr = formatDateInput(day);
+                    const dayVisits = visitsByDate.get(cellDateStr) ?? [];
+                    const inMonth =
+                      day.getUTCMonth() === monthStartDate.getUTCMonth();
+                    const isToday = cellDateStr === todayStr;
+
+                    return (
+                      <Link
+                        key={cellDateStr}
+                        href={scheduleUrl("day", cellDateStr)}
+                        className={`min-h-[92px] border-b border-r border-[#eee9dc] p-2 transition hover:bg-[#f7f6f1] ${
+                          inMonth ? "bg-white" : "bg-[#faf9f5]"
+                        }`}
                       >
-                        {formatShortWeekday(day)}
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="grid grid-cols-7">
-                    {gridDates.map((day) => {
-                      const cellDateStr = formatDateInput(day);
-                      const dayVisits = visitsByDate.get(cellDateStr) ?? [];
-                      const inMonth =
-                        day.getUTCMonth() === monthStartDate.getUTCMonth();
-                      const isToday = cellDateStr === todayStr;
-
-                      return (
-                        <Link
-                          key={cellDateStr}
-                          href={scheduleUrl("day", cellDateStr)}
-                          className={`min-h-[92px] border-b border-r border-[#eee9dc] p-2 transition hover:bg-[#f7f6f1] ${
-                            inMonth ? "bg-white" : "bg-[#faf9f5]"
+                        <span
+                          className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
+                            isToday
+                              ? "bg-[#d4af37] text-[#174734]"
+                              : inMonth
+                                ? "text-[#174734]"
+                                : "text-[#b5b09f]"
                           }`}
                         >
-                          <span
-                            className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
-                              isToday
-                                ? "bg-[#d4af37] text-[#174734]"
-                                : inMonth
-                                  ? "text-[#174734]"
-                                  : "text-[#b5b09f]"
-                            }`}
-                          >
-                            {day.getUTCDate()}
-                          </span>
+                          {day.getUTCDate()}
+                        </span>
 
-                          <div className="mt-1 space-y-1">
-                            {dayVisits.map((visit) => (
-                              <div
-                                key={visit.jobber_visit_id}
-                                title={`${visitTypeLabel(visit.title)} — ${
-                                  visit.customer_name || "Unnamed Customer"
-                                }`}
-                                className={`truncate rounded px-1.5 py-0.5 text-[10px] font-semibold leading-tight ${visitTypeChipClass(
-                                  visit.title
-                                )}`}
-                              >
-                                {formatTime(visit.start_at)}{" "}
-                                {visit.customer_name || "Unnamed"}
-                              </div>
-                            ))}
-                          </div>
-                        </Link>
-                      );
-                    })}
-                  </div>
+                        <div className="mt-1 space-y-1">
+                          {dayVisits.map((visit) => (
+                            <div
+                              key={visit.jobber_visit_id}
+                              title={`${visitTypeLabel(visit.title)} — ${
+                                visit.customer_name || "Unnamed Customer"
+                              }`}
+                              className={`truncate rounded px-1.5 py-0.5 text-[10px] font-semibold leading-tight ${visitTypeChipClass(
+                                visit.title
+                              )}`}
+                            >
+                              {formatTime(visit.start_at)}{" "}
+                              {visit.customer_name || "Unnamed"}
+                            </div>
+                          ))}
+                        </div>
+                      </Link>
+                    );
+                  })}
                 </div>
               </div>
-            </section>
-          </>
+            </div>
+          </section>
         )}
       </div>
     </main>
