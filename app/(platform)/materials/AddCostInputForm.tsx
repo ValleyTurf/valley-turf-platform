@@ -106,6 +106,36 @@ function MaterialFields() {
         </div>
       </div>
 
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label htmlFor="start_date" className={labelClasses}>
+            Start Date{" "}
+            <span className="font-normal text-[#6b705c]">(optional)</span>
+          </label>
+          <input
+            id="start_date"
+            name="start_date"
+            type="date"
+            className={inputClasses}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="end_date" className={labelClasses}>
+            End Date{" "}
+            <span className="font-normal text-[#6b705c]">
+              (optional — set this when a price stops applying)
+            </span>
+          </label>
+          <input
+            id="end_date"
+            name="end_date"
+            type="date"
+            className={inputClasses}
+          />
+        </div>
+      </div>
+
       <div>
         <label htmlFor="notes" className={labelClasses}>
           Notes
@@ -124,34 +154,67 @@ function MaterialFields() {
 
 function LaborFields() {
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      <div>
-        <label htmlFor="employee_name" className={labelClasses}>
-          Employee Name
-        </label>
-        <input
-          id="employee_name"
-          name="employee_name"
-          type="text"
-          required
-          placeholder="e.g. Jordan"
-          className={inputClasses}
-        />
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label htmlFor="employee_name" className={labelClasses}>
+            Employee Name
+          </label>
+          <input
+            id="employee_name"
+            name="employee_name"
+            type="text"
+            required
+            placeholder="e.g. Jordan"
+            className={inputClasses}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="hourly_rate" className={labelClasses}>
+            Hourly Rate ($)
+          </label>
+          <input
+            id="hourly_rate"
+            name="hourly_rate"
+            type="number"
+            step="0.01"
+            min="0"
+            required
+            className={inputClasses}
+          />
+        </div>
       </div>
 
-      <div>
-        <label htmlFor="hourly_rate" className={labelClasses}>
-          Hourly Rate ($)
-        </label>
-        <input
-          id="hourly_rate"
-          name="hourly_rate"
-          type="number"
-          step="0.01"
-          min="0"
-          required
-          className={inputClasses}
-        />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label htmlFor="labor_start_date" className={labelClasses}>
+            Start Date{" "}
+            <span className="font-normal text-[#6b705c]">(optional)</span>
+          </label>
+          <input
+            id="labor_start_date"
+            name="start_date"
+            type="date"
+            className={inputClasses}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="labor_end_date" className={labelClasses}>
+            End Date{" "}
+            <span className="font-normal text-[#6b705c]">
+              (optional — set this when a rate stops applying, e.g. after a
+              raise)
+            </span>
+          </label>
+          <input
+            id="labor_end_date"
+            name="end_date"
+            type="date"
+            className={inputClasses}
+          />
+        </div>
       </div>
     </div>
   );

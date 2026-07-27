@@ -173,10 +173,19 @@ export default async function JobCostsPage({
   const to = from + PAGE_SIZE - 1;
 
   const [materialsResult, equipmentResult] = await Promise.all([
-    supabaseServer
-      .from("materials")
-      .select("id, name, unit_label, unit_cost")
-      .order("name", { ascending: true }),
+    (() => {
+      const today = new Date().toISOString().slice(0, 10);
+      // Only offer materials/labor rates that are still active — once a
+      // material or labor rate has an end_date in the past (see
+      // Materials & Costs at /materials), it drops out of this form so
+      // an old price/rate can't accidentally get logged against a new
+      // job cost entry.
+      return supabaseServer
+        .from("materials")
+        .select("id, name, unit_label, unit_cost")
+        .or(`end_date.is.null,end_date.gt.${today}`)
+        .order("name", { ascending: true });
+    })(),
     (() => {
       const today = new Date().toISOString().slice(0, 10);
       return supabaseServer

@@ -89,6 +89,8 @@ export async function addMaterial(formData: FormData): Promise<void> {
     unit_label: cleanText(formData.get("unit_label")),
     unit_cost: cleanNumber(formData.get("unit_cost")),
     notes: cleanText(formData.get("notes")),
+    start_date: cleanDate(formData.get("start_date")),
+    end_date: cleanDate(formData.get("end_date")),
   };
 
   const { data, error } = await supabaseServer
@@ -122,7 +124,7 @@ export async function updateMaterial(
 
   const { data: before } = await supabaseServer
     .from("materials")
-    .select("name, unit_label, unit_cost, notes")
+    .select("name, unit_label, unit_cost, notes, start_date, end_date")
     .eq("id", id)
     .maybeSingle();
 
@@ -131,6 +133,8 @@ export async function updateMaterial(
     unit_label: cleanText(formData.get("unit_label")),
     unit_cost: cleanNumber(formData.get("unit_cost")),
     notes: cleanText(formData.get("notes")),
+    start_date: cleanDate(formData.get("start_date")),
+    end_date: cleanDate(formData.get("end_date")),
   };
 
   const { error } = await supabaseServer
@@ -429,6 +433,8 @@ export async function addEmployee(formData: FormData): Promise<void> {
   const actor = await getCurrentUser();
   const employeeName = cleanText(formData.get("employee_name"));
   const hourlyRate = cleanNumber(formData.get("hourly_rate"));
+  const startDate = cleanDate(formData.get("start_date"));
+  const endDate = cleanDate(formData.get("end_date"));
 
   if (!employeeName) {
     throw new Error("Employee name is required.");
@@ -440,6 +446,8 @@ export async function addEmployee(formData: FormData): Promise<void> {
       name: `Labor - ${employeeName}`,
       unit_label: "hour",
       unit_cost: hourlyRate,
+      start_date: startDate,
+      end_date: endDate,
     })
     .select("id")
     .single();
@@ -454,7 +462,12 @@ export async function addEmployee(formData: FormData): Promise<void> {
     entityType: "employee_rate",
     entityId: data?.id ?? null,
     entityLabel: employeeName,
-    after: { employee_name: employeeName, hourly_rate: hourlyRate },
+    after: {
+      employee_name: employeeName,
+      hourly_rate: hourlyRate,
+      start_date: startDate,
+      end_date: endDate,
+    },
   });
 
   revalidatePath("/materials");
@@ -468,6 +481,8 @@ export async function updateEmployee(
   const actor = await getCurrentUser();
   const employeeName = cleanText(formData.get("employee_name"));
   const hourlyRate = cleanNumber(formData.get("hourly_rate"));
+  const startDate = cleanDate(formData.get("start_date"));
+  const endDate = cleanDate(formData.get("end_date"));
 
   if (!employeeName) {
     throw new Error("Employee name is required.");
@@ -475,7 +490,7 @@ export async function updateEmployee(
 
   const { data: beforeRow } = await supabaseServer
     .from("materials")
-    .select("name, unit_cost")
+    .select("name, unit_cost, start_date, end_date")
     .eq("id", id)
     .maybeSingle();
 
@@ -484,6 +499,8 @@ export async function updateEmployee(
     .update({
       name: `Labor - ${employeeName}`,
       unit_cost: hourlyRate,
+      start_date: startDate,
+      end_date: endDate,
       updated_at: new Date().toISOString(),
     })
     .eq("id", id);
@@ -502,9 +519,16 @@ export async function updateEmployee(
       ? {
           employee_name: beforeRow.name?.replace(/^Labor - /, "") ?? null,
           hourly_rate: beforeRow.unit_cost,
+          start_date: beforeRow.start_date,
+          end_date: beforeRow.end_date,
         }
       : null,
-    after: { employee_name: employeeName, hourly_rate: hourlyRate },
+    after: {
+      employee_name: employeeName,
+      hourly_rate: hourlyRate,
+      start_date: startDate,
+      end_date: endDate,
+    },
   });
 
   revalidatePath("/materials");

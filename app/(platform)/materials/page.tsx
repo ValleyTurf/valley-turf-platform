@@ -34,12 +34,16 @@ type Material = {
   unit_label: string;
   unit_cost: number | string;
   notes: string | null;
+  start_date: string | null;
+  end_date: string | null;
 };
 
 type EmployeeRow = {
   id: string;
   name: string;
   unit_cost: number | string;
+  start_date: string | null;
+  end_date: string | null;
 };
 
 type EquipmentSummary = {
@@ -75,18 +79,27 @@ function isRetired(retiredDate: string | null): boolean {
   return new Date(`${retiredDate}T00:00:00`) <= new Date();
 }
 
+// Same "is this date in the past" check as isRetired above, named
+// generically since it's shared by Materials and Labor Rates — neither
+// is "retired" exactly, but an end_date works the same way: once it's
+// passed, the row is inactive and drops out of the job-costs logging
+// selector (see job-costs/page.tsx's materials query).
+function isEnded(endDate: string | null): boolean {
+  return isRetired(endDate);
+}
+
 export default async function MaterialsPage() {
   const [materialsResult, employeesResult, equipmentResult, costsResult] =
     await Promise.all([
       supabaseServer
         .from("materials")
-        .select("id, name, unit_label, unit_cost, notes")
+        .select("id, name, unit_label, unit_cost, notes, start_date, end_date")
         .neq("unit_label", "hour")
         .order("name", { ascending: true }),
 
       supabaseServer
         .from("materials")
-        .select("id, name, unit_cost")
+        .select("id, name, unit_cost, start_date, end_date")
         .eq("unit_label", "hour")
         .order("name", { ascending: true }),
 
@@ -123,7 +136,7 @@ export default async function MaterialsPage() {
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
-      <div className="mx-auto max-w-4xl">
+      <div className="mx-auto max-w-6xl">
         <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
@@ -171,107 +184,121 @@ export default async function MaterialsPage() {
           <AddCostInputForm />
         </section>
 
-        <section className="mt-6 rounded-2xl bg-white p-5 shadow">
-          <h2 className="text-lg font-bold">Current Materials</h2>
+        <div className="mt-6 grid gap-6 lg:grid-cols-2">
+          <section className="rounded-2xl bg-white p-5 shadow">
+            <h2 className="text-lg font-bold">Current Materials</h2>
 
-          <div className="mt-4 space-y-3">
-            {materials.length === 0 ? (
-              <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
-                No materials yet.
-              </p>
-            ) : (
-              materials.map((material) => (
-                <MaterialRow key={material.id} material={material} />
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="mt-6 rounded-2xl bg-white p-5 shadow">
-          <h2 className="text-lg font-bold">Current Labor Rates</h2>
-
-          <div className="mt-4 space-y-3">
-            {employees.length === 0 ? (
-              <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
-                No labor rates added yet.
-              </p>
-            ) : (
-              employees.map((employee) => (
-                <EmployeeRowItem key={employee.id} employee={employee} />
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="mt-6 rounded-2xl bg-white p-5 shadow">
-          <h2 className="text-lg font-bold">Current Equipment</h2>
-
-          <div className="mt-4 space-y-3">
-            {equipment.length === 0 ? (
-              <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
-                No equipment yet.
-              </p>
-            ) : (
-              equipment.map((item) => (
-                <EquipmentRow key={item.equipment_id} item={item} />
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="mt-6 rounded-2xl bg-white p-5 shadow">
-          <h2 className="text-lg font-bold">Current Overhead Costs</h2>
-
-          <div className="mt-4">
-            <p className="text-sm font-semibold text-[#6b705c]">
-              Recurring Monthly
-            </p>
-            <div className="mt-3 space-y-3">
-              {recurringCosts.length === 0 ? (
+            <div className="mt-4 space-y-3">
+              {materials.length === 0 ? (
                 <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
-                  No recurring costs yet.
+                  No materials yet.
                 </p>
               ) : (
-                recurringCosts.map((cost) => (
-                  <CostRow key={cost.id} cost={cost} />
+                materials.map((material) => (
+                  <MaterialRow key={material.id} material={material} />
                 ))
               )}
             </div>
-          </div>
+          </section>
 
-          <div className="mt-6">
-            <p className="text-sm font-semibold text-[#6b705c]">
-              Amortized
-              <span className="ml-2 font-normal text-xs text-[#9c7a20]">
-                Spread evenly across the start and end date, only counted
-                during that window.
-              </span>
-            </p>
-            <div className="mt-3 space-y-3">
-              {amortizedCosts.length === 0 ? (
+          <section className="rounded-2xl bg-white p-5 shadow">
+            <h2 className="text-lg font-bold">Current Labor Rates</h2>
+
+            <div className="mt-4 space-y-3">
+              {employees.length === 0 ? (
                 <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
-                  No amortized costs yet.
+                  No labor rates added yet.
                 </p>
               ) : (
-                amortizedCosts.map((cost) => (
-                  <CostRow key={cost.id} cost={cost} />
+                employees.map((employee) => (
+                  <EmployeeRowItem key={employee.id} employee={employee} />
                 ))
               )}
             </div>
-          </div>
-        </section>
+          </section>
+
+          <section className="rounded-2xl bg-white p-5 shadow">
+            <h2 className="text-lg font-bold">Current Equipment</h2>
+
+            <div className="mt-4 space-y-3">
+              {equipment.length === 0 ? (
+                <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                  No equipment yet.
+                </p>
+              ) : (
+                equipment.map((item) => (
+                  <EquipmentRow key={item.equipment_id} item={item} />
+                ))
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-2xl bg-white p-5 shadow">
+            <h2 className="text-lg font-bold">Current Overhead Costs</h2>
+
+            <div className="mt-4">
+              <p className="text-sm font-semibold text-[#6b705c]">
+                Recurring Monthly
+              </p>
+              <div className="mt-3 space-y-3">
+                {recurringCosts.length === 0 ? (
+                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                    No recurring costs yet.
+                  </p>
+                ) : (
+                  recurringCosts.map((cost) => (
+                    <CostRow key={cost.id} cost={cost} />
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <p className="text-sm font-semibold text-[#6b705c]">
+                Amortized
+                <span className="ml-2 font-normal text-xs text-[#9c7a20]">
+                  Spread evenly across the start and end date, only counted
+                  during that window.
+                </span>
+              </p>
+              <div className="mt-3 space-y-3">
+                {amortizedCosts.length === 0 ? (
+                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                    No amortized costs yet.
+                  </p>
+                ) : (
+                  amortizedCosts.map((cost) => (
+                    <CostRow key={cost.id} cost={cost} />
+                  ))
+                )}
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
     </main>
   );
 }
 
 function MaterialRow({ material }: { material: Material }) {
+  const ended = isEnded(material.end_date);
+
   return (
     <details className="rounded-xl border border-[#e7e2d5] px-3 py-2">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-bold">{material.name}</p>
-          <p className="text-xs text-[#6b705c]">per {material.unit_label}</p>
+          <div className="flex items-center gap-2">
+            <p className="truncate text-sm font-bold">{material.name}</p>
+            {ended && (
+              <span className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">
+                Ended {formatDate(material.end_date)}
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-[#6b705c]">
+            per {material.unit_label}
+            {material.start_date ? ` · since ${formatDate(material.start_date)}` : ""}
+          </p>
         </div>
 
         <p className="shrink-0 text-sm font-bold">
@@ -327,6 +354,32 @@ function MaterialRow({ material }: { material: Material }) {
             </div>
           </div>
 
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="text-xs font-bold text-[#9c7a20]">
+                Start Date
+              </label>
+              <input
+                name="start_date"
+                type="date"
+                defaultValue={material.start_date ?? ""}
+                className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-[#9c7a20]">
+                End Date
+              </label>
+              <input
+                name="end_date"
+                type="date"
+                defaultValue={material.end_date ?? ""}
+                className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+              />
+            </div>
+          </div>
+
           <div>
             <label className="text-xs font-bold text-[#9c7a20]">Notes</label>
             <input
@@ -362,13 +415,28 @@ function MaterialRow({ material }: { material: Material }) {
 
 function EmployeeRowItem({ employee }: { employee: EmployeeRow }) {
   const name = employeeDisplayName(employee.name);
+  const ended = isEnded(employee.end_date);
 
   return (
     <details className="rounded-xl border border-[#e7e2d5] px-3 py-2">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
-        <p className="text-sm font-bold">{name}</p>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="truncate text-sm font-bold">{name}</p>
+            {ended && (
+              <span className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">
+                Ended {formatDate(employee.end_date)}
+              </span>
+            )}
+          </div>
+          {employee.start_date && (
+            <p className="text-xs text-[#6b705c]">
+              since {formatDate(employee.start_date)}
+            </p>
+          )}
+        </div>
 
-        <p className="text-sm font-bold">
+        <p className="shrink-0 text-sm font-bold">
           {formatCurrency(employee.unit_cost)}
           <span className="ml-1 text-xs font-normal text-[#6b705c]">
             /hr
@@ -406,6 +474,32 @@ function EmployeeRowItem({ employee }: { employee: EmployeeRow }) {
                 min="0"
                 defaultValue={toNumber(employee.unit_cost)}
                 required
+                className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="text-xs font-bold text-[#9c7a20]">
+                Start Date
+              </label>
+              <input
+                name="start_date"
+                type="date"
+                defaultValue={employee.start_date ?? ""}
+                className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-[#9c7a20]">
+                End Date
+              </label>
+              <input
+                name="end_date"
+                type="date"
+                defaultValue={employee.end_date ?? ""}
                 className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
               />
             </div>
