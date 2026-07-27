@@ -1007,7 +1007,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
 
             <div className="flex flex-wrap gap-3">
               <Link
-                href="/costs"
+                href="/materials"
                 className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold transition hover:bg-white"
               >
                 Manage Costs
@@ -1138,7 +1138,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                   across {formatNumber(jobsCompleted)} invoiced service visit
                   {jobsCompleted === 1 ? "" : "s"} in that period.{" "}
                   <Link
-                    href="/costs"
+                    href="/materials"
                     className="font-semibold text-[#9c7a20] hover:underline"
                   >
                     Manage costs →

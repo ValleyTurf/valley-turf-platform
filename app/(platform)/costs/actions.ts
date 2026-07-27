@@ -66,7 +66,7 @@ export async function addOverheadCost(formData: FormData): Promise<void> {
     after: row,
   });
 
-  revalidatePath("/costs");
+  revalidatePath("/materials");
   revalidatePath("/revenue");
 }
 
@@ -112,7 +112,7 @@ export async function updateOverheadCost(
     after: row,
   });
 
-  revalidatePath("/costs");
+  revalidatePath("/materials");
   revalidatePath("/revenue");
 }
 
@@ -143,6 +143,6 @@ export async function deleteOverheadCost(id: string): Promise<void> {
     before,
   });
 
-  revalidatePath("/costs");
+  revalidatePath("/materials");
   revalidatePath("/revenue");
 }

@@ -90,10 +90,7 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
         href: "/job-costing-analytics/trends",
         icon: "📆",
       },
-      { name: "Materials", href: "/materials", icon: "🧪" },
-      { name: "Labor Rates", href: "/employees", icon: "🧑‍🔧" },
-      { name: "Equipment", href: "/equipment", icon: "🧹" },
-      { name: "Overhead Costs", href: "/costs", icon: "💵" },
+      { name: "Materials & Costs", href: "/materials", icon: "🧰" },
     ],
   },
   {

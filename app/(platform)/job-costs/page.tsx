@@ -318,14 +318,7 @@ export default async function JobCostsPage({
               href="/materials"
               className="rounded-xl border border-[#174734] px-4 py-2 text-center text-sm font-bold transition hover:bg-white"
             >
-              Materials
-            </Link>
-
-            <Link
-              href="/equipment"
-              className="rounded-xl border border-[#174734] px-4 py-2 text-center text-sm font-bold transition hover:bg-white"
-            >
-              Equipment
+              Materials &amp; Costs
             </Link>
 
             <Link

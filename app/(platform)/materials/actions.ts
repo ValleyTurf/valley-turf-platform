@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
+import { addOverheadCost } from "../costs/actions";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
@@ -53,6 +54,29 @@ function parseQuantity(value: FormDataEntryValue | null): number {
   }
 
   return Number(trimmed);
+}
+
+// Single entry point for the unified Materials & Costs page's "Add" form
+// (AddCostInputForm.tsx) — one dropdown picks which of the four kinds of
+// record is being added, and this just forwards to whichever existing
+// add* function actually owns that table. Keeps the four add* functions
+// themselves untouched (still directly reusable from anywhere else that
+// might need just one of them).
+export async function addCostInput(formData: FormData): Promise<void> {
+  const entityType = formData.get("entity_type");
+
+  switch (entityType) {
+    case "material":
+      return addMaterial(formData);
+    case "labor":
+      return addEmployee(formData);
+    case "equipment":
+      return addEquipment(formData);
+    case "overhead":
+      return addOverheadCost(formData);
+    default:
+      throw new Error("Pick what you're adding.");
+  }
 }
 
 // ---------- Materials ----------
@@ -192,7 +216,7 @@ export async function addEquipment(formData: FormData): Promise<void> {
     after: row,
   });
 
-  revalidatePath("/equipment");
+  revalidatePath("/materials");
   revalidatePath("/job-costs");
 }
 
@@ -235,7 +259,7 @@ export async function updateEquipment(
     after: row,
   });
 
-  revalidatePath("/equipment");
+  revalidatePath("/materials");
   revalidatePath("/job-costs");
 }
 
@@ -263,7 +287,7 @@ export async function deleteEquipment(id: string): Promise<void> {
     before,
   });
 
-  revalidatePath("/equipment");
+  revalidatePath("/materials");
   revalidatePath("/job-costs");
 }
 
@@ -433,7 +457,7 @@ export async function addEmployee(formData: FormData): Promise<void> {
     after: { employee_name: employeeName, hourly_rate: hourlyRate },
   });
 
-  revalidatePath("/employees");
+  revalidatePath("/materials");
   revalidatePath("/job-costs");
 }
 
@@ -483,7 +507,7 @@ export async function updateEmployee(
     after: { employee_name: employeeName, hourly_rate: hourlyRate },
   });
 
-  revalidatePath("/employees");
+  revalidatePath("/materials");
   revalidatePath("/job-costs");
 }
 
@@ -516,7 +540,7 @@ export async function deleteEmployee(id: string): Promise<void> {
       : null,
   });
 
-  revalidatePath("/employees");
+  revalidatePath("/materials");
   revalidatePath("/job-costs");
 }
 
