@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import dynamic from "next/dynamic";
-import type { SchedulePin } from "./ScheduleMapLeaflet";
+import type { SchedulePin } from "./types";
 
 // Leaflet touches `window` on import, so it can only ever run client-side —
 // same ssr:false dynamic-import pattern as app/(platform)/map/MapLoader.tsx.
@@ -22,9 +22,13 @@ const ScheduleMapLeaflet = dynamic(() => import("./ScheduleMapLeaflet"), {
 export default function ScheduleMapPanel({
   pins,
   title,
+  selectedId,
+  onSelectPin,
 }: {
   pins: SchedulePin[];
   title: string;
+  selectedId: string | null;
+  onSelectPin: (id: string) => void;
 }) {
   const [open, setOpen] = useState(true);
 
@@ -62,7 +66,11 @@ export default function ScheduleMapPanel({
             No addresses to plot for this view yet.
           </p>
         ) : (
-          <ScheduleMapLeaflet pins={pins} />
+          <ScheduleMapLeaflet
+            pins={pins}
+            selectedId={selectedId}
+            onSelectPin={onSelectPin}
+          />
         )}
       </div>
     </div>

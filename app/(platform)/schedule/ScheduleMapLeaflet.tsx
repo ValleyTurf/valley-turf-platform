@@ -9,14 +9,7 @@ import {
   useMap,
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
-
-export type SchedulePin = {
-  id: string;
-  name: string;
-  lat: number;
-  lng: number;
-  timeLabel: string;
-};
+import type { SchedulePin } from "./types";
 
 // Phoenix-area fallback center — only used when there are no pins to fit
 // bounds to (shouldn't normally happen since the panel hides itself when
@@ -44,7 +37,15 @@ function FitBoundsToPins({ pins }: { pins: SchedulePin[] }) {
   return null;
 }
 
-export default function ScheduleMapLeaflet({ pins }: { pins: SchedulePin[] }) {
+export default function ScheduleMapLeaflet({
+  pins,
+  selectedId,
+  onSelectPin,
+}: {
+  pins: SchedulePin[];
+  selectedId: string | null;
+  onSelectPin: (id: string) => void;
+}) {
   return (
     <MapContainer
       center={FALLBACK_CENTER}
@@ -58,24 +59,51 @@ export default function ScheduleMapLeaflet({ pins }: { pins: SchedulePin[] }) {
 
       <FitBoundsToPins pins={pins} />
 
-      {pins.map((pin) => (
-        <CircleMarker
-          key={pin.id}
-          center={[pin.lat, pin.lng]}
-          radius={8}
-          pathOptions={{
-            color: "white",
-            weight: 1.5,
-            fillColor: "#174734",
-            fillOpacity: 0.9,
-          }}
-        >
-          <Popup>
-            <p style={{ fontWeight: "bold" }}>{pin.name}</p>
-            <p style={{ fontSize: "0.85rem" }}>{pin.timeLabel}</p>
-          </Popup>
-        </CircleMarker>
-      ))}
+      {pins.map((pin) => {
+        const isSelected = pin.id === selectedId;
+
+        return (
+          <CircleMarker
+            key={pin.id}
+            center={[pin.lat, pin.lng]}
+            radius={isSelected ? 12 : 8}
+            pathOptions={{
+              color: isSelected ? "#d4af37" : "white",
+              weight: isSelected ? 3 : 1.5,
+              fillColor: pin.color,
+              fillOpacity: 0.9,
+            }}
+            eventHandlers={{
+              click: () => onSelectPin(pin.id),
+            }}
+          >
+            <Popup>
+              <p style={{ fontWeight: "bold" }}>{pin.name}</p>
+              <p style={{ fontSize: "0.85rem" }}>{pin.dateTimeShort}</p>
+              <p
+                style={{
+                  fontSize: "0.8rem",
+                  marginTop: "2px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: "8px",
+                    height: "8px",
+                    borderRadius: "9999px",
+                    backgroundColor: pin.color,
+                  }}
+                />
+                {pin.serviceLabel}
+              </p>
+            </Popup>
+          </CircleMarker>
+        );
+      })}
     </MapContainer>
   );
 }
