@@ -25,7 +25,8 @@ export type PermissionSection =
   | "marketing_analytics"
   | "customer_intelligence"
   | "settings_audit"
-  | "quotes";
+  | "quotes"
+  | "jobs";
 
 export const SECTIONS: { id: PermissionSection; label: string; description: string }[] = [
   {
@@ -61,6 +62,11 @@ export const SECTIONS: { id: PermissionSection; label: string; description: stri
     description:
       "Creating and managing customer/lead quotes and their shareable accept/decline links.",
   },
+  {
+    id: "jobs",
+    label: "Jobs",
+    description: "Creating new jobs in Jobber directly from this app.",
+  },
 ];
 
 const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
@@ -80,6 +86,7 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
   // section gate — this only covers the internal /quotes management
   // pages.
   quotes: ["/quotes"],
+  jobs: ["/jobs"],
 };
 
 // Structurally admin-only, always — not editable via role_permissions.
@@ -107,6 +114,7 @@ export function emptyPermissions(): RolePermissionsMap {
     customer_intelligence: false,
     settings_audit: false,
     quotes: false,
+    jobs: false,
   };
 
   return { manager: { ...blank }, staff: { ...blank } };

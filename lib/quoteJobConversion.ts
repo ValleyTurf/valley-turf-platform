@@ -12,12 +12,18 @@
 //   so accepting twice (double-click, retry after a partial failure)
 //   can't create two jobs.
 //
+// jobCreate itself (JOB_CREATE_MUTATION, fetchExistingPropertyId,
+// createJobberJob) lives in lib/jobberJob.ts now — shared with the manual
+// "New Job" flow at app/(platform)/jobs/new, which needs the exact same
+// property-resolution + jobCreate call. This file keeps only what's
+// specific to quotes: turning a lead into a real Jobber client (with an
+// initial property) and the retry/error bookkeeping on the quotes row.
+//
 // jobCreate's real requirements (confirmed via live introspection against
-// Jobber's own schema, not docs — the one-off diagnostic route used for
-// this has since been deleted, its job done). JobCreateAttributes needs a
-// propertyId (NOT a clientId — jobs attach to a property) and an
-// invoicing object with two required enums. So this module always
-// resolves a propertyId before calling jobCreate:
+// Jobber's own schema, not docs). JobCreateAttributes needs a propertyId
+// (NOT a clientId — jobs attach to a property) and an invoicing object
+// with two required enums. So this module always resolves a propertyId
+// before calling jobCreate:
 //   - Existing customer (quote.customer_id already a real Jobber client
 //     id): fetch their first existing property via client.clientProperties.
 //   - New client (lead-based quote, no Jobber client yet): create the
@@ -44,6 +50,11 @@
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
 import { jobberGraphQL } from "@/lib/jobber";
+import {
+  createJobberJob,
+  fetchExistingPropertyId,
+  type MutationOutcome,
+} from "@/lib/jobberJob";
 
 type QuoteForConversion = {
   id: string;
@@ -56,10 +67,6 @@ type QuoteForConversion = {
   service_category: string | null;
   jobber_job_id: string | null;
 };
-
-type MutationOutcome<T> =
-  | { ok: true; value: T }
-  | { ok: false; error: string };
 
 const CLIENT_CREATE_MUTATION = `
   mutation CreateClientFromQuote($input: ClientCreateInput!) {
@@ -74,42 +81,6 @@ const CLIENT_CREATE_MUTATION = `
       }
       userErrors {
         message
-      }
-    }
-  }
-`;
-
-// Argument name "input", type "JobCreateAttributes" — confirmed via two
-// live errors against Jobber's real schema (argument name from "Field
-// 'jobCreate' is missing required arguments: input"; type name from
-// Jobber's job mutations predating their client ones and keeping the
-// older "*Attributes" naming convention). propertyId + invoicing are
-// JobCreateAttributes' only two required fields, confirmed via
-// introspection (see app/api/jobber/job-create-schema-check).
-const JOB_CREATE_MUTATION = `
-  mutation CreateJobFromQuote($input: JobCreateAttributes!) {
-    jobCreate(input: $input) {
-      job {
-        id
-        jobNumber
-      }
-      userErrors {
-        message
-      }
-    }
-  }
-`;
-
-// Existing customers already have a real Jobber client id in
-// quotes.customer_id — this finds their first property so the job has
-// something to attach to without creating a duplicate property.
-const CLIENT_PROPERTY_QUERY = `
-  query GetClientProperty($id: EncodedId!) {
-    client(id: $id) {
-      clientProperties(first: 1) {
-        nodes {
-          id
-        }
       }
     }
   }
@@ -193,75 +164,6 @@ async function createJobberClientForQuote(
     data?.clientCreate?.client?.clientProperties?.nodes?.[0]?.id ?? null;
 
   return { ok: true, value: { clientId, propertyId } };
-}
-
-async function fetchExistingPropertyId(
-  clientId: string
-): Promise<string | null> {
-  try {
-    const { data, errors } = await jobberGraphQL<{
-      client: {
-        clientProperties: { nodes: { id: string }[] } | null;
-      } | null;
-    }>(CLIENT_PROPERTY_QUERY, { id: clientId });
-
-    if (errors?.length) return null;
-
-    return data?.client?.clientProperties?.nodes?.[0]?.id ?? null;
-  } catch (error) {
-    console.error("fetchExistingPropertyId failed:", error);
-    return null;
-  }
-}
-
-async function createJobberJobForQuote(
-  quote: QuoteForConversion,
-  propertyId: string
-): Promise<MutationOutcome<{ jobId: string; jobNumber: string | null }>> {
-  // Matches the "{Customer} - {Service}" title convention the whole
-  // schedule page's service-coloring logic already expects (see
-  // visitServiceLabel in app/(platform)/schedule/page.tsx), so once this
-  // job gets a visit scheduled in Jobber, it shows up correctly colored
-  // on our own schedule automatically.
-  const title = `${quote.recipient_name} - ${quote.service_category || "Service"}`;
-
-  const input: Record<string, unknown> = {
-    propertyId,
-    title,
-    invoicing: {
-      invoicingType: "FIXED_PRICE",
-      invoicingSchedule: "NEVER",
-    },
-  };
-
-  const { data, errors } = await jobberGraphQL<{
-    jobCreate: {
-      job: { id: string; jobNumber: string | number | null } | null;
-      userErrors: { message: string }[];
-    };
-  }>(JOB_CREATE_MUTATION, { input });
-
-  if (errors?.length) {
-    return { ok: false, error: errors.map((e) => e.message).join("; ") };
-  }
-
-  const userErrors = data?.jobCreate?.userErrors ?? [];
-  if (userErrors.length > 0) {
-    return { ok: false, error: userErrors.map((e) => e.message).join("; ") };
-  }
-
-  const job = data?.jobCreate?.job;
-  if (!job?.id) {
-    return { ok: false, error: "Jobber did not return a job id." };
-  }
-
-  return {
-    ok: true,
-    value: {
-      jobId: job.id,
-      jobNumber: job.jobNumber != null ? String(job.jobNumber) : null,
-    },
-  };
 }
 
 async function recordConversionFailure(
@@ -352,7 +254,15 @@ export async function attemptQuoteJobConversion(
       return;
     }
 
-    const jobResult = await createJobberJobForQuote(typedQuote, propertyId);
+    // Matches the "{Customer} - {Service}" title convention the whole
+    // schedule page's service-coloring logic already expects (see
+    // visitServiceLabel in app/(platform)/schedule/page.tsx), so once this
+    // job gets a visit scheduled in Jobber, it shows up correctly colored
+    // on our own schedule automatically.
+    const jobResult = await createJobberJob({
+      propertyId,
+      title: `${typedQuote.recipient_name} - ${typedQuote.service_category || "Service"}`,
+    });
 
     if (!jobResult.ok) {
       await recordConversionFailure(quoteId, jobResult.error);

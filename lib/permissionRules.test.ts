@@ -12,6 +12,7 @@ const ALL_ALLOWED: RolePermissionsMap = {
     customer_intelligence: true,
     settings_audit: true,
     quotes: true,
+    jobs: true,
   },
   staff: {
     job_costing: true,
@@ -20,6 +21,7 @@ const ALL_ALLOWED: RolePermissionsMap = {
     customer_intelligence: true,
     settings_audit: true,
     quotes: true,
+    jobs: true,
   },
 };
 
@@ -31,6 +33,7 @@ const NONE_ALLOWED: RolePermissionsMap = {
     customer_intelligence: false,
     settings_audit: false,
     quotes: false,
+    jobs: false,
   },
   staff: {
     job_costing: false,
@@ -39,6 +42,7 @@ const NONE_ALLOWED: RolePermissionsMap = {
     customer_intelligence: false,
     settings_audit: false,
     quotes: false,
+    jobs: false,
   },
 };
 
@@ -86,6 +90,18 @@ describe("isPathAllowedForRole", () => {
     expect(isPathAllowedForRole("/quotes", "staff", ALL_ALLOWED)).toBe(true);
     expect(
       isPathAllowedForRole("/quotes/new", "manager", NONE_ALLOWED)
+    ).toBe(false);
+  });
+
+  it("gates /jobs the same way as any other section", () => {
+    expect(isPathAllowedForRole("/jobs/new", "staff", NONE_ALLOWED)).toBe(
+      false
+    );
+    expect(isPathAllowedForRole("/jobs/new", "staff", ALL_ALLOWED)).toBe(
+      true
+    );
+    expect(
+      isPathAllowedForRole("/jobs/new", "manager", NONE_ALLOWED)
     ).toBe(false);
   });
 
