@@ -68,12 +68,16 @@ export async function fetchExistingPropertyId(
 }
 
 // Recurring cadences this app offers, expressed as the iCalendar RRULE
-// value Jobber's `scheduling.recurrence: ICalendarRule` field expects
-// (confirmed via introspection — it's a plain RFC 5545 rule string, no
-// wrapper object). "Bi-Monthly" here means every 2 months (the trade
-// meaning used throughout this app's own service categories — see
-// job-costs/page.tsx's RECURRING_CATEGORIES and the schedule page's
-// service-color rules), not twice a month.
+// value Jobber's `scheduling.recurrence: ICalendarRule` field expects.
+// Live error confirmed the exact required format: the full "RRULE:"
+// property line, not just the bare rule content — Jobber's own error
+// message gave "RRULE:FREQ=WEEKLY;BYDAY=MO" as an example, and the
+// first live attempt (sent without the "RRULE:" prefix) failed with
+// "Recurrence should be a valid iCalendarRecurrenceRule." "Bi-Monthly"
+// here means every 2 months (the trade meaning used throughout this
+// app's own service categories — see job-costs/page.tsx's
+// RECURRING_CATEGORIES and the schedule page's service-color rules),
+// not twice a month.
 export type RecurrenceFrequency =
   | "weekly"
   | "bimonthly"
@@ -82,11 +86,11 @@ export type RecurrenceFrequency =
   | "semiannual";
 
 const RECURRENCE_RULES: Record<RecurrenceFrequency, string> = {
-  weekly: "FREQ=WEEKLY;INTERVAL=1",
-  bimonthly: "FREQ=MONTHLY;INTERVAL=2",
-  monthly: "FREQ=MONTHLY;INTERVAL=1",
-  quarterly: "FREQ=MONTHLY;INTERVAL=3",
-  semiannual: "FREQ=MONTHLY;INTERVAL=6",
+  weekly: "RRULE:FREQ=WEEKLY;INTERVAL=1",
+  bimonthly: "RRULE:FREQ=MONTHLY;INTERVAL=2",
+  monthly: "RRULE:FREQ=MONTHLY;INTERVAL=1",
+  quarterly: "RRULE:FREQ=MONTHLY;INTERVAL=3",
+  semiannual: "RRULE:FREQ=MONTHLY;INTERVAL=6",
 };
 
 // invoicing is fixed at { invoicingType: FIXED_PRICE, invoicingSchedule:
