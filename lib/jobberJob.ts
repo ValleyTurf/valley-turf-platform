@@ -169,12 +169,12 @@ export async function createJobberJob(params: {
       // scheduling.recurrence is set (confirmed live: "If scheduling
       // recurrence is informed, duration is required."), with no
       // "indefinite" option in DurationUnit (DAYS/WEEKS/MONTHS/YEARS).
-      // Defaulting every recurring job to a 1-year window rather than
+      // Defaulting every recurring job to a 5-year window rather than
       // adding a duration field to the form — most recurring lawn-care
       // contracts don't have a hard end date anyway, and staff can
       // extend or adjust the recurring schedule in Jobber same as they
       // already adjust pricing/scope there.
-      ...(recurrence ? { durationValue: 1, durationUnits: "YEARS" } : {}),
+      ...(recurrence ? { durationValue: 5, durationUnits: "YEARS" } : {}),
     };
     input.scheduling = {
       createVisits: true,
