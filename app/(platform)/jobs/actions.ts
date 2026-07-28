@@ -4,7 +4,11 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
-import { createJobberJob, fetchExistingPropertyId } from "@/lib/jobberJob";
+import {
+  createJobberJob,
+  fetchExistingPropertyId,
+  type RecurrenceFrequency,
+} from "@/lib/jobberJob";
 import type { ActionState } from "./actionState";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
@@ -13,11 +17,34 @@ function cleanText(value: FormDataEntryValue | null): string | null {
   return trimmed ? trimmed : null;
 }
 
+function cleanPrice(value: FormDataEntryValue | null): number | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+const RECURRENCE_VALUES: RecurrenceFrequency[] = [
+  "weekly",
+  "bimonthly",
+  "monthly",
+  "quarterly",
+  "semiannual",
+];
+
+function isRecurrenceFrequency(
+  value: string | null
+): value is RecurrenceFrequency {
+  return (
+    value !== null &&
+    (RECURRENCE_VALUES as string[]).includes(value)
+  );
+}
+
 // Creates a job directly in Jobber for an existing customer — no local
 // database row for the job itself, this only ever writes to Jobber (the
 // next customer/visit sync pulls it back down as the read-only mirror
-// this app otherwise shows). See lib/jobberJob.ts for the mutation
-// itself and why only propertyId/title/invoicing are sent.
+// this app otherwise shows). See lib/jobberJob.ts for exactly which
+// JobCreateAttributes fields get sent and why.
 export async function createJob(
   _prevState: ActionState,
   formData: FormData
@@ -31,6 +58,10 @@ export async function createJob(
   const clientId = cleanText(formData.get("customer_id"));
   const customerName = cleanText(formData.get("customer_name"));
   const title = cleanText(formData.get("title"));
+  const instructions = cleanText(formData.get("instructions"));
+  const price = cleanPrice(formData.get("price"));
+  const startDate = cleanText(formData.get("start_date"));
+  const frequencyRaw = cleanText(formData.get("frequency"));
 
   if (!clientId) {
     return { error: "Pick a customer for this job." };
@@ -38,6 +69,16 @@ export async function createJob(
 
   if (!title) {
     return { error: "Enter a job title." };
+  }
+
+  const isRecurring = frequencyRaw !== null && frequencyRaw !== "one_time";
+
+  if (isRecurring && !isRecurrenceFrequency(frequencyRaw)) {
+    return { error: "Pick a valid recurring frequency." };
+  }
+
+  if (isRecurring && !startDate) {
+    return { error: "A start date is required for a recurring job." };
   }
 
   const propertyId = await fetchExistingPropertyId(clientId);
@@ -49,7 +90,16 @@ export async function createJob(
     };
   }
 
-  const jobResult = await createJobberJob({ propertyId, title });
+  const jobResult = await createJobberJob({
+    propertyId,
+    title,
+    instructions,
+    price,
+    startDate,
+    recurrence: isRecurring && isRecurrenceFrequency(frequencyRaw)
+      ? frequencyRaw
+      : null,
+  });
 
   if (!jobResult.ok) {
     return { error: `Couldn't create the job in Jobber: ${jobResult.error}` };
@@ -66,6 +116,10 @@ export async function createJob(
       jobber_job_number: jobResult.value.jobNumber,
       customer_id: clientId,
       title,
+      instructions,
+      price,
+      start_date: startDate,
+      frequency: isRecurring ? frequencyRaw : "one_time",
     },
   });
 

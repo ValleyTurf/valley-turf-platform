@@ -65,6 +65,8 @@ type QuoteForConversion = {
   recipient_phone: string | null;
   recipient_address: string | null;
   service_category: string | null;
+  description: string | null;
+  price_total: number | string | null;
   jobber_job_id: string | null;
 };
 
@@ -186,7 +188,7 @@ export async function attemptQuoteJobConversion(
     const { data: quote, error } = await supabaseServer
       .from("quotes")
       .select(
-        "id, customer_id, lead_id, recipient_name, recipient_email, recipient_phone, recipient_address, service_category, jobber_job_id"
+        "id, customer_id, lead_id, recipient_name, recipient_email, recipient_phone, recipient_address, service_category, description, price_total, jobber_job_id"
       )
       .eq("id", quoteId)
       .single();
@@ -258,10 +260,21 @@ export async function attemptQuoteJobConversion(
     // schedule page's service-coloring logic already expects (see
     // visitServiceLabel in app/(platform)/schedule/page.tsx), so once this
     // job gets a visit scheduled in Jobber, it shows up correctly colored
-    // on our own schedule automatically.
+    // on our own schedule automatically. The quote's own price and
+    // description transfer too — the customer already agreed to this
+    // price, no reason to leave the job blank and make staff retype it
+    // in Jobber. No scheduling/recurrence here: quotes are one-off sales
+    // documents, not a recurring-service setup, so this always lands as
+    // a one-time job (staff schedule the visit in Jobber, or set up a
+    // recurring plan there once the customer's cadence is known).
+    const quotePrice =
+      typedQuote.price_total !== null ? Number(typedQuote.price_total) : NaN;
+
     const jobResult = await createJobberJob({
       propertyId,
       title: `${typedQuote.recipient_name} - ${typedQuote.service_category || "Service"}`,
+      instructions: typedQuote.description,
+      price: Number.isFinite(quotePrice) ? quotePrice : null,
     });
 
     if (!jobResult.ok) {

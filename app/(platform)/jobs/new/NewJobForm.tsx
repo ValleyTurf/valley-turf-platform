@@ -9,6 +9,15 @@ export type PickerCustomer = {
   name: string;
 };
 
+const FREQUENCY_OPTIONS: { value: string; label: string }[] = [
+  { value: "one_time", label: "One-Time" },
+  { value: "weekly", label: "Weekly" },
+  { value: "bimonthly", label: "Bi-Monthly (every 2 months)" },
+  { value: "monthly", label: "Monthly" },
+  { value: "quarterly", label: "Quarterly" },
+  { value: "semiannual", label: "Semi-Annual" },
+];
+
 export default function NewJobForm({
   customers,
 }: {
@@ -20,6 +29,8 @@ export default function NewJobForm({
   );
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<PickerCustomer | null>(null);
+  const [frequency, setFrequency] = useState("one_time");
+  const isRecurring = frequency !== "one_time";
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -105,10 +116,87 @@ export default function NewJobForm({
           placeholder="e.g. Turf Installation"
           className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
         />
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label htmlFor="price" className="text-xs font-bold text-[#9c7a20]">
+            Price ($){" "}
+            <span className="font-normal text-[#6b705c]">(optional)</span>
+          </label>
+          <input
+            id="price"
+            name="price"
+            type="number"
+            step="0.01"
+            min="0"
+            placeholder="0.00"
+            className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+          />
+          <p className="mt-1 text-xs text-[#6b705c]">
+            Added as a single line item using the job title.
+          </p>
+        </div>
+
+        <div>
+          <label
+            htmlFor="frequency"
+            className="text-xs font-bold text-[#9c7a20]"
+          >
+            Frequency
+          </label>
+          <select
+            id="frequency"
+            name="frequency"
+            value={frequency}
+            onChange={(e) => setFrequency(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-[#d9d4c6] bg-white px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+          >
+            {FREQUENCY_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label htmlFor="start_date" className="text-xs font-bold text-[#9c7a20]">
+          Start Date{" "}
+          <span className="font-normal text-[#6b705c]">
+            {isRecurring ? "(required for a recurring job)" : "(optional)"}
+          </span>
+        </label>
+        <input
+          id="start_date"
+          name="start_date"
+          type="date"
+          required={isRecurring}
+          className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+        />
         <p className="mt-1 text-xs text-[#6b705c]">
-          Pricing, line items, and scheduling still get set in Jobber after
-          the job is created.
+          {isRecurring
+            ? "First visit date — visits then repeat on this cadence."
+            : "If set, schedules a single visit on this date. Leave blank to schedule it later in Jobber."}
         </p>
+      </div>
+
+      <div>
+        <label
+          htmlFor="instructions"
+          className="text-xs font-bold text-[#9c7a20]"
+        >
+          Instructions{" "}
+          <span className="font-normal text-[#6b705c]">(optional)</span>
+        </label>
+        <textarea
+          id="instructions"
+          name="instructions"
+          rows={3}
+          placeholder="Scope of work, gate codes, anything the crew needs to know"
+          className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+        />
       </div>
 
       {state.error && (
