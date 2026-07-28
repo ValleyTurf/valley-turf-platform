@@ -3,25 +3,28 @@ import { jobberGraphQL } from "@/lib/jobber";
 
 export const dynamic = "force-dynamic";
 
-// One-time diagnostic route (not linked from any UI) to find the real
-// shape of the fields lib/jobberJob.ts's createJobberJob() doesn't send
-// yet: scheduling (needed so a job can be created as Recurring instead
-// of always landing as One-Time), lineItems (pricing), and whatever
-// holds free-text scope-of-work/instructions. The full JobCreateAttributes
-// field list tells us the exact referenced type name for each of those —
-// no need to guess field names one at a time and burn error-message
-// round trips the way the original propertyId/invoicing discovery did.
-// Also speculatively checks a few likely type names for the scheduling
-// and line-item sub-types directly, since __type just returns null for a
-// name that doesn't exist (no error), so several guesses can ride in one
-// request.
+// Round 2. Round 1 (see git history) got JobCreateAttributes' full field
+// list: instructions is a plain String (no sub-type needed), lineItems
+// is [JobCreateLineItemAttributes!] (fields already known: name,
+// description, category, taxable, saveToProductsAndServices, unitPrice,
+// quantity, etc.), and — the one this app needs to fix Recurring vs
+// One-Time — scheduling is a JobSchedulingAttributes (none of round 1's
+// speculative type-name guesses for it were right; this is the real
+// name). timeframe (TimeframeAttributes) and arrivalWindow
+// (ArrivalWindowAttributes) are separate optional fields alongside it.
+//
+// This round introspects the real shape of all three, plus a few
+// speculative guesses at a nested recurrence sub-type in case
+// JobSchedulingAttributes references one (harmless if wrong — __type
+// just returns null for a name that doesn't exist), plus the
+// ProductsAndServicesCategory enum values for the line-item category
+// field discovered in round 1.
 //
 // Safe to delete once the recurring/pricing/instructions fields are
-// confirmed working — this makes no data changes, it only reads
-// Jobber's own schema.
+// confirmed working. Not linked from any UI, makes no data changes.
 const SCHEMA_QUERY = `
-  query JobRecurringSchemaCheck {
-    jobCreateAttributes: __type(name: "JobCreateAttributes") {
+  query JobSchedulingSchemaCheck {
+    jobSchedulingAttributes: __type(name: "JobSchedulingAttributes") {
       name
       inputFields {
         name
@@ -40,7 +43,7 @@ const SCHEMA_QUERY = `
       }
     }
 
-    jobCreateScheduleAttributes: __type(name: "JobCreateScheduleAttributes") {
+    timeframeAttributes: __type(name: "TimeframeAttributes") {
       name
       inputFields {
         name
@@ -59,45 +62,7 @@ const SCHEMA_QUERY = `
       }
     }
 
-    schedulingAttributes: __type(name: "SchedulingAttributes") {
-      name
-      inputFields {
-        name
-        type {
-          kind
-          name
-          ofType {
-            kind
-            name
-            ofType {
-              kind
-              name
-            }
-          }
-        }
-      }
-    }
-
-    jobScheduleAttributes: __type(name: "JobScheduleAttributes") {
-      name
-      inputFields {
-        name
-        type {
-          kind
-          name
-          ofType {
-            kind
-            name
-            ofType {
-              kind
-              name
-            }
-          }
-        }
-      }
-    }
-
-    lineItemAttributes: __type(name: "LineItemAttributes") {
+    arrivalWindowAttributes: __type(name: "ArrivalWindowAttributes") {
       name
       inputFields {
         name
@@ -112,51 +77,70 @@ const SCHEMA_QUERY = `
       }
     }
 
-    jobLineItemCreateAttributes: __type(name: "JobLineItemCreateAttributes") {
-      name
-      inputFields {
-        name
-        type {
-          kind
-          name
-          ofType {
-            kind
-            name
-          }
-        }
-      }
-    }
-
-    jobCreateLineItemAttributes: __type(name: "JobCreateLineItemAttributes") {
-      name
-      inputFields {
-        name
-        type {
-          kind
-          name
-          ofType {
-            kind
-            name
-          }
-        }
-      }
-    }
-
-    recurringJobFrequency: __type(name: "RecurringJobFrequency") {
+    productsAndServicesCategory: __type(name: "ProductsAndServicesCategory") {
       name
       enumValues {
         name
       }
     }
 
-    scheduleFrequency: __type(name: "ScheduleFrequency") {
+    recurringScheduleAttributes: __type(name: "RecurringScheduleAttributes") {
+      name
+      inputFields {
+        name
+        type {
+          kind
+          name
+          ofType {
+            kind
+            name
+            ofType {
+              kind
+              name
+            }
+          }
+        }
+      }
+    }
+
+    recurrenceAttributes: __type(name: "RecurrenceAttributes") {
+      name
+      inputFields {
+        name
+        type {
+          kind
+          name
+          ofType {
+            kind
+            name
+          }
+        }
+      }
+    }
+
+    jobRecurrenceAttributes: __type(name: "JobRecurrenceAttributes") {
+      name
+      inputFields {
+        name
+        type {
+          kind
+          name
+          ofType {
+            kind
+            name
+          }
+        }
+      }
+    }
+
+    recurrenceFrequency: __type(name: "RecurrenceFrequency") {
       name
       enumValues {
         name
       }
     }
 
-    jobRecurrenceFrequency: __type(name: "JobRecurrenceFrequency") {
+    recurringFrequency: __type(name: "RecurringFrequency") {
       name
       enumValues {
         name
@@ -181,7 +165,7 @@ export async function GET() {
       schema: response.data,
     });
   } catch (error) {
-    console.error("Jobber job-recurring schema check failed:", error);
+    console.error("Jobber job-scheduling schema check failed:", error);
 
     return NextResponse.json(
       {
