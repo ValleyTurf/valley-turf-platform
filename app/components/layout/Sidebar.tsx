@@ -32,6 +32,11 @@ const topLevelItems: NavItem[] = [
     icon: "📅",
   },
   {
+    name: "My Day",
+    href: "/my-day",
+    icon: "🚚",
+  },
+  {
     name: "Recurring Services",
     href: "/recurring-services",
     icon: "🔁",

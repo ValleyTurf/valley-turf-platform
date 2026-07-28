@@ -22,11 +22,13 @@ type Material = {
   name: string;
   unit_label: string;
   unit_cost: number | string;
+  end_date: string | null;
 };
 
 type Equipment = {
   id: string;
   name: string;
+  retired_date: string | null;
 };
 
 type VisitRow = {
@@ -79,6 +81,26 @@ function formatDateTime(value: string | null): string {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+  }).format(date);
+}
+
+function formatDateOnly(value: string | null): string {
+  if (!value) {
+    return "";
+  }
+
+  const [year, month, day] = value.split("-").map(Number);
+
+  if (!year || !month || !day) {
+    return "";
+  }
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
   }).format(date);
 }
 
@@ -172,33 +194,6 @@ export default async function JobCostsPage({
   const from = (currentPage - 1) * PAGE_SIZE;
   const to = from + PAGE_SIZE - 1;
 
-  const [materialsResult, equipmentResult] = await Promise.all([
-    (() => {
-      const today = new Date().toISOString().slice(0, 10);
-      // Only offer materials/labor rates that are still active — once a
-      // material or labor rate has an end_date in the past (see
-      // Materials & Costs at /materials), it drops out of this form so
-      // an old price/rate can't accidentally get logged against a new
-      // job cost entry.
-      return supabaseServer
-        .from("materials")
-        .select("id, name, unit_label, unit_cost")
-        .or(`end_date.is.null,end_date.gt.${today}`)
-        .order("name", { ascending: true });
-    })(),
-    (() => {
-      const today = new Date().toISOString().slice(0, 10);
-      return supabaseServer
-        .from("equipment")
-        .select("id, name")
-        .or(`retired_date.is.null,retired_date.gt.${today}`)
-        .order("name", { ascending: true });
-    })(),
-  ]);
-
-  const materials = (materialsResult.data ?? []) as Material[];
-  const equipmentList = (equipmentResult.data ?? []) as Equipment[];
-
   const nowIso = new Date().toISOString();
 
   let visitsQuery = supabaseServer
@@ -235,7 +230,39 @@ export default async function JobCostsPage({
 
   const visitIds = visits.map((visit) => visit.jobber_visit_id);
 
-  const [usageResult, equipmentUsageResult, costResult] = await Promise.all([
+  // Materials/labor rates and equipment are point-in-time: once one gets
+  // an end_date (see Materials & Costs at /materials — that's how staff
+  // roll a price/rate change), it should stop showing up for logging NEW
+  // work, but must stay available for logging OLDER visits that predate
+  // the change. So instead of a fixed "active as of today" cutoff, use
+  // the earliest visit actually visible on this page — an ended material
+  // still shows here as long as at least one unlogged visit on screen is
+  // old enough that it was the active rate back then. Falls back to
+  // today when there's nothing to log (empty page/search).
+  const earliestVisibleDate = visits.reduce<string | null>((earliest, visit) => {
+    if (!visit.start_at) return earliest;
+    const visitDate = visit.start_at.slice(0, 10);
+    return !earliest || visitDate < earliest ? visitDate : earliest;
+  }, null);
+  const cutoffDate = earliestVisibleDate ?? new Date().toISOString().slice(0, 10);
+
+  const [
+    materialsResult,
+    equipmentResult,
+    usageResult,
+    equipmentUsageResult,
+    costResult,
+  ] = await Promise.all([
+    supabaseServer
+      .from("materials")
+      .select("id, name, unit_label, unit_cost, end_date")
+      .or(`end_date.is.null,end_date.gt.${cutoffDate}`)
+      .order("name", { ascending: true }),
+    supabaseServer
+      .from("equipment")
+      .select("id, name, retired_date")
+      .or(`retired_date.is.null,retired_date.gt.${cutoffDate}`)
+      .order("name", { ascending: true }),
     visitIds.length > 0
       ? supabaseServer
           .from("visit_material_usage")
@@ -255,6 +282,9 @@ export default async function JobCostsPage({
           .in("jobber_visit_id", visitIds)
       : Promise.resolve({ data: [] as VisitCost[] }),
   ]);
+
+  const materials = (materialsResult.data ?? []) as Material[];
+  const equipmentList = (equipmentResult.data ?? []) as Equipment[];
 
   const usageMap = new Map<string, number>();
   for (const row of (usageResult.data ?? []) as UsageRow[]) {
@@ -501,6 +531,11 @@ export default async function JobCostsPage({
                                     ? "(h:mm)"
                                     : `(${material.unit_label}s)`}
                                 </span>
+                                {material.end_date && (
+                                  <span className="ml-1 rounded bg-[#faf4e3] px-1.5 py-0.5 text-[9px] font-bold text-[#9c7a20]">
+                                    ended {formatDateOnly(material.end_date)}
+                                  </span>
+                                )}
                                 <input
                                   type={isTime ? "text" : "number"}
                                   inputMode={isTime ? "text" : "decimal"}
@@ -547,6 +582,11 @@ export default async function JobCostsPage({
                                   <span className="text-sm font-semibold">
                                     {item.name}
                                   </span>
+                                  {item.retired_date && (
+                                    <span className="rounded bg-[#faf4e3] px-1.5 py-0.5 text-[9px] font-bold text-[#9c7a20]">
+                                      retired {formatDateOnly(item.retired_date)}
+                                    </span>
+                                  )}
                                 </label>
                               );
                             })}
