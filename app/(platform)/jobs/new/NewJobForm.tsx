@@ -177,7 +177,7 @@ export default function NewJobForm({
         />
         <p className="mt-1 text-xs text-[#6b705c]">
           {isRecurring
-            ? "First visit date — visits then repeat on this cadence."
+            ? "First visit date — visits then repeat on this cadence for 1 year. Extend or adjust the recurring schedule in Jobber anytime."
             : "If set, schedules a single visit on this date. Leave blank to schedule it later in Jobber."}
         </p>
       </div>
