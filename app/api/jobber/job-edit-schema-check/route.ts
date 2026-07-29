@@ -11,53 +11,61 @@
 // convention, so this round introspects the real type names instead of
 // guessing.
 //
-// Round 2: full inputFields for JobEditInput, JobEditLineItemsInput, and
-// JobCloseInput, one level deep on any nested object/enum types so we can
-// tell whether e.g. scheduling/recurrence is editable directly on
-// JobEditInput or lives on a nested input object that needs its own
-// follow-up query.
+// Round 2 (done) found JobEditInput reuses the exact same
+// TimeframeAttributes/JobSchedulingAttributes types JobCreateAttributes
+// already uses for scheduling/recurrence — so editing a job's cadence can
+// reuse lib/jobberJob.ts's existing RECURRENCE_RULES construction as-is,
+// no new mutation shape needed there. It also found jobCloseInput needs a
+// required IncompleteVisitDecisionEnum, and jobEditLineItemsInput.lineItems
+// is a list whose element type wasn't resolved (query only went deep
+// enough to see LIST -> NON_NULL, not the named type inside).
+//
+// Round 3: resolve that line-item element type name (one more level of
+// ofType), the IncompleteVisitDecisionEnum's actual values (needed to call
+// jobClose at all, since the field is required), and — since guessing
+// costs nothing — speculative inputFields lookups for likely names of the
+// line-item edit type, in case the guess lands and saves a round trip.
 import "server-only";
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 
-const TYPE_FIELDS = `
-  name
-  kind
-  ofType {
-    name
-    kind
-    ofType {
-      name
-      kind
-    }
-  }
-`;
-
 const QUERY = `
-  query DiagnoseJobEditInputs {
-    jobEditInput: __type(name: "JobEditInput") {
-      inputFields {
-        name
-        type { ${TYPE_FIELDS} }
-      }
-    }
+  query DiagnoseJobEditRound3 {
     jobEditLineItemsInput: __type(name: "JobEditLineItemsInput") {
       inputFields {
         name
-        type { ${TYPE_FIELDS} }
+        type {
+          name
+          kind
+          ofType {
+            name
+            kind
+            ofType {
+              name
+              kind
+              ofType {
+                name
+                kind
+              }
+            }
+          }
+        }
       }
     }
-    jobCloseInput: __type(name: "JobCloseInput") {
-      inputFields {
-        name
-        type { ${TYPE_FIELDS} }
-      }
+    incompleteVisitEnum: __type(name: "IncompleteVisitDecisionEnum") {
+      enumValues { name }
     }
-    jobReopenPayload: __type(name: "JobReopenPayload") {
-      fields {
-        name
-        type { ${TYPE_FIELDS} }
-      }
+    guess1: __type(name: "JobLineItemEditAttributes") {
+      inputFields { name type { name kind ofType { name kind } } }
+    }
+    guess2: __type(name: "JobEditLineItemAttributes") {
+      inputFields { name type { name kind ofType { name kind } } }
+    }
+    guess3: __type(name: "LineItemEditAttributes") {
+      inputFields { name type { name kind ofType { name kind } } }
+    }
+    guess4: __type(name: "JobCreateLineItemAttributes") {
+      inputFields { name type { name kind ofType { name kind } } }
     }
   }
 `;
@@ -65,10 +73,12 @@ const QUERY = `
 export async function GET() {
   try {
     const { data, errors } = await jobberGraphQL<{
-      jobEditInput: unknown;
       jobEditLineItemsInput: unknown;
-      jobCloseInput: unknown;
-      jobReopenPayload: unknown;
+      incompleteVisitEnum: unknown;
+      guess1: unknown;
+      guess2: unknown;
+      guess3: unknown;
+      guess4: unknown;
     }>(QUERY);
 
     if (errors?.length) {
