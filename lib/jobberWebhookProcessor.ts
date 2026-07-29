@@ -571,10 +571,46 @@ async function handleDestroyedInvoice(jobberInvoiceId: string): Promise<void> {
   );
 }
 
+// Unlike jobs/invoices/customers (see the other handleDestroyed* no-ops
+// above — deliberately retained for historical reporting), a destroyed
+// visit that never happened has no historical value to protect, and
+// leaving it in jobber_visits actively broke things: it kept showing up
+// as a loggable stop on /job-costs (and on /schedule, /my-day) forever,
+// since nothing ever pruned it. This is also exactly what jobClose's
+// COMPLETE_PAST_DESTROY_FUTURE mode does when a recurring job gets
+// canceled from /jobs/[id]/edit — it destroys every not-yet-happened
+// visit in Jobber, and those destructions each fire their own
+// VISIT_DESTROY webhook.
+//
+// Cleans up visit_material_usage/visit_equipment_usage too, in case a
+// visit was ever destroyed after costs were already logged against it
+// (unlikely for a future/incomplete visit, but cheap to guard against
+// leaving orphaned rows). visit_material_cost is a view derived from
+// visit_material_usage, not a real table, so it needs no cleanup of its
+// own.
 async function handleDestroyedVisit(jobberVisitId: string): Promise<void> {
-  console.log(
-    `Jobber reported deleted visit ${jobberVisitId}. Historical visit data was retained.`
-  );
+  await supabaseServer
+    .from("visit_material_usage")
+    .delete()
+    .eq("jobber_visit_id", jobberVisitId);
+
+  await supabaseServer
+    .from("visit_equipment_usage")
+    .delete()
+    .eq("jobber_visit_id", jobberVisitId);
+
+  const { error } = await supabaseServer
+    .from("jobber_visits")
+    .delete()
+    .eq("jobber_visit_id", jobberVisitId);
+
+  if (error) {
+    throw new Error(
+      `Unable to delete destroyed Jobber visit ${jobberVisitId}: ${error.message}`
+    );
+  }
+
+  console.log(`Deleted destroyed Jobber visit ${jobberVisitId}.`);
 }
 
 async function processWebhookEvent(event: WebhookEvent): Promise<void> {
