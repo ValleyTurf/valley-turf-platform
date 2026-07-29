@@ -66,7 +66,18 @@ export async function GET() {
         visit: { id: string } | null;
       }>(CHECK_QUERY, { id: visit.jobber_visit_id });
 
-      if (errors?.length) {
+      // Turns out Jobber doesn't cleanly return `visit: null` for a
+      // destroyed id — it comes back as a GraphQL error whose message is
+      // literally "Visit not found" (confirmed live: all 300 checked
+      // visits that no longer exist produced this exact error). Treat
+      // that specific message as confirmation of deletion; any OTHER
+      // error (auth, throttle, network) still gets skipped rather than
+      // risking a delete on a transient failure.
+      const isNotFoundError =
+        !!errors?.length &&
+        errors.every((e) => /not found/i.test(e.message));
+
+      if (errors?.length && !isNotFoundError) {
         skippedErrors += 1;
         errorMessages.push(
           `${visit.jobber_visit_id}: ${errors.map((e) => e.message).join("; ")}`
@@ -74,12 +85,13 @@ export async function GET() {
         continue;
       }
 
-      if (data?.visit) {
+      if (!isNotFoundError && data?.visit) {
         continue; // still exists in Jobber — leave it alone
       }
 
-      // Jobber cleanly returned nothing for this id — it's gone. Same
-      // cleanup as handleDestroyedVisit.
+      // Either Jobber cleanly returned nothing for this id, or gave back
+      // a "Visit not found" error — either way it's gone. Same cleanup
+      // as handleDestroyedVisit.
       await supabaseServer
         .from("visit_material_usage")
         .delete()
