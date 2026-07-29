@@ -1475,61 +1475,59 @@ export default async function CustomerDetailPage({
 
               <div className="mt-3 space-y-2">
                 {jobs.length > 0 ? (
-                  jobs.map((job) => {
-                    const content = (
-                      <>
-                        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-bold">
-                              Job #{job.jobNumber ?? "—"}
-                              {job.title ? ` — ${job.title}` : ""}
-                            </p>
+                  jobs.map((job) => (
+                    <div
+                      key={job.id}
+                      className="rounded-xl border border-[#e7e2d5] px-3 py-2"
+                    >
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold">
+                            Job #{job.jobNumber ?? "—"}
+                            {job.title ? ` — ${job.title}` : ""}
+                          </p>
 
-                            <p className="text-xs text-[#6b705c]">
-                              {formatDate(job.startAt)}
-                            </p>
-                          </div>
-
-                          <div className="flex shrink-0 items-center gap-2">
-                            <span
-                              className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
-                                job.jobStatus
-                              )}`}
-                            >
-                              {formatStatus(job.jobStatus)}
-                            </span>
-
-                            <p className="text-sm font-bold">
-                              {formatCurrency(job.total)}
-                            </p>
-                          </div>
+                          <p className="text-xs text-[#6b705c]">
+                            {formatDate(job.startAt)}
+                          </p>
                         </div>
-                      </>
-                    );
 
-                    if (job.jobberWebUri) {
-                      return (
-                        <a
-                          key={job.id}
-                          href={job.jobberWebUri}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="block rounded-xl border border-[#e7e2d5] px-3 py-2 transition hover:border-[#d4af37]"
-                        >
-                          {content}
-                        </a>
-                      );
-                    }
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span
+                            className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
+                              job.jobStatus
+                            )}`}
+                          >
+                            {formatStatus(job.jobStatus)}
+                          </span>
 
-                    return (
-                      <div
-                        key={job.id}
-                        className="rounded-xl border border-[#e7e2d5] px-3 py-2"
-                      >
-                        {content}
+                          <p className="text-sm font-bold">
+                            {formatCurrency(job.total)}
+                          </p>
+                        </div>
                       </div>
-                    );
-                  })
+
+                      <div className="mt-2 flex flex-wrap gap-3 border-t border-[#f0eee6] pt-2">
+                        <Link
+                          href={`/jobs/${encodeURIComponent(job.id)}/edit`}
+                          className="text-xs font-semibold text-[#9c7a20] hover:underline"
+                        >
+                          Manage →
+                        </Link>
+
+                        {job.jobberWebUri && (
+                          <a
+                            href={job.jobberWebUri}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs font-semibold text-[#6b705c] hover:underline"
+                          >
+                            Open in Jobber ↗
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))
                 ) : (
                   <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
                     No jobs found.
