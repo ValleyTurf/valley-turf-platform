@@ -389,6 +389,8 @@ function buildScheduleVisit(
     specialInstructions: contact?.service_instructions ?? null,
     latitude: Number.isFinite(latitude) ? latitude : null,
     longitude: Number.isFinite(longitude) ? longitude : null,
+    startAtIso: visit.start_at,
+    endAtIso: visit.end_at,
   };
 }
 

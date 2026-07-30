@@ -1,7 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import type { GridDate, ScheduleVisit } from "./types";
+
+// Native HTML5 drag-and-drop data-transfer key for a dragged visit's id —
+// month view only, per how this was scoped (week view stays click-only).
+const VISIT_DRAG_TYPE = "application/x-vtr-visit-id";
 
 export default function ScheduleGrids({
   view,
@@ -9,13 +14,16 @@ export default function ScheduleGrids({
   visitsByDate,
   selectedId,
   onSelectVisit,
+  onDropVisit,
 }: {
   view: "week" | "month";
   dates: GridDate[];
   visitsByDate: Record<string, ScheduleVisit[]>;
   selectedId: string | null;
   onSelectVisit: (visit: ScheduleVisit) => void;
+  onDropVisit: (visitId: string, newDateStr: string) => void;
 }) {
+  const [dragOverDate, setDragOverDate] = useState<string | null>(null);
   if (view === "week") {
     return (
       <section className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-7">
@@ -100,12 +108,31 @@ export default function ScheduleGrids({
                 ? visitsByDate[day.dateStr] ?? []
                 : [];
 
+              const isDragOver = day.inMonth && dragOverDate === day.dateStr;
+
               return (
                 <div
                   key={day.dateStr}
-                  className={`min-h-[92px] border-b border-r border-[#eee9dc] p-2 ${
+                  onDragOver={(event) => {
+                    if (!day.inMonth) return;
+                    event.preventDefault();
+                    if (dragOverDate !== day.dateStr) {
+                      setDragOverDate(day.dateStr);
+                    }
+                  }}
+                  onDragLeave={() => {
+                    if (dragOverDate === day.dateStr) setDragOverDate(null);
+                  }}
+                  onDrop={(event) => {
+                    if (!day.inMonth) return;
+                    event.preventDefault();
+                    setDragOverDate(null);
+                    const visitId = event.dataTransfer.getData(VISIT_DRAG_TYPE);
+                    if (visitId) onDropVisit(visitId, day.dateStr);
+                  }}
+                  className={`min-h-[92px] border-b border-r border-[#eee9dc] p-2 transition ${
                     day.inMonth ? "bg-white" : "bg-[#faf9f5]"
-                  }`}
+                  } ${isDragOver ? "bg-[#fdf8ea] ring-2 ring-inset ring-[#d4af37]" : ""}`}
                 >
                   <Link
                     href={day.dayHref}
@@ -125,9 +152,14 @@ export default function ScheduleGrids({
                       <button
                         key={visit.id}
                         type="button"
+                        draggable
+                        onDragStart={(event) => {
+                          event.dataTransfer.setData(VISIT_DRAG_TYPE, visit.id);
+                          event.dataTransfer.effectAllowed = "move";
+                        }}
                         onClick={() => onSelectVisit(visit)}
-                        title={`${visit.serviceLabel} — ${visit.customerName}`}
-                        className={`block w-full truncate rounded px-1.5 py-0.5 text-left text-[10px] font-semibold leading-tight transition hover:brightness-95 ${
+                        title={`${visit.serviceLabel} — ${visit.customerName} (drag to move)`}
+                        className={`block w-full cursor-grab truncate rounded px-1.5 py-0.5 text-left text-[10px] font-semibold leading-tight transition hover:brightness-95 active:cursor-grabbing ${
                           visit.serviceChipClass
                         } ${
                           visit.id === selectedId

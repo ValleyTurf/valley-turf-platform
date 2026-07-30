@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useState, useTransition } from "react";
 import type { ScheduleVisit } from "./types";
+import { phoenixDateTimeParts } from "./timeHelpers";
+import { rescheduleVisit, skipVisit } from "./actions";
 
 export default function VisitDetailModal({
   visit,
@@ -10,6 +13,56 @@ export default function VisitDetailModal({
   visit: ScheduleVisit;
   onClose: () => void;
 }) {
+  const [isPending, startTransition] = useTransition();
+  const [mode, setMode] = useState<"view" | "reschedule">("view");
+  const [error, setError] = useState<string | null>(null);
+
+  const startParts = phoenixDateTimeParts(visit.startAtIso);
+  const endParts = phoenixDateTimeParts(visit.endAtIso);
+
+  const [date, setDate] = useState(startParts.date);
+  const [startTime, setStartTime] = useState(startParts.time);
+  const [endTime, setEndTime] = useState(endParts.time);
+
+  function handleReschedule() {
+    setError(null);
+    startTransition(async () => {
+      const result = await rescheduleVisit(
+        visit.id,
+        date,
+        startTime || null,
+        endTime || null
+      );
+
+      if (result.error) {
+        setError(result.error);
+      } else {
+        onClose();
+      }
+    });
+  }
+
+  function handleSkip() {
+    if (
+      !confirm(
+        `Skip this visit for ${visit.customerName} on ${visit.dateHeading}? This deletes just this one occurrence in Jobber — the rest of the recurring schedule is untouched. Can't be undone from here.`
+      )
+    ) {
+      return;
+    }
+
+    setError(null);
+    startTransition(async () => {
+      const result = await skipVisit(visit.id);
+
+      if (result.error) {
+        setError(result.error);
+      } else {
+        onClose();
+      }
+    });
+  }
+
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
@@ -129,6 +182,104 @@ export default function VisitDetailModal({
             </div>
           )}
         </dl>
+
+        <div className="mt-5 border-t border-[#eee9dc] pt-4">
+          {mode === "view" ? (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setMode("reschedule")}
+                className="rounded-xl border border-[#174734] px-4 py-2 text-sm font-bold transition hover:bg-[#f7f6f1]"
+              >
+                Reschedule
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSkip}
+                disabled={isPending}
+                className="rounded-xl border border-red-300 bg-red-50 px-4 py-2 text-sm font-bold text-red-700 transition hover:bg-red-100 disabled:opacity-60"
+              >
+                Skip This Visit
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
+                Reschedule This Visit
+              </p>
+
+              <div className="grid grid-cols-3 gap-2">
+                <label className="block">
+                  <span className="text-xs font-semibold text-[#6b705c]">
+                    Date
+                  </span>
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-2 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-xs font-semibold text-[#6b705c]">
+                    Start
+                  </span>
+                  <input
+                    type="time"
+                    value={startTime}
+                    onChange={(e) => setStartTime(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-2 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-xs font-semibold text-[#6b705c]">
+                    End
+                  </span>
+                  <input
+                    type="time"
+                    value={endTime}
+                    onChange={(e) => setEndTime(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-2 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                  />
+                </label>
+              </div>
+
+              <p className="text-xs text-[#6b705c]">
+                Only moving the date? Leave Start/End alone — they&apos;re
+                prefilled with the current time.
+              </p>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleReschedule}
+                  disabled={isPending || !date}
+                  className="rounded-xl bg-[#174734] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#226246] disabled:opacity-60"
+                >
+                  {isPending ? "Saving…" : "Save New Time"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("view");
+                    setError(null);
+                  }}
+                  className="rounded-xl border border-[#d9d4c6] px-4 py-2 text-sm font-bold transition hover:bg-[#f7f6f1]"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <p className="mt-3 text-sm font-semibold text-red-600">{error}</p>
+          )}
+        </div>
       </div>
     </div>
   );

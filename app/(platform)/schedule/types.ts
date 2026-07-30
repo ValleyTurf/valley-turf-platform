@@ -27,6 +27,13 @@ export type ScheduleVisit = {
   specialInstructions: string | null;
   latitude: number | null;
   longitude: number | null;
+  // Raw UTC timestamps, alongside the display-formatted fields above —
+  // needed by the reschedule form and month-view drag-and-drop to know
+  // the visit's exact current time-of-day (not just its formatted
+  // label) so a date-only move can preserve it exactly. See
+  // timeHelpers.ts's phoenixDateTimeParts.
+  startAtIso: string | null;
+  endAtIso: string | null;
 };
 
 export type GridDate = {

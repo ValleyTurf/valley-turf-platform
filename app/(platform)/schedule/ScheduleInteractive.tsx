@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, useTransition, type ReactNode } from "react";
 import Link from "next/link";
 import ScheduleGrids from "./ScheduleGrids";
 import ScheduleMapPanel from "./ScheduleMapPanel";
 import VisitDetailModal from "./VisitDetailModal";
+import { phoenixDateTimeParts } from "./timeHelpers";
+import { rescheduleVisit } from "./actions";
 import type { GridDate, SchedulePin, ScheduleVisit } from "./types";
 
 type ViewMode = "day" | "week" | "month";
@@ -37,6 +39,8 @@ export default function ScheduleInteractive({
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [, startTransition] = useTransition();
+  const [dragError, setDragError] = useState<string | null>(null);
 
   const visitById = useMemo(
     () => new Map(visits.map((v) => [v.id, v])),
@@ -54,10 +58,53 @@ export default function ScheduleInteractive({
     setModalOpen(true);
   }
 
+  // Month-view drag-and-drop: dropping a visit chip onto a different day
+  // cell moves just that one visit to the new date, keeping its existing
+  // time-of-day (same rescheduleVisit action the detail modal's
+  // Reschedule form uses — see that component for why it needs
+  // Phoenix-local date/time strings rather than raw ISO timestamps).
+  function handleDropVisit(visitId: string, newDateStr: string) {
+    const visit = visitById.get(visitId);
+    if (!visit || visit.dateStr === newDateStr) return;
+
+    setDragError(null);
+
+    const startParts = phoenixDateTimeParts(visit.startAtIso);
+    const endParts = phoenixDateTimeParts(visit.endAtIso);
+
+    startTransition(async () => {
+      const result = await rescheduleVisit(
+        visitId,
+        newDateStr,
+        startParts.time || null,
+        endParts.time || null
+      );
+
+      if (result.error) {
+        setDragError(
+          `Couldn't move ${visit.customerName}'s visit: ${result.error}`
+        );
+      }
+    });
+  }
+
   return (
     <div className="mx-auto flex max-w-[1600px] items-start gap-3">
       <div className="min-w-0 flex-1">
         {children}
+
+        {dragError && (
+          <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700">
+            {dragError}
+            <button
+              type="button"
+              onClick={() => setDragError(null)}
+              className="shrink-0 text-red-700 hover:underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         {view === "day" &&
           (visits.length === 0 ? (
@@ -161,6 +208,7 @@ export default function ScheduleInteractive({
             visitsByDate={visitsByDate}
             selectedId={selectedId}
             onSelectVisit={selectAndOpen}
+            onDropVisit={handleDropVisit}
           />
         )}
       </div>
