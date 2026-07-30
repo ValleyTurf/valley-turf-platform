@@ -3,22 +3,26 @@
 // job-create/job-edit schema checks — deleted once the real mutation
 // names/shapes are confirmed.
 //
-// Round 1: list every Mutation-type field whose name starts with "visit"
-// (with argument types), so we know the real mutation names for moving a
-// single visit's date/time and, separately, whether "skip" is its own
-// primitive or just means deleting one occurrence.
+// Round 1 (done) found the real mutation names: visitEditSchedule(id,
+// input: VisitEditScheduleInput!) for moving a single visit's date/time,
+// and visitDelete(visitIds: [EncodedId!]!) for removing one occurrence
+// without touching the job or its recurring plan — exactly "skip".
+//
+// Round 2: full inputFields for VisitEditScheduleInput, so we know
+// exactly what to send (startAt/endAt? a duration? an arrival window?).
 import "server-only";
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 
 const QUERY = `
-  query DiagnoseVisitSchema {
-    mutationType: __type(name: "Mutation") {
-      fields {
+  query DiagnoseVisitEditScheduleInput {
+    visitEditScheduleInput: __type(name: "VisitEditScheduleInput") {
+      inputFields {
         name
-        args {
+        type {
           name
-          type {
+          kind
+          ofType {
             name
             kind
             ofType {
@@ -36,33 +40,17 @@ const QUERY = `
   }
 `;
 
-type MutationField = {
-  name: string;
-  args: {
-    name: string;
-    type: {
-      name: string | null;
-      kind: string;
-      ofType: { name: string | null; kind: string; ofType: { name: string | null; kind: string } | null } | null;
-    };
-  }[];
-};
-
 export async function GET() {
   try {
     const { data, errors } = await jobberGraphQL<{
-      mutationType: { fields: MutationField[] } | null;
+      visitEditScheduleInput: unknown;
     }>(QUERY);
 
     if (errors?.length) {
       return NextResponse.json({ success: false, errors }, { status: 200 });
     }
 
-    const visitMutations = (data?.mutationType?.fields ?? []).filter((f) =>
-      f.name.toLowerCase().startsWith("visit")
-    );
-
-    return NextResponse.json({ success: true, visitMutations });
+    return NextResponse.json({ success: true, schema: data });
   } catch (error) {
     return NextResponse.json(
       {
