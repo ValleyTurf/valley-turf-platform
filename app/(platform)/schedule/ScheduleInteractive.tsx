@@ -7,7 +7,7 @@ import ScheduleMapPanel from "./ScheduleMapPanel";
 import VisitDetailModal from "./VisitDetailModal";
 import { phoenixDateTimeParts } from "./timeHelpers";
 import { rescheduleVisit } from "./actions";
-import type { GridDate, SchedulePin, ScheduleVisit } from "./types";
+import type { AssignableUser, GridDate, SchedulePin, ScheduleVisit } from "./types";
 
 type ViewMode = "day" | "week" | "month";
 
@@ -26,6 +26,8 @@ export default function ScheduleInteractive({
   visitsByDate,
   pins,
   mapTitle,
+  canAssign,
+  assignableUsers,
   children,
 }: {
   view: ViewMode;
@@ -35,6 +37,8 @@ export default function ScheduleInteractive({
   visitsByDate: Record<string, ScheduleVisit[]>;
   pins: SchedulePin[];
   mapTitle: string;
+  canAssign: boolean;
+  assignableUsers: AssignableUser[];
   children: ReactNode;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -224,6 +228,8 @@ export default function ScheduleInteractive({
         <VisitDetailModal
           visit={selectedVisit}
           onClose={() => setModalOpen(false)}
+          canAssign={canAssign}
+          assignableUsers={assignableUsers}
         />
       )}
     </div>

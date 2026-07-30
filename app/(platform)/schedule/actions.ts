@@ -98,6 +98,81 @@ export async function rescheduleVisit(
   return { error: null };
 }
 
+// Assigns (or unassigns, when userId is null) a crew member to a single
+// visit — see the 017_add_visit_assignments.sql migration header for why
+// this is a local-only table rather than synced to Jobber's own
+// assignedUsers concept. Managers/admins only, enforced here (not just in
+// the UI) since this is a Server Action any signed-in session could in
+// principle call directly.
+export async function assignVisit(
+  visitId: string,
+  userId: string | null
+): Promise<{ error: string | null }> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    return { error: "You must be signed in to assign a visit." };
+  }
+
+  if (actor.role !== "admin" && actor.role !== "manager") {
+    return { error: "Only managers and admins can assign visits." };
+  }
+
+  if (!visitId) {
+    return { error: "Missing visit." };
+  }
+
+  if (userId === null) {
+    const { error } = await supabaseServer
+      .from("visit_assignments")
+      .delete()
+      .eq("jobber_visit_id", visitId);
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    await recordAuditLog({
+      actor,
+      action: "delete",
+      entityType: "visit_assignment",
+      entityId: visitId,
+      entityLabel: "Unassign visit",
+    });
+
+    revalidateVisitPaths();
+
+    return { error: null };
+  }
+
+  const { error } = await supabaseServer.from("visit_assignments").upsert(
+    {
+      jobber_visit_id: visitId,
+      assigned_user_id: userId,
+      assigned_by: actor.id,
+      assigned_at: new Date().toISOString(),
+    },
+    { onConflict: "jobber_visit_id" }
+  );
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "visit_assignment",
+    entityId: visitId,
+    entityLabel: "Assign visit",
+    after: { assigned_user_id: userId },
+  });
+
+  revalidateVisitPaths();
+
+  return { error: null };
+}
+
 // "Skip" this one occurrence — see lib/jobberVisit.ts's skipJobberVisit
 // header comment: Jobber has no dedicated "skip" primitive, deleting the
 // single visit IS the mechanism, and it doesn't touch the job or any

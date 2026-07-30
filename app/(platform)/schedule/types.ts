@@ -34,6 +34,13 @@ export type ScheduleVisit = {
   // timeHelpers.ts's phoenixDateTimeParts.
   startAtIso: string | null;
   endAtIso: string | null;
+  assignedUserId: string | null;
+  assignedUserName: string | null;
+};
+
+export type AssignableUser = {
+  id: string;
+  name: string;
 };
 
 export type GridDate = {

@@ -3,8 +3,9 @@ export const revalidate = 0;
 
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
+import { getCurrentUser } from "@/lib/currentUser";
 import ScheduleInteractive from "./ScheduleInteractive";
-import type { GridDate, SchedulePin, ScheduleVisit } from "./types";
+import type { AssignableUser, GridDate, SchedulePin, ScheduleVisit } from "./types";
 
 type ViewMode = "day" | "week" | "month";
 
@@ -38,6 +39,16 @@ type CustomerContact = {
   service_instructions: string | null;
   latitude: number | string | null;
   longitude: number | string | null;
+};
+
+type VisitAssignmentRow = {
+  jobber_visit_id: string;
+  assigned_user_id: string;
+};
+
+type UserRow = {
+  id: string;
+  name: string;
 };
 
 function toNumber(value: number | string | null | undefined): number {
@@ -345,7 +356,8 @@ function scheduleUrl(view: ViewMode, dateStr: string): string {
 
 function buildScheduleVisit(
   visit: VisitRow,
-  contact: CustomerContact | null
+  contact: CustomerContact | null,
+  assignment: { userId: string; userName: string } | null
 ): ScheduleVisit {
   const meta = statusMeta(visit.visit_status);
   const address = contact
@@ -391,6 +403,8 @@ function buildScheduleVisit(
     longitude: Number.isFinite(longitude) ? longitude : null,
     startAtIso: visit.start_at,
     endAtIso: visit.end_at,
+    assignedUserId: assignment?.userId ?? null,
+    assignedUserName: assignment?.userName ?? null,
   };
 }
 
@@ -473,14 +487,17 @@ export default async function SchedulePage({
   const queryStart = `${formatDateInput(queryStartDate)}T00:00:00-07:00`;
   const queryEnd = `${formatDateInput(queryEndDate)}T23:59:59-07:00`;
 
-  const { data, error } = await supabaseServer
-    .from("jobber_visits")
-    .select(
-      "jobber_visit_id, jobber_client_id, jobber_invoice_id, customer_name, job_number, title, visit_status, start_at, end_at, duration_minutes"
-    )
-    .gte("start_at", queryStart)
-    .lte("start_at", queryEnd)
-    .order("start_at", { ascending: true });
+  const [{ data, error }, currentUser] = await Promise.all([
+    supabaseServer
+      .from("jobber_visits")
+      .select(
+        "jobber_visit_id, jobber_client_id, jobber_invoice_id, customer_name, job_number, title, visit_status, start_at, end_at, duration_minutes"
+      )
+      .gte("start_at", queryStart)
+      .lte("start_at", queryEnd)
+      .order("start_at", { ascending: true }),
+    getCurrentUser(),
+  ]);
 
   const visits = (data ?? []) as VisitRow[];
 
@@ -488,15 +505,38 @@ export default async function SchedulePage({
     new Set(visits.map((v) => v.jobber_client_id).filter(Boolean))
   ) as string[];
 
-  const { data: contactsData } =
-    clientIds.length > 0
-      ? await supabaseServer
-          .from("customers")
-          .select(
-            "jobber_client_id, phone, address_line_1, city, state, gate_code, service_instructions, latitude, longitude"
-          )
-          .in("jobber_client_id", clientIds)
-      : { data: [] as CustomerContact[] };
+  const visitIds = visits.map((v) => v.jobber_visit_id);
+
+  // canAssign gates the "Assign To" control in the detail modal — see
+  // 017_add_visit_assignments.sql's header comment for why assignment is
+  // local-only, and schedule/actions.ts's assignVisit for the matching
+  // server-side role check (this is UI-level convenience, not the real
+  // gate).
+  const canAssign =
+    currentUser?.role === "admin" || currentUser?.role === "manager";
+
+  const [{ data: contactsData }, { data: assignmentsData }, { data: usersData }] =
+    await Promise.all([
+      clientIds.length > 0
+        ? supabaseServer
+            .from("customers")
+            .select(
+              "jobber_client_id, phone, address_line_1, city, state, gate_code, service_instructions, latitude, longitude"
+            )
+            .in("jobber_client_id", clientIds)
+        : Promise.resolve({ data: [] as CustomerContact[] }),
+      visitIds.length > 0
+        ? supabaseServer
+            .from("visit_assignments")
+            .select("jobber_visit_id, assigned_user_id")
+            .in("jobber_visit_id", visitIds)
+        : Promise.resolve({ data: [] as VisitAssignmentRow[] }),
+      supabaseServer
+        .from("users")
+        .select("id, name")
+        .eq("active", true)
+        .order("name", { ascending: true }),
+    ]);
 
   const contactMap = new Map<string, CustomerContact>(
     ((contactsData ?? []) as CustomerContact[]).map((c) => [
@@ -505,10 +545,30 @@ export default async function SchedulePage({
     ])
   );
 
+  const userNameById = new Map<string, string>(
+    ((usersData ?? []) as UserRow[]).map((u) => [u.id, u.name])
+  );
+
+  const assignmentMap = new Map<string, { userId: string; userName: string }>();
+  for (const row of (assignmentsData ?? []) as VisitAssignmentRow[]) {
+    const userName = userNameById.get(row.assigned_user_id);
+    if (userName) {
+      assignmentMap.set(row.jobber_visit_id, {
+        userId: row.assigned_user_id,
+        userName,
+      });
+    }
+  }
+
+  const assignableUsers: AssignableUser[] = ((usersData ?? []) as UserRow[]).map(
+    (u) => ({ id: u.id, name: u.name })
+  );
+
   const enrichedVisits: ScheduleVisit[] = visits.map((visit) =>
     buildScheduleVisit(
       visit,
-      visit.jobber_client_id ? contactMap.get(visit.jobber_client_id) ?? null : null
+      visit.jobber_client_id ? contactMap.get(visit.jobber_client_id) ?? null : null,
+      assignmentMap.get(visit.jobber_visit_id) ?? null
     )
   );
 
@@ -588,6 +648,8 @@ export default async function SchedulePage({
         visitsByDate={visitsByDate}
         pins={pins}
         mapTitle={mapTitle}
+        canAssign={canAssign}
+        assignableUsers={assignableUsers}
       >
         <div className={`mx-auto ${containerMaxWidth}`}>
           <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">

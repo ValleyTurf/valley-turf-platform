@@ -2,20 +2,25 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import type { ScheduleVisit } from "./types";
+import type { AssignableUser, ScheduleVisit } from "./types";
 import { phoenixDateTimeParts } from "./timeHelpers";
-import { rescheduleVisit, skipVisit } from "./actions";
+import { rescheduleVisit, skipVisit, assignVisit } from "./actions";
 
 export default function VisitDetailModal({
   visit,
   onClose,
+  canAssign,
+  assignableUsers,
 }: {
   visit: ScheduleVisit;
   onClose: () => void;
+  canAssign: boolean;
+  assignableUsers: AssignableUser[];
 }) {
   const [isPending, startTransition] = useTransition();
   const [mode, setMode] = useState<"view" | "reschedule">("view");
   const [error, setError] = useState<string | null>(null);
+  const [assignError, setAssignError] = useState<string | null>(null);
 
   const startParts = phoenixDateTimeParts(visit.startAtIso);
   const endParts = phoenixDateTimeParts(visit.endAtIso);
@@ -23,6 +28,17 @@ export default function VisitDetailModal({
   const [date, setDate] = useState(startParts.date);
   const [startTime, setStartTime] = useState(startParts.time);
   const [endTime, setEndTime] = useState(endParts.time);
+
+  function handleAssignChange(userId: string) {
+    setAssignError(null);
+    startTransition(async () => {
+      const result = await assignVisit(visit.id, userId || null);
+
+      if (result.error) {
+        setAssignError(result.error);
+      }
+    });
+  }
 
   function handleReschedule() {
     setError(null);
@@ -136,6 +152,38 @@ export default function VisitDetailModal({
               </dd>
             </div>
           )}
+
+          <div>
+            <dt className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
+              Assigned To
+            </dt>
+            {canAssign ? (
+              <dd className="mt-0.5">
+                <select
+                  value={visit.assignedUserId ?? ""}
+                  onChange={(e) => handleAssignChange(e.target.value)}
+                  disabled={isPending}
+                  className="w-full rounded-lg border border-[#d9d4c6] bg-white px-2 py-1.5 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20 disabled:opacity-60"
+                >
+                  <option value="">Unassigned</option>
+                  {assignableUsers.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.name}
+                    </option>
+                  ))}
+                </select>
+                {assignError && (
+                  <p className="mt-1 text-xs font-semibold text-red-600">
+                    {assignError}
+                  </p>
+                )}
+              </dd>
+            ) : (
+              <dd className="mt-0.5">
+                {visit.assignedUserName ?? "Unassigned"}
+              </dd>
+            )}
+          </div>
 
           {visit.address && (
             <div>
