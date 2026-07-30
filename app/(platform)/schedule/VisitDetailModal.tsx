@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import type { AssignableUser, ScheduleVisit } from "./types";
 import { phoenixDateTimeParts } from "./timeHelpers";
-import { rescheduleVisit, skipVisit, assignVisit } from "./actions";
+import { rescheduleVisit, skipVisit, setVisitAssignees } from "./actions";
 
 export default function VisitDetailModal({
   visit,
@@ -29,10 +29,16 @@ export default function VisitDetailModal({
   const [startTime, setStartTime] = useState(startParts.time);
   const [endTime, setEndTime] = useState(endParts.time);
 
-  function handleAssignChange(userId: string) {
+  const assignedIds = visit.assignedUsers.map((u) => u.id);
+
+  function handleAssignToggle(userId: string, checked: boolean) {
     setAssignError(null);
+    const nextIds = checked
+      ? [...assignedIds, userId]
+      : assignedIds.filter((id) => id !== userId);
+
     startTransition(async () => {
-      const result = await assignVisit(visit.id, userId || null);
+      const result = await setVisitAssignees(visit.id, nextIds);
 
       if (result.error) {
         setAssignError(result.error);
@@ -41,6 +47,14 @@ export default function VisitDetailModal({
   }
 
   function handleReschedule() {
+    if (
+      !confirm(
+        `Move ${visit.customerName}'s visit to ${date}${startTime ? ` at ${startTime}` : ""}? This updates the schedule in Jobber.`
+      )
+    ) {
+      return;
+    }
+
     setError(null);
     startTransition(async () => {
       const result = await rescheduleVisit(
@@ -155,23 +169,48 @@ export default function VisitDetailModal({
 
           <div>
             <dt className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
-              Assigned To
+              Assigned To{" "}
+              {canAssign && (
+                <span className="font-normal normal-case text-[#6b705c]">
+                  (check all who are on this one)
+                </span>
+              )}
             </dt>
             {canAssign ? (
-              <dd className="mt-0.5">
-                <select
-                  value={visit.assignedUserId ?? ""}
-                  onChange={(e) => handleAssignChange(e.target.value)}
-                  disabled={isPending}
-                  className="w-full rounded-lg border border-[#d9d4c6] bg-white px-2 py-1.5 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20 disabled:opacity-60"
-                >
-                  <option value="">Unassigned</option>
-                  {assignableUsers.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.name}
-                    </option>
-                  ))}
-                </select>
+              <dd className="mt-1">
+                {assignableUsers.length === 0 ? (
+                  <p className="text-xs text-[#6b705c]">
+                    No active team members to assign.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {assignableUsers.map((user) => {
+                      const checked = assignedIds.includes(user.id);
+
+                      return (
+                        <label
+                          key={user.id}
+                          className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm ${
+                            checked
+                              ? "border-[#d4af37] bg-[#fdf8ea]"
+                              : "border-[#d9d4c6] bg-white"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={isPending}
+                            onChange={(e) =>
+                              handleAssignToggle(user.id, e.target.checked)
+                            }
+                            className="h-4 w-4 rounded border-[#d9d4c6] text-[#174734] focus:ring-[#d4af37]"
+                          />
+                          {user.name}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
                 {assignError && (
                   <p className="mt-1 text-xs font-semibold text-red-600">
                     {assignError}
@@ -180,7 +219,9 @@ export default function VisitDetailModal({
               </dd>
             ) : (
               <dd className="mt-0.5">
-                {visit.assignedUserName ?? "Unassigned"}
+                {visit.assignedUsers.length > 0
+                  ? visit.assignedUsers.map((u) => u.name).join(", ")
+                  : "Unassigned"}
               </dd>
             )}
           </div>

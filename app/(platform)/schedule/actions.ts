@@ -98,15 +98,16 @@ export async function rescheduleVisit(
   return { error: null };
 }
 
-// Assigns (or unassigns, when userId is null) a crew member to a single
-// visit — see the 017_add_visit_assignments.sql migration header for why
-// this is a local-only table rather than synced to Jobber's own
-// assignedUsers concept. Managers/admins only, enforced here (not just in
-// the UI) since this is a Server Action any signed-in session could in
-// principle call directly.
-export async function assignVisit(
+// Sets the full list of crew members assigned to a single visit —
+// replaces whatever was there before with exactly `userIds` (so a big
+// job can have 2+ people, see 018_visit_assignments_multi.sql). Local
+// table, not synced to/from Jobber's own assignedUsers concept — see
+// 017_add_visit_assignments.sql's header comment for why. Managers/admins
+// only, enforced here (not just in the UI) since this is a Server Action
+// any signed-in session could in principle call directly.
+export async function setVisitAssignees(
   visitId: string,
-  userId: string | null
+  userIds: string[]
 ): Promise<{ error: string | null }> {
   const actor = await getCurrentUser();
 
@@ -122,41 +123,32 @@ export async function assignVisit(
     return { error: "Missing visit." };
   }
 
-  if (userId === null) {
-    const { error } = await supabaseServer
-      .from("visit_assignments")
-      .delete()
-      .eq("jobber_visit_id", visitId);
+  const { error: deleteError } = await supabaseServer
+    .from("visit_assignments")
+    .delete()
+    .eq("jobber_visit_id", visitId);
 
-    if (error) {
-      return { error: error.message };
-    }
-
-    await recordAuditLog({
-      actor,
-      action: "delete",
-      entityType: "visit_assignment",
-      entityId: visitId,
-      entityLabel: "Unassign visit",
-    });
-
-    revalidateVisitPaths();
-
-    return { error: null };
+  if (deleteError) {
+    return { error: deleteError.message };
   }
 
-  const { error } = await supabaseServer.from("visit_assignments").upsert(
-    {
-      jobber_visit_id: visitId,
-      assigned_user_id: userId,
-      assigned_by: actor.id,
-      assigned_at: new Date().toISOString(),
-    },
-    { onConflict: "jobber_visit_id" }
-  );
+  const uniqueUserIds = Array.from(new Set(userIds));
 
-  if (error) {
-    return { error: error.message };
+  if (uniqueUserIds.length > 0) {
+    const { error: insertError } = await supabaseServer
+      .from("visit_assignments")
+      .insert(
+        uniqueUserIds.map((userId) => ({
+          jobber_visit_id: visitId,
+          assigned_user_id: userId,
+          assigned_by: actor.id,
+          assigned_at: new Date().toISOString(),
+        }))
+      );
+
+    if (insertError) {
+      return { error: insertError.message };
+    }
   }
 
   await recordAuditLog({
@@ -164,8 +156,9 @@ export async function assignVisit(
     action: "update",
     entityType: "visit_assignment",
     entityId: visitId,
-    entityLabel: "Assign visit",
-    after: { assigned_user_id: userId },
+    entityLabel:
+      uniqueUserIds.length > 0 ? "Assign visit" : "Unassign visit",
+    after: { assigned_user_ids: uniqueUserIds },
   });
 
   revalidateVisitPaths();

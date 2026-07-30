@@ -357,7 +357,7 @@ function scheduleUrl(view: ViewMode, dateStr: string): string {
 function buildScheduleVisit(
   visit: VisitRow,
   contact: CustomerContact | null,
-  assignment: { userId: string; userName: string } | null
+  assignedUsers: AssignableUser[]
 ): ScheduleVisit {
   const meta = statusMeta(visit.visit_status);
   const address = contact
@@ -403,8 +403,7 @@ function buildScheduleVisit(
     longitude: Number.isFinite(longitude) ? longitude : null,
     startAtIso: visit.start_at,
     endAtIso: visit.end_at,
-    assignedUserId: assignment?.userId ?? null,
-    assignedUserName: assignment?.userName ?? null,
+    assignedUsers,
   };
 }
 
@@ -549,15 +548,16 @@ export default async function SchedulePage({
     ((usersData ?? []) as UserRow[]).map((u) => [u.id, u.name])
   );
 
-  const assignmentMap = new Map<string, { userId: string; userName: string }>();
+  // Multiple assignees per visit (018_visit_assignments_multi.sql) — one
+  // array per visit rather than a single {userId, userName}.
+  const assignmentMap = new Map<string, AssignableUser[]>();
   for (const row of (assignmentsData ?? []) as VisitAssignmentRow[]) {
     const userName = userNameById.get(row.assigned_user_id);
-    if (userName) {
-      assignmentMap.set(row.jobber_visit_id, {
-        userId: row.assigned_user_id,
-        userName,
-      });
-    }
+    if (!userName) continue;
+
+    const list = assignmentMap.get(row.jobber_visit_id) ?? [];
+    list.push({ id: row.assigned_user_id, name: userName });
+    assignmentMap.set(row.jobber_visit_id, list);
   }
 
   const assignableUsers: AssignableUser[] = ((usersData ?? []) as UserRow[]).map(
@@ -568,7 +568,7 @@ export default async function SchedulePage({
     buildScheduleVisit(
       visit,
       visit.jobber_client_id ? contactMap.get(visit.jobber_client_id) ?? null : null,
-      assignmentMap.get(visit.jobber_visit_id) ?? null
+      assignmentMap.get(visit.jobber_visit_id) ?? []
     )
   );
 

@@ -34,8 +34,9 @@ export type ScheduleVisit = {
   // timeHelpers.ts's phoenixDateTimeParts.
   startAtIso: string | null;
   endAtIso: string | null;
-  assignedUserId: string | null;
-  assignedUserName: string | null;
+  // A visit can have any number of assignees (big jobs, 2+ crew) — see
+  // 018_visit_assignments_multi.sql.
+  assignedUsers: AssignableUser[];
 };
 
 export type AssignableUser = {
