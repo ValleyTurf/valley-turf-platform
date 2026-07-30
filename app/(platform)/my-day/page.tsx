@@ -13,6 +13,7 @@ export const revalidate = 0;
 // role including staff can reach it without any new permission plumbing.
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
+import { getCurrentUser } from "@/lib/currentUser";
 
 type MyDayPageProps = {
   searchParams: Promise<{ date?: string }>;
@@ -38,6 +39,16 @@ type CustomerContact = {
   service_instructions: string | null;
   latitude: number | string | null;
   longitude: number | string | null;
+};
+
+type VisitAssignmentRow = {
+  jobber_visit_id: string;
+  assigned_user_id: string;
+};
+
+type UserRow = {
+  id: string;
+  name: string;
 };
 
 function getPhoenixToday(): Date {
@@ -159,34 +170,84 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
   const queryStart = `${dateStr}T00:00:00-07:00`;
   const queryEnd = `${dateStr}T23:59:59-07:00`;
 
-  const { data, error } = await supabaseServer
-    .from("jobber_visits")
-    .select(
-      "jobber_visit_id, jobber_client_id, customer_name, title, visit_status, start_at, end_at"
-    )
-    .gte("start_at", queryStart)
-    .lte("start_at", queryEnd)
-    .order("start_at", { ascending: true });
+  const [{ data, error }, currentUser] = await Promise.all([
+    supabaseServer
+      .from("jobber_visits")
+      .select(
+        "jobber_visit_id, jobber_client_id, customer_name, title, visit_status, start_at, end_at"
+      )
+      .gte("start_at", queryStart)
+      .lte("start_at", queryEnd)
+      .order("start_at", { ascending: true }),
+    getCurrentUser(),
+  ]);
 
-  const visits = (data ?? []) as VisitRow[];
+  const allVisits = (data ?? []) as VisitRow[];
 
   const clientIds = Array.from(
-    new Set(visits.map((v) => v.jobber_client_id).filter(Boolean))
+    new Set(allVisits.map((v) => v.jobber_client_id).filter(Boolean))
   ) as string[];
 
-  const { data: contactsData } =
-    clientIds.length > 0
-      ? await supabaseServer
-          .from("customers")
-          .select(
-            "jobber_client_id, phone, address_line_1, city, state, gate_code, service_instructions, latitude, longitude"
-          )
-          .in("jobber_client_id", clientIds)
-      : { data: [] as CustomerContact[] };
+  const visitIds = allVisits.map((v) => v.jobber_visit_id);
+
+  const [{ data: contactsData }, { data: assignmentsData }, { data: usersData }] =
+    await Promise.all([
+      clientIds.length > 0
+        ? supabaseServer
+            .from("customers")
+            .select(
+              "jobber_client_id, phone, address_line_1, city, state, gate_code, service_instructions, latitude, longitude"
+            )
+            .in("jobber_client_id", clientIds)
+        : Promise.resolve({ data: [] as CustomerContact[] }),
+      visitIds.length > 0
+        ? supabaseServer
+            .from("visit_assignments")
+            .select("jobber_visit_id, assigned_user_id")
+            .in("jobber_visit_id", visitIds)
+        : Promise.resolve({ data: [] as VisitAssignmentRow[] }),
+      supabaseServer.from("users").select("id, name"),
+    ]);
 
   const contactMap = new Map<string, CustomerContact>(
     ((contactsData ?? []) as CustomerContact[]).map((c) => [c.jobber_client_id, c])
   );
+
+  const userNameById = new Map<string, string>(
+    ((usersData ?? []) as UserRow[]).map((u) => [u.id, u.name])
+  );
+
+  const assignedNamesByVisit = new Map<string, string[]>();
+  const assignedIdsByVisit = new Map<string, Set<string>>();
+  for (const row of (assignmentsData ?? []) as VisitAssignmentRow[]) {
+    if (!assignedIdsByVisit.has(row.jobber_visit_id)) {
+      assignedIdsByVisit.set(row.jobber_visit_id, new Set());
+      assignedNamesByVisit.set(row.jobber_visit_id, []);
+    }
+
+    assignedIdsByVisit.get(row.jobber_visit_id)!.add(row.assigned_user_id);
+
+    const name = userNameById.get(row.assigned_user_id);
+    if (name) {
+      assignedNamesByVisit.get(row.jobber_visit_id)!.push(name);
+    }
+  }
+
+  // Crew (staff) only ever see stops they're personally assigned to —
+  // managers/admins keep seeing everything, same split as who's allowed
+  // to edit assignments on /schedule. A staff member with nothing
+  // assigned still sees the "nothing on the books" empty state, just
+  // worded to distinguish "nothing assigned to you" from "nothing
+  // scheduled at all" (see totalScheduledCount below).
+  const isCrewOnly = currentUser?.role === "staff";
+  const totalScheduledCount = allVisits.length;
+
+  const visits =
+    isCrewOnly && currentUser
+      ? allVisits.filter((v) =>
+          assignedIdsByVisit.get(v.jobber_visit_id)?.has(currentUser.id)
+        )
+      : allVisits;
 
   const doneCount = visits.filter(
     (v) => (v.visit_status ?? "").toUpperCase() === "COMPLETED"
@@ -204,6 +265,11 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
         </p>
 
         <h1 className="mt-1 text-2xl font-bold sm:text-3xl">My Day</h1>
+        {isCrewOnly && (
+          <p className="text-xs font-semibold text-[#9c7a20]">
+            Showing your assigned stops
+          </p>
+        )}
 
         <div className="mt-3 flex items-center justify-between gap-2">
           <Link
@@ -247,7 +313,9 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
         ) : visits.length === 0 ? (
           <section className="mt-5 rounded-2xl bg-white p-5 shadow">
             <p className="text-sm text-[#6b705c]">
-              Nothing on the books for this day.
+              {isCrewOnly && totalScheduledCount > 0
+                ? "Nothing assigned to you today — check with a manager if that doesn't look right."
+                : "Nothing on the books for this day."}
             </p>
           </section>
         ) : (
@@ -264,6 +332,13 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                     .join(", ")
                 : null;
               const mapsHref = navigateUrl(contact);
+              const assignedNames = assignedNamesByVisit.get(visit.jobber_visit_id) ?? [];
+              // Crew already know they're on it (that's why it's on their
+              // list) — the useful bit is who ELSE is coming. Managers/
+              // admins see everyone regardless, so show the full list.
+              const crewNote = isCrewOnly
+                ? assignedNames.filter((name) => name !== currentUser?.name)
+                : assignedNames;
 
               return (
                 <article
@@ -280,6 +355,12 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                       </p>
                       {service && (
                         <p className="text-xs text-[#6b705c]">{service}</p>
+                      )}
+                      {crewNote.length > 0 && (
+                        <p className="mt-1 text-xs font-semibold text-[#9c7a20]">
+                          {isCrewOnly ? "With " : "Assigned: "}
+                          {crewNote.join(", ")}
+                        </p>
                       )}
                     </div>
 
