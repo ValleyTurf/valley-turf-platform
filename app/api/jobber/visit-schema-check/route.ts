@@ -8,15 +8,19 @@
 // and visitDelete(visitIds: [EncodedId!]!) for removing one occurrence
 // without touching the job or its recurring plan — exactly "skip".
 //
-// Round 2: full inputFields for VisitEditScheduleInput, so we know
-// exactly what to send (startAt/endAt? a duration? an arrival window?).
+// Round 2 (done) found VisitEditScheduleInput is just { startAt, endAt },
+// but each is its own structured LocalDateTimeAttributes input object,
+// not a plain ISO string scalar.
+//
+// Round 3: full inputFields for LocalDateTimeAttributes, so we know
+// exactly what shape to send for startAt/endAt.
 import "server-only";
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 
 const QUERY = `
-  query DiagnoseVisitEditScheduleInput {
-    visitEditScheduleInput: __type(name: "VisitEditScheduleInput") {
+  query DiagnoseLocalDateTimeAttributes {
+    localDateTimeAttributes: __type(name: "LocalDateTimeAttributes") {
       inputFields {
         name
         type {
@@ -28,10 +32,6 @@ const QUERY = `
             ofType {
               name
               kind
-              ofType {
-                name
-                kind
-              }
             }
           }
         }
@@ -43,7 +43,7 @@ const QUERY = `
 export async function GET() {
   try {
     const { data, errors } = await jobberGraphQL<{
-      visitEditScheduleInput: unknown;
+      localDateTimeAttributes: unknown;
     }>(QUERY);
 
     if (errors?.length) {
