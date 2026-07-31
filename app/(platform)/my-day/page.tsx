@@ -15,6 +15,7 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { completeVisit } from "./actions";
+import VisitTimer from "./VisitTimer";
 
 type MyDayPageProps = {
   searchParams: Promise<{ date?: string }>;
@@ -50,6 +51,13 @@ type VisitAssignmentRow = {
 type UserRow = {
   id: string;
   name: string;
+};
+
+type TimeLogRow = {
+  id: string;
+  jobber_visit_id: string;
+  started_at: string;
+  stopped_at: string | null;
 };
 
 function getPhoenixToday(): Date {
@@ -191,24 +199,43 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
 
   const visitIds = allVisits.map((v) => v.jobber_visit_id);
 
-  const [{ data: contactsData }, { data: assignmentsData }, { data: usersData }] =
-    await Promise.all([
-      clientIds.length > 0
-        ? supabaseServer
-            .from("customers")
-            .select(
-              "jobber_client_id, phone, address_line_1, city, state, gate_code, service_instructions, latitude, longitude"
-            )
-            .in("jobber_client_id", clientIds)
-        : Promise.resolve({ data: [] as CustomerContact[] }),
-      visitIds.length > 0
-        ? supabaseServer
-            .from("visit_assignments")
-            .select("jobber_visit_id, assigned_user_id")
-            .in("jobber_visit_id", visitIds)
-        : Promise.resolve({ data: [] as VisitAssignmentRow[] }),
-      supabaseServer.from("users").select("id, name"),
-    ]);
+  const [
+    { data: contactsData },
+    { data: assignmentsData },
+    { data: usersData },
+    { data: timeLogsData },
+    { data: myActiveTimer },
+  ] = await Promise.all([
+    clientIds.length > 0
+      ? supabaseServer
+          .from("customers")
+          .select(
+            "jobber_client_id, phone, address_line_1, city, state, gate_code, service_instructions, latitude, longitude"
+          )
+          .in("jobber_client_id", clientIds)
+      : Promise.resolve({ data: [] as CustomerContact[] }),
+    visitIds.length > 0
+      ? supabaseServer
+          .from("visit_assignments")
+          .select("jobber_visit_id, assigned_user_id")
+          .in("jobber_visit_id", visitIds)
+      : Promise.resolve({ data: [] as VisitAssignmentRow[] }),
+    supabaseServer.from("users").select("id, name"),
+    visitIds.length > 0
+      ? supabaseServer
+          .from("visit_time_logs")
+          .select("id, jobber_visit_id, started_at, stopped_at")
+          .in("jobber_visit_id", visitIds)
+      : Promise.resolve({ data: [] as TimeLogRow[] }),
+    currentUser
+      ? supabaseServer
+          .from("visit_time_logs")
+          .select("id, jobber_visit_id, started_at")
+          .eq("user_id", currentUser.id)
+          .is("stopped_at", null)
+          .maybeSingle()
+      : Promise.resolve({ data: null as { id: string; jobber_visit_id: string; started_at: string } | null }),
+  ]);
 
   const contactMap = new Map<string, CustomerContact>(
     ((contactsData ?? []) as CustomerContact[]).map((c) => [c.jobber_client_id, c])
@@ -232,6 +259,46 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
     if (name) {
       assignedNamesByVisit.get(row.jobber_visit_id)!.push(name);
     }
+  }
+
+  // Total logged minutes per visit, from every finished (stopped_at set)
+  // time segment regardless of who logged it — running segments don't
+  // count toward this total (that's what the live ticking display in
+  // VisitTimer is for).
+  const loggedMinutesByVisit = new Map<string, number>();
+  for (const log of (timeLogsData ?? []) as TimeLogRow[]) {
+    if (!log.stopped_at) continue;
+
+    const startMs = new Date(log.started_at).getTime();
+    const stopMs = new Date(log.stopped_at).getTime();
+    if (Number.isNaN(startMs) || Number.isNaN(stopMs) || stopMs < startMs) continue;
+
+    const minutes = (stopMs - startMs) / 60000;
+    loggedMinutesByVisit.set(
+      log.jobber_visit_id,
+      (loggedMinutesByVisit.get(log.jobber_visit_id) ?? 0) + minutes
+    );
+  }
+
+  // The current user's one active (if any) timer — global, not scoped
+  // to today, since it's possible they started it on a visit that isn't
+  // on today's list. See the banner below the header for that case.
+  const activeTimer = myActiveTimer as {
+    id: string;
+    jobber_visit_id: string;
+    started_at: string;
+  } | null;
+  const activeTimerVisitIsToday =
+    activeTimer && allVisits.some((v) => v.jobber_visit_id === activeTimer.jobber_visit_id);
+
+  let activeTimerElsewhereCustomer: string | null = null;
+  if (activeTimer && !activeTimerVisitIsToday) {
+    const { data: elsewhereVisit } = await supabaseServer
+      .from("jobber_visits")
+      .select("customer_name")
+      .eq("jobber_visit_id", activeTimer.jobber_visit_id)
+      .maybeSingle();
+    activeTimerElsewhereCustomer = elsewhereVisit?.customer_name ?? "another visit";
   }
 
   // Crew (staff) only ever see stops they're personally assigned to —
@@ -306,6 +373,13 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
             : `${visits.length} stop${visits.length === 1 ? "" : "s"} · ${doneCount} done`}
         </p>
 
+        {activeTimerElsewhereCustomer && (
+          <p className="mt-2 rounded-xl border border-[#d4af37] bg-[#fdf8ea] px-3 py-2 text-xs font-semibold text-[#9c7a20]">
+            ⏱ Timer still running for {activeTimerElsewhereCustomer} on
+            another day — stop it there before starting a new one.
+          </p>
+        )}
+
         {error ? (
           <section className="mt-5 rounded-2xl border border-red-200 bg-white p-5 shadow">
             <p className="font-bold text-red-700">Stops could not be loaded</p>
@@ -340,6 +414,8 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
               const crewNote = isCrewOnly
                 ? assignedNames.filter((name) => name !== currentUser?.name)
                 : assignedNames;
+              const isThisVisitActive =
+                activeTimer?.jobber_visit_id === visit.jobber_visit_id;
 
               return (
                 <article
@@ -415,6 +491,15 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                       </a>
                     )}
                   </div>
+
+                  {(visit.visit_status ?? "").toUpperCase() !== "COMPLETED" && (
+                    <VisitTimer
+                      visitId={visit.jobber_visit_id}
+                      activeTimeLogId={isThisVisitActive ? activeTimer!.id : null}
+                      activeStartedAt={isThisVisitActive ? activeTimer!.started_at : null}
+                      loggedMinutes={loggedMinutesByVisit.get(visit.jobber_visit_id) ?? 0}
+                    />
+                  )}
 
                   {(visit.visit_status ?? "").toUpperCase() !== "COMPLETED" && (
                     <form action={completeVisit} className="mt-2">
