@@ -62,6 +62,18 @@ type VisitCost = {
   material_cost: number | string;
 };
 
+type TimeLogRow = {
+  jobber_visit_id: string;
+  user_id: string;
+  started_at: string;
+  stopped_at: string | null;
+};
+
+type UserRow = {
+  id: string;
+  name: string | null;
+};
+
 const PAGE_SIZE = 15;
 
 function formatDateTime(value: string | null): string {
@@ -252,6 +264,8 @@ export default async function JobCostsPage({
     usageResult,
     equipmentUsageResult,
     costResult,
+    timeLogsResult,
+    usersResult,
   ] = await Promise.all([
     supabaseServer
       .from("materials")
@@ -281,6 +295,19 @@ export default async function JobCostsPage({
           .select("jobber_visit_id, material_cost")
           .in("jobber_visit_id", visitIds)
       : Promise.resolve({ data: [] as VisitCost[] }),
+    // Job timer data (visit_time_logs) — used below to pre-fill labor
+    // hours from actual clocked time instead of a blank field, for any
+    // labor row that hasn't already been manually saved. Only completed
+    // (stopped_at set) segments count; a still-running timer's duration
+    // isn't final yet.
+    visitIds.length > 0
+      ? supabaseServer
+          .from("visit_time_logs")
+          .select("jobber_visit_id, user_id, started_at, stopped_at")
+          .in("jobber_visit_id", visitIds)
+          .not("stopped_at", "is", null)
+      : Promise.resolve({ data: [] as TimeLogRow[] }),
+    supabaseServer.from("users").select("id, name"),
   ]);
 
   const materials = (materialsResult.data ?? []) as Material[];
@@ -303,6 +330,49 @@ export default async function JobCostsPage({
   const costMap = new Map<string, number>();
   for (const row of (costResult.data ?? []) as VisitCost[]) {
     costMap.set(row.jobber_visit_id, toNumber(row.material_cost));
+  }
+
+  // Timer-derived labor hours, keyed the same way as usageMap so the
+  // render loop below can prefer a manually-saved value and only fall
+  // back to the timer's total when nothing's been logged yet. Matched
+  // by name ("Labor - {employee name}" is how addEmployee names the rate
+  // row in materials) since that's the rate row job costing actually
+  // bills against — users.hourly_rate is a separate, unrelated field.
+  const userNameMap = new Map<string, string>();
+  for (const row of (usersResult.data ?? []) as UserRow[]) {
+    if (row.name) userNameMap.set(row.id, row.name);
+  }
+
+  const laborMaterialIdByName = new Map<string, string>();
+  for (const material of materials) {
+    laborMaterialIdByName.set(material.name, material.id);
+  }
+
+  const timerMinutesMap = new Map<string, number>();
+  for (const row of (timeLogsResult.data ?? []) as TimeLogRow[]) {
+    if (!row.stopped_at) continue;
+
+    const userName = userNameMap.get(row.user_id);
+    if (!userName) continue;
+
+    const materialId = laborMaterialIdByName.get(`Labor - ${userName}`);
+    if (!materialId) continue;
+
+    const startedMs = new Date(row.started_at).getTime();
+    const stoppedMs = new Date(row.stopped_at).getTime();
+
+    if (
+      !Number.isFinite(startedMs) ||
+      !Number.isFinite(stoppedMs) ||
+      stoppedMs <= startedMs
+    ) {
+      continue;
+    }
+
+    const key = `${row.jobber_visit_id}:${materialId}`;
+    const minutes = (stoppedMs - startedMs) / 60000;
+
+    timerMinutesMap.set(key, (timerMinutesMap.get(key) ?? 0) + minutes);
   }
 
   const previousPageUrl = buildJobCostsUrl(
@@ -516,10 +586,22 @@ export default async function JobCostsPage({
                           {materials.map((material) => {
                             const isTime =
                               material.unit_label.toLowerCase() === "hour";
+                            const usageKey = `${visit.jobber_visit_id}:${material.id}`;
+                            const savedValue = usageMap.get(usageKey);
+                            const timerMinutes = timerMinutesMap.get(usageKey);
+                            const timerHours = timerMinutes
+                              ? timerMinutes / 60
+                              : 0;
+                            const isTimerSuggested =
+                              isTime &&
+                              savedValue === undefined &&
+                              timerHours > 0;
                             const rawValue =
-                              usageMap.get(
-                                `${visit.jobber_visit_id}:${material.id}`
-                              ) || 0;
+                              savedValue !== undefined
+                                ? savedValue
+                                : isTime
+                                  ? timerHours
+                                  : 0;
 
                             return (
                               <label key={material.id} className="block">
@@ -534,6 +616,11 @@ export default async function JobCostsPage({
                                 {material.end_date && (
                                   <span className="ml-1 rounded bg-[#faf4e3] px-1.5 py-0.5 text-[9px] font-bold text-[#9c7a20]">
                                     ended {formatDateOnly(material.end_date)}
+                                  </span>
+                                )}
+                                {isTimerSuggested && (
+                                  <span className="ml-1 rounded bg-[#eef4ee] px-1.5 py-0.5 text-[9px] font-bold text-[#174734]">
+                                    ⏱ from timer
                                   </span>
                                 )}
                                 <input
