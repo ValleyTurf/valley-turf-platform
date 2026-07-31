@@ -50,6 +50,11 @@ const topLevelItems: NavItem[] = [
 
 const groups: { title: string; icon: string; items: NavItem[] }[] = [
   {
+    title: "Operations",
+    icon: "📡",
+    items: [{ name: "Crew Status", href: "/crew-status", icon: "📡" }],
+  },
+  {
     title: "Customers",
     icon: "👥",
     items: [

@@ -101,6 +101,17 @@ export const ALWAYS_ADMIN_ONLY_PREFIXES = [
   "/settings/permissions",
 ];
 
+// Manager+ only — staff excluded, but unlike ALWAYS_ADMIN_ONLY_PREFIXES,
+// managers ARE allowed. For operational oversight views where every
+// crew member's live status/location is visible to whoever's running
+// the day (Crew Status), which isn't something a staff member needs to
+// see about their coworkers. Same "manager and above see all" rule
+// already applied to My Day's assignment visibility, just enforced at
+// the route level instead of in-page. Not part of the configurable
+// SECTION_PREFIXES system — an admin can't grant this to staff via
+// /settings/permissions, same as ALWAYS_ADMIN_ONLY_PREFIXES.
+export const MANAGER_PLUS_PREFIXES = ["/crew-status"];
+
 export type RolePermissionsMap = Record<
   Exclude<Role, "admin">,
   Record<PermissionSection, boolean>
@@ -146,6 +157,10 @@ export function isPathAllowedForRole(
   }
 
   if (matchesPrefix(pathname, ALWAYS_ADMIN_ONLY_PREFIXES)) {
+    return false;
+  }
+
+  if (role === "staff" && matchesPrefix(pathname, MANAGER_PLUS_PREFIXES)) {
     return false;
   }
 
