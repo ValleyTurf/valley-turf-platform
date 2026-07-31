@@ -16,7 +16,7 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { haversineMiles } from "@/lib/geoDistance";
-import { computeRouteLegs } from "@/lib/googleRoutes";
+import { computeRouteLegs, HOME_BASE_ADDRESS } from "@/lib/googleRoutes";
 import { completeVisit } from "./actions";
 import VisitTimer from "./VisitTimer";
 
@@ -389,19 +389,57 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
     coordRuns.push({ start: runStart, end: visitCoords.length - 1 });
   }
 
-  const runResults = await Promise.all(
-    coordRuns
-      .filter((run) => run.end > run.start)
-      .map(async (run) => {
-        const runCoords = visitCoords
-          .slice(run.start, run.end + 1)
-          .map((coord) => coord as LatLng);
+  // First/last stop that actually has coordinates — the crew's
+  // real starting and ending point for the day's drive time, whatever
+  // position they happen to be at in the (possibly gapped) list.
+  const firstCoordIndex = visitCoords.findIndex((coord) => coord !== null);
+  let lastCoordIndex = -1;
+  for (let i = visitCoords.length - 1; i >= 0; i--) {
+    if (visitCoords[i]) {
+      lastCoordIndex = i;
+      break;
+    }
+  }
 
-        const legs = await computeRouteLegs(runCoords);
+  const [runResults, startingLeg, endingLeg] = await Promise.all([
+    Promise.all(
+      coordRuns
+        .filter((run) => run.end > run.start)
+        .map(async (run) => {
+          const runCoords = visitCoords
+            .slice(run.start, run.end + 1)
+            .map((coord) => coord as LatLng);
 
-        return { run, runCoords, legs };
-      })
-  );
+          const legs = await computeRouteLegs(runCoords);
+
+          return { run, runCoords, legs };
+        })
+    ),
+    // Home -> first stop. No straight-line fallback here (unlike the
+    // inter-stop legs above) since the home base is only ever given as
+    // an address string, not coordinates — if Google's call fails, this
+    // leg just isn't shown rather than guessing at a distance.
+    firstCoordIndex !== -1
+      ? computeRouteLegs([
+          { address: HOME_BASE_ADDRESS },
+          visitCoords[firstCoordIndex] as LatLng,
+        ])
+      : Promise.resolve(null),
+    // Last stop -> home.
+    lastCoordIndex !== -1
+      ? computeRouteLegs([
+          visitCoords[lastCoordIndex] as LatLng,
+          { address: HOME_BASE_ADDRESS },
+        ])
+      : Promise.resolve(null),
+  ]);
+
+  const startingDriveMiles = startingLeg ? startingLeg[0].distanceMiles : null;
+  const startingDriveMinutes = startingLeg
+    ? startingLeg[0].durationMinutes
+    : null;
+  const endingDriveMiles = endingLeg ? endingLeg[0].distanceMiles : null;
+  const endingDriveMinutes = endingLeg ? endingLeg[0].durationMinutes : null;
 
   const distanceToNext: (number | null)[] = new Array(visits.length).fill(
     null
@@ -427,18 +465,42 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
     }
   }
 
-  const totalMiles = distanceToNext.reduce(
+  let totalMiles = distanceToNext.reduce(
     (sum: number, miles) => sum + (miles ?? 0),
     0
   );
-  const hasAnyDistance = distanceToNext.some((miles) => miles != null);
-  const totalMinutes = durationToNext.reduce(
+  let hasAnyDistance = distanceToNext.some((miles) => miles != null);
+  let totalMinutes = durationToNext.reduce(
     (sum: number, minutes) => sum + (minutes ?? 0),
     0
   );
-  const hasAnyDuration = durationToNext.some((minutes) => minutes != null);
+  let hasAnyDuration = durationToNext.some((minutes) => minutes != null);
+
+  // Fold the home commute legs into the day's total — they only ever
+  // exist as a matched (real distance + real duration) pair, since
+  // there's no straight-line fallback for them, so adding them never
+  // disturbs the "is everything real" check below.
+  if (startingDriveMiles != null) {
+    totalMiles += startingDriveMiles;
+    hasAnyDistance = true;
+  }
+  if (startingDriveMinutes != null) {
+    totalMinutes += startingDriveMinutes;
+    hasAnyDuration = true;
+  }
+  if (endingDriveMiles != null) {
+    totalMiles += endingDriveMiles;
+    hasAnyDistance = true;
+  }
+  if (endingDriveMinutes != null) {
+    totalMinutes += endingDriveMinutes;
+    hasAnyDuration = true;
+  }
+
   // True only when every leg that has a distance also has a real
   // duration — i.e. nothing fell back to the straight-line estimate.
+  // Computed after folding in the commute legs above, since those alone
+  // can flip hasAnyDistance to true on a single-stop day.
   const allDistancesAreReal =
     hasAnyDistance &&
     distanceToNext.every(
@@ -534,6 +596,15 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
           </section>
         ) : (
           <div className="mt-4 space-y-3">
+            {startingDriveMiles != null && (
+              <p className="text-center text-xs font-semibold text-[#9c7a20]">
+                🏠 Drive from home: ~{formatMiles(startingDriveMiles)}
+                {startingDriveMinutes != null
+                  ? ` · ~${Math.round(startingDriveMinutes)} min`
+                  : ""}
+              </p>
+            )}
+
             {visits.map((visit, index) => {
               const contact = visit.jobber_client_id
                 ? contactMap.get(visit.jobber_client_id) ?? null
@@ -700,6 +771,15 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                 </Fragment>
               );
             })}
+
+            {endingDriveMiles != null && (
+              <p className="text-center text-xs font-semibold text-[#9c7a20]">
+                🏠 Drive home: ~{formatMiles(endingDriveMiles)}
+                {endingDriveMinutes != null
+                  ? ` · ~${Math.round(endingDriveMinutes)} min`
+                  : ""}
+              </p>
+            )}
           </div>
         )}
 

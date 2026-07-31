@@ -14,12 +14,44 @@ import "server-only";
 
 export type RouteStop = { lat: number; lng: number };
 
+// A waypoint is either real coordinates (the normal case — every synced
+// customer address) or a plain address string. The address form exists
+// for fixed reference points like a home base/shop location that isn't
+// itself a customer record with lat/lng on file — Google geocodes the
+// string server-side, so no separate geocoding call is needed here.
+export type RouteWaypoint = RouteStop | { address: string };
+
+function isAddressWaypoint(
+  waypoint: RouteWaypoint
+): waypoint is { address: string } {
+  return "address" in waypoint;
+}
+
+function toGoogleWaypoint(waypoint: RouteWaypoint) {
+  if (isAddressWaypoint(waypoint)) {
+    return { address: waypoint.address };
+  }
+
+  return {
+    location: { latLng: { latitude: waypoint.lat, longitude: waypoint.lng } },
+  };
+}
+
 export type RouteLeg = {
   distanceMiles: number;
   durationMinutes: number;
 };
 
 const METERS_PER_MILE = 1609.344;
+
+// Overridable via env var (same pattern as lib/notifications.ts's
+// ALERT_EMAIL/ALERT_PHONE) so a future move doesn't require a code
+// change — this is the crew's starting/ending point for the day, used
+// by My Day to add a "drive from home" leg before the first stop and a
+// "drive home" leg after the last one.
+export const HOME_BASE_ADDRESS =
+  process.env.HOME_BASE_ADDRESS ||
+  "23391 S 228th St, Queen Creek, AZ 85142";
 
 // Google's computeRoutes caps intermediate waypoints at 25 — origin +
 // 25 intermediates + destination = 27 stops per request. A single
@@ -38,7 +70,7 @@ function parseDurationSeconds(duration: string | null | undefined): number {
 }
 
 export async function computeRouteLegs(
-  stops: RouteStop[]
+  stops: RouteWaypoint[]
 ): Promise<RouteLeg[] | null> {
   const apiKey = process.env.GOOGLE_ROUTES_API_KEY;
 
@@ -51,17 +83,9 @@ export async function computeRouteLegs(
   const intermediates = rest.slice(0, -1);
 
   const body = {
-    origin: {
-      location: { latLng: { latitude: origin.lat, longitude: origin.lng } },
-    },
-    destination: {
-      location: {
-        latLng: { latitude: destination.lat, longitude: destination.lng },
-      },
-    },
-    intermediates: intermediates.map((stop) => ({
-      location: { latLng: { latitude: stop.lat, longitude: stop.lng } },
-    })),
+    origin: toGoogleWaypoint(origin),
+    destination: toGoogleWaypoint(destination),
+    intermediates: intermediates.map(toGoogleWaypoint),
     travelMode: "DRIVE",
     // TRAFFIC_UNAWARE keeps this on the free Essentials SKU — a fixed
     // day-of-stops estimate doesn't need live-traffic-aware routing, and
