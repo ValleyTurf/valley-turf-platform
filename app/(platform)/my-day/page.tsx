@@ -11,9 +11,11 @@ export const revalidate = 0;
 // automatically login-gated by that layout; it has no entry in
 // lib/permissionRules.ts's SECTION_PREFIXES, so (same as /schedule) every
 // role including staff can reach it without any new permission plumbing.
+import { Fragment } from "react";
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
+import { haversineMiles } from "@/lib/geoDistance";
 import { completeVisit } from "./actions";
 import VisitTimer from "./VisitTimer";
 
@@ -148,23 +150,56 @@ function visitServiceLabel(title: string | null): string | null {
   return service || trimmed;
 }
 
-function navigateUrl(contact: CustomerContact | null): string | null {
+type NavigateLinks = { google: string; apple: string; waze: string };
+
+// Three separate map links instead of one — crews carry a mix of iPhone
+// and Android, and everyone has their own preferred app regardless.
+// Each service's own "universal link" scheme is used so it opens the
+// installed app directly when there is one, falling back to that
+// service's website otherwise. Coordinates are preferred when the
+// customer record has them (more reliable than an address string); the
+// address is the fallback for the (hopefully rare) contact missing
+// lat/lng.
+function navigateLinks(contact: CustomerContact | null): NavigateLinks | null {
+  if (!contact) return null;
+
+  const coords = contactLatLng(contact);
+  const address = [contact.address_line_1, contact.city, contact.state]
+    .filter(Boolean)
+    .join(", ");
+
+  if (!coords && !address) return null;
+
+  if (coords) {
+    const { lat, lng } = coords;
+    return {
+      google: `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`,
+      apple: `https://maps.apple.com/?daddr=${lat},${lng}`,
+      waze: `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`,
+    };
+  }
+
+  const encoded = encodeURIComponent(address);
+  return {
+    google: `https://www.google.com/maps/dir/?api=1&destination=${encoded}`,
+    apple: `https://maps.apple.com/?daddr=${encoded}`,
+    waze: `https://waze.com/ul?q=${encoded}&navigate=yes`,
+  };
+}
+
+type LatLng = { lat: number; lng: number };
+
+function contactLatLng(contact: CustomerContact | null): LatLng | null {
   if (!contact) return null;
 
   const lat = contact.latitude != null ? Number(contact.latitude) : NaN;
   const lng = contact.longitude != null ? Number(contact.longitude) : NaN;
 
-  if (Number.isFinite(lat) && Number.isFinite(lng)) {
-    return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
-  }
+  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+}
 
-  const address = [contact.address_line_1, contact.city, contact.state]
-    .filter(Boolean)
-    .join(", ");
-
-  if (!address) return null;
-
-  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
+function formatMiles(miles: number): string {
+  return `${miles < 10 ? miles.toFixed(1) : Math.round(miles)} mi`;
 }
 
 export default async function MyDayPage({ searchParams }: MyDayPageProps) {
@@ -321,6 +356,38 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
     (v) => (v.visit_status ?? "").toUpperCase() === "COMPLETED"
   ).length;
 
+  // Straight-line miles between each consecutive stop, in the same
+  // order they're shown (already sorted by start_at). Only computed
+  // between pairs where BOTH ends have real coordinates — a gap with a
+  // missing address just isn't shown rather than guessed at. This is
+  // "as the crow flies," not a real driving distance (see
+  // lib/geoDistance.ts for why), so every display of it is labeled as
+  // an estimate.
+  const distanceToNext: (number | null)[] = visits.map((visit, index) => {
+    const next = visits[index + 1];
+    if (!next) return null;
+
+    const fromContact = visit.jobber_client_id
+      ? contactMap.get(visit.jobber_client_id) ?? null
+      : null;
+    const toContact = next.jobber_client_id
+      ? contactMap.get(next.jobber_client_id) ?? null
+      : null;
+
+    const from = contactLatLng(fromContact);
+    const to = contactLatLng(toContact);
+
+    if (!from || !to) return null;
+
+    return haversineMiles(from.lat, from.lng, to.lat, to.lng);
+  });
+
+  const totalMiles = distanceToNext.reduce(
+    (sum: number, miles) => sum + (miles ?? 0),
+    0
+  );
+  const hasAnyDistance = distanceToNext.some((miles) => miles != null);
+
   const prevHref = `/my-day?date=${formatDateInput(addDays(selectedDate, -1))}`;
   const nextHref = `/my-day?date=${formatDateInput(addDays(selectedDate, 1))}`;
   const todayHref = `/my-day?date=${todayStr}`;
@@ -371,6 +438,9 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
           {visits.length === 0
             ? "No stops scheduled."
             : `${visits.length} stop${visits.length === 1 ? "" : "s"} · ${doneCount} done`}
+          {hasAnyDistance && (
+            <span> · ~{formatMiles(totalMiles)} today (straight-line)</span>
+          )}
         </p>
 
         {activeTimerElsewhereCustomer && (
@@ -395,7 +465,7 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
           </section>
         ) : (
           <div className="mt-4 space-y-3">
-            {visits.map((visit) => {
+            {visits.map((visit, index) => {
               const contact = visit.jobber_client_id
                 ? contactMap.get(visit.jobber_client_id) ?? null
                 : null;
@@ -406,7 +476,8 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                     .filter(Boolean)
                     .join(", ")
                 : null;
-              const mapsHref = navigateUrl(contact);
+              const navLinks = navigateLinks(contact);
+              const milesToNext = distanceToNext[index];
               const assignedNames = assignedNamesByVisit.get(visit.jobber_visit_id) ?? [];
               // Crew already know they're on it (that's why it's on their
               // list) — the useful bit is who ELSE is coming. Managers/
@@ -418,14 +489,18 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                 activeTimer?.jobber_visit_id === visit.jobber_visit_id;
 
               return (
-                <article
-                  key={visit.jobber_visit_id}
-                  className="rounded-2xl bg-white p-4 shadow"
-                >
+                <Fragment key={visit.jobber_visit_id}>
+                  <article className="rounded-2xl bg-white p-4 shadow">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="text-lg font-bold">
                         {formatTime(visit.start_at)}
+                        {visit.end_at && (
+                          <span className="text-sm font-semibold text-[#6b705c]">
+                            {" "}
+                            – {formatTime(visit.end_at)}
+                          </span>
+                        )}
                       </p>
                       <p className="mt-0.5 font-semibold">
                         {visit.customer_name || "Unnamed Customer"}
@@ -470,27 +545,51 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                     </div>
                   )}
 
-                  <div className="mt-4 flex gap-2">
-                    {mapsHref && (
+                  {navLinks && (
+                    <div className="mt-4 grid grid-cols-3 gap-2">
                       <a
-                        href={mapsHref}
+                        href={navLinks.google}
                         target="_blank"
                         rel="noopener noreferrer"
+                        className="rounded-xl border border-[#174734] px-2 py-2.5 text-center text-xs font-bold transition hover:bg-[#f7f6f1]"
+                      >
+                        Google
+                      </a>
+                      <a
+                        href={navLinks.apple}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-xl border border-[#174734] px-2 py-2.5 text-center text-xs font-bold transition hover:bg-[#f7f6f1]"
+                      >
+                        Apple
+                      </a>
+                      <a
+                        href={navLinks.waze}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-xl border border-[#174734] px-2 py-2.5 text-center text-xs font-bold transition hover:bg-[#f7f6f1]"
+                      >
+                        Waze
+                      </a>
+                    </div>
+                  )}
+
+                  {contact?.phone && (
+                    <div className="mt-2 flex gap-2">
+                      <a
+                        href={`sms:${contact.phone}`}
                         className="flex-1 rounded-xl bg-[#174734] px-4 py-2.5 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
                       >
-                        Navigate
+                        Message
                       </a>
-                    )}
-
-                    {contact?.phone && (
                       <a
                         href={`tel:${contact.phone}`}
                         className="flex-1 rounded-xl border border-[#174734] px-4 py-2.5 text-center text-sm font-bold transition hover:bg-[#f7f6f1]"
                       >
                         Call
                       </a>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
                   {(visit.visit_status ?? "").toUpperCase() !== "COMPLETED" && (
                     <VisitTimer
@@ -516,7 +615,14 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                       </button>
                     </form>
                   )}
-                </article>
+                  </article>
+
+                  {milesToNext != null && (
+                    <p className="py-1 text-center text-xs font-semibold text-[#9c7a20]">
+                      🚗 ~{formatMiles(milesToNext)} to next stop
+                    </p>
+                  )}
+                </Fragment>
               );
             })}
           </div>
