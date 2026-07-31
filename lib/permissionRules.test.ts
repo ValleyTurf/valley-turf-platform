@@ -13,6 +13,7 @@ const ALL_ALLOWED: RolePermissionsMap = {
     settings_audit: true,
     quotes: true,
     jobs: true,
+    customer_portal: true,
   },
   staff: {
     job_costing: true,
@@ -22,6 +23,7 @@ const ALL_ALLOWED: RolePermissionsMap = {
     settings_audit: true,
     quotes: true,
     jobs: true,
+    customer_portal: true,
   },
 };
 
@@ -34,6 +36,7 @@ const NONE_ALLOWED: RolePermissionsMap = {
     settings_audit: false,
     quotes: false,
     jobs: false,
+    customer_portal: false,
   },
   staff: {
     job_costing: false,
@@ -43,6 +46,7 @@ const NONE_ALLOWED: RolePermissionsMap = {
     settings_audit: false,
     quotes: false,
     jobs: false,
+    customer_portal: false,
   },
 };
 

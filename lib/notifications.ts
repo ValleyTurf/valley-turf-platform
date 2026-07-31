@@ -86,6 +86,80 @@ async function sendLeadEmailAlert(lead: NewLeadAlert): Promise<void> {
   }
 }
 
+export type PortalMagicLinkEmail = {
+  toEmail: string;
+  customerName: string | null;
+  loginUrl: string;
+};
+
+// Unlike sendNewLeadAlerts (an internal alert to staff), this goes out to
+// a customer, so silently no-op'ing when RESEND_API_KEY isn't set would
+// be a real problem — a customer who can never get their sign-in link is
+// worse than the login page just not existing. The route handler that
+// calls this surfaces the returned boolean back to the user as an error
+// message instead of pretending it worked.
+export async function sendPortalMagicLinkEmail(
+  request: PortalMagicLinkEmail
+): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    console.error(
+      "Cannot send portal magic link email: RESEND_API_KEY is not set."
+    );
+    return false;
+  }
+
+  const fromAddress = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
+  const greetingName = request.customerName || "there";
+
+  const html = `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
+      <p>Use the link below to sign in to your Valley Turf Revival customer portal. This link is valid for 15 minutes and can only be used once.</p>
+      <p style="margin: 24px 0;">
+        <a
+          href="${request.loginUrl}"
+          style="background-color: #174734; color: #ffffff; padding: 12px 24px; border-radius: 10px; text-decoration: none; font-weight: bold;"
+        >
+          Sign in to your account
+        </a>
+      </p>
+      <p style="color: #6b705c; font-size: 12px;">If you didn't request this, you can safely ignore this email.</p>
+    </div>
+  `;
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromAddress,
+        to: request.toEmail,
+        subject: "Sign in to your Valley Turf Revival portal",
+        html,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(
+        "Portal magic link email failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Portal magic link email error:", error);
+    return false;
+  }
+}
+
 async function sendLeadSmsAlert(lead: NewLeadAlert): Promise<void> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;

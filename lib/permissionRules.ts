@@ -26,7 +26,8 @@ export type PermissionSection =
   | "customer_intelligence"
   | "settings_audit"
   | "quotes"
-  | "jobs";
+  | "jobs"
+  | "customer_portal";
 
 export const SECTIONS: { id: PermissionSection; label: string; description: string }[] = [
   {
@@ -67,6 +68,12 @@ export const SECTIONS: { id: PermissionSection; label: string; description: stri
     label: "Jobs",
     description: "Creating new jobs in Jobber directly from this app.",
   },
+  {
+    id: "customer_portal",
+    label: "Customer Portal",
+    description:
+      "Viewing and replying to customer service requests and messages submitted through the customer portal.",
+  },
 ];
 
 const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
@@ -88,6 +95,7 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
   // pages.
   quotes: ["/quotes"],
   jobs: ["/jobs"],
+  customer_portal: ["/messages"],
 };
 
 // Structurally admin-only, always — not editable via role_permissions.
@@ -127,6 +135,7 @@ export function emptyPermissions(): RolePermissionsMap {
     settings_audit: false,
     quotes: false,
     jobs: false,
+    customer_portal: false,
   };
 
   return { manager: { ...blank }, staff: { ...blank } };

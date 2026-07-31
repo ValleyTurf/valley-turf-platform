@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/auth";
+import {
+  PORTAL_SESSION_COOKIE_NAME,
+  verifyPortalSessionToken,
+} from "@/lib/portalAuth";
 
 // Deliberately no lib/permissions or lib/supabase-server import here.
 // This file runs in a restricted (Edge-like) runtime that can't load the
@@ -51,6 +55,16 @@ const CRON_PATHS = [
   "/api/jobber/process-webhooks",
 ];
 
+// The customer portal is a completely separate auth world from the staff
+// app above — its own cookie (lib/portalAuth.ts), its own login flow
+// (magic-link email, not username/password), and its own identity
+// headers below (x-portal-*, not x-user-*). /portal/login (request a
+// link) and /portal/verify (consume a token from that emailed link) have
+// to be reachable with no session at all — that's the whole point of a
+// magic link. /portal/logout is included too so clearing an already-
+// expired/invalid cookie never itself gets redirect-looped.
+const PORTAL_PUBLIC_PATHS = ["/portal/login", "/portal/verify", "/portal/logout"];
+
 function matchesPrefix(pathname: string, prefixes: string[]): boolean {
   return prefixes.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
@@ -76,6 +90,30 @@ function isAuthorizedCronRequest(
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // Handled entirely separately from the staff session logic below —
+  // a customer hitting /portal/* should never be redirected to the
+  // staff /login page, and a staff member's own session cookie has no
+  // bearing on portal access at all.
+  if (pathname === "/portal" || pathname.startsWith("/portal/")) {
+    if (matchesPrefix(pathname, PORTAL_PUBLIC_PATHS)) {
+      return NextResponse.next();
+    }
+
+    const portalToken = request.cookies.get(PORTAL_SESSION_COOKIE_NAME)?.value;
+    const portalUser = await verifyPortalSessionToken(portalToken);
+
+    if (!portalUser) {
+      return NextResponse.redirect(new URL("/portal/login", request.url));
+    }
+
+    const headers = new Headers(request.headers);
+    headers.set("x-portal-client-id", portalUser.jobberClientId);
+    headers.set("x-portal-email", portalUser.email);
+    headers.set("x-portal-name", portalUser.name);
+
+    return NextResponse.next({ request: { headers } });
+  }
 
   const isPublicPath = matchesPrefix(pathname, PUBLIC_PATHS);
   const isPublicRedirect = pathname.startsWith("/r/");

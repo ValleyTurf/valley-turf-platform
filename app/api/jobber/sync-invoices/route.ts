@@ -60,6 +60,7 @@ type InvoiceUpsert = {
   due_date: string | null;
   total: number;
   balance: number;
+  jobber_web_uri: string | null;
   updated_at: string;
 };
 
@@ -170,6 +171,7 @@ function formatInvoice(
     due_date: cleanDate(invoice.dueDate),
     total,
     balance: 0,
+    jobber_web_uri: cleanText(invoice.jobberWebUri),
     updated_at: new Date().toISOString(),
   };
 }

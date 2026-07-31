@@ -72,6 +72,7 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
         href: "/customers/intelligence",
         icon: "🧠",
       },
+      { name: "Portal Messages", href: "/messages", icon: "💬" },
     ],
   },
   {
