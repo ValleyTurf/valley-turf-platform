@@ -1,79 +1,85 @@
 // One-off introspection route: does Jobber's payment record schema
-// expose a processing-fee field anywhere? Round 1 found PaymentRecord
-// has no direct "fee" field, but does have an "allocations"
-// (PaymentRecordAllocationInterfaceConnection) and "refunds" connection
-// — a fee is plausibly modeled as one kind of allocation rather than a
-// flat field. Round 2: pull every type name in the whole schema so
-// anything fee/allocation/payout-related can be found by name instead
-// of guessing one at a time, plus the allocation interface's own shape.
-// Deleted once the real feature (surfacing tips/fees on Revenue) is
-// confirmed working.
+// expose a processing-fee field anywhere?
+// Round 1: PaymentRecord has no direct fee field.
+// Round 2: "allocations" turned out to just be invoice/quote payment
+// splitting (PaymentRecordAllocationInterface only has `amount`, no
+// fee) — but the full-schema type scan surfaced PayoutRecord and a
+// family of "*BalanceTransaction" types (FeeAdjustmentBalanceTransaction,
+// InstantPayoutFeeBalanceTransaction, RefundFeeBalanceTransaction, etc.),
+// which is how payment processors normally model this: individual
+// payments get batched into a payout, and the FEE is a ledger line on
+// the payout, not the payment. Round 3: PayoutRecord's own fields (to
+// find what holds the balance transactions), two of the
+// BalanceTransaction types' fields directly, and the Query type's
+// top-level fields filtered for "payout" (to find how to actually query
+// this at all). Deleted once the real feature (surfacing tips/fees on
+// Revenue) is confirmed working.
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 
 export const dynamic = "force-dynamic";
 
-const INTROSPECTION_QUERY = `
-  query PaymentFeeSchemaCheckRound2 {
-    __schema {
-      types {
-        name
-        kind
-      }
-    }
-    allocationInterface: __type(name: "PaymentRecordAllocationInterface") {
+const TYPE_FRAGMENT = `
+  name
+  fields {
+    name
+    type {
       name
       kind
-      possibleTypes {
+      ofType {
         name
-      }
-      fields {
-        name
-        type {
+        kind
+        ofType {
           name
           kind
-          ofType {
-            name
-            kind
-          }
-        }
-      }
-    }
-    allocationConnection: __type(name: "PaymentRecordAllocationInterfaceConnection") {
-      name
-      fields {
-        name
-        type {
-          name
-          kind
-          ofType {
-            name
-            kind
-          }
         }
       }
     }
   }
 `;
 
+const INTROSPECTION_QUERY = `
+  query PaymentFeeSchemaCheckRound3 {
+    queryType: __type(name: "Query") {
+      fields {
+        name
+      }
+    }
+    payoutRecord: __type(name: "PayoutRecord") {
+      ${TYPE_FRAGMENT}
+    }
+    feeAdjustment: __type(name: "FeeAdjustmentBalanceTransaction") {
+      ${TYPE_FRAGMENT}
+    }
+    instantPayoutFee: __type(name: "InstantPayoutFeeBalanceTransaction") {
+      ${TYPE_FRAGMENT}
+    }
+    refundFee: __type(name: "RefundFeeBalanceTransaction") {
+      ${TYPE_FRAGMENT}
+    }
+  }
+`;
+
 export async function GET() {
   const { data, errors } = await jobberGraphQL<{
-    __schema: { types: { name: string; kind: string }[] };
-    allocationInterface: unknown;
-    allocationConnection: unknown;
+    queryType: { fields: { name: string }[] };
+    payoutRecord: unknown;
+    feeAdjustment: unknown;
+    instantPayoutFee: unknown;
+    refundFee: unknown;
   }>(INTROSPECTION_QUERY);
 
-  // Trim the full type list down to anything that looks relevant —
-  // the raw list is 1000+ entries, too much to usefully read otherwise.
-  const filteredTypes = (data?.__schema?.types ?? []).filter((t) =>
-    /fee|allocation|payout|surcharge|processing/i.test(t.name)
+  const payoutRelatedQueryFields = (data?.queryType?.fields ?? []).filter(
+    (f) => /payout/i.test(f.name)
   );
 
   return NextResponse.json({
     data: {
-      matchingTypes: filteredTypes,
-      allocationInterface: data?.allocationInterface,
-      allocationConnection: data?.allocationConnection,
+      payoutRelatedQueryFields,
+      payoutRecord: data?.payoutRecord,
+      feeAdjustment: data?.feeAdjustment,
+      instantPayoutFee: data?.instantPayoutFee,
+      refundFee: data?.refundFee,
     },
     errors,
   });
