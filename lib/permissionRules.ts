@@ -76,6 +76,7 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
     "/employees",
     "/equipment",
     "/costs",
+    "/invoices",
   ],
   financials: ["/revenue", "/alerts"],
   marketing_analytics: ["/analytics"],

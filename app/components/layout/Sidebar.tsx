@@ -90,6 +90,7 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
     items: [
       { name: "Create Job", href: "/jobs/new", icon: "🆕" },
       { name: "Log Job Costs", href: "/job-costs", icon: "🧾" },
+      { name: "Create Invoices", href: "/invoices", icon: "💵" },
       {
         name: "Job Costing Analytics",
         href: "/job-costing-analytics",

@@ -431,6 +431,13 @@ export default async function JobCostsPage({
             </Link>
 
             <Link
+              href="/invoices"
+              className="rounded-xl border border-[#174734] px-4 py-2 text-center text-sm font-bold transition hover:bg-white"
+            >
+              Create Invoices
+            </Link>
+
+            <Link
               href="/job-costing-analytics"
               className="rounded-xl border border-[#174734] px-4 py-2 text-center text-sm font-bold transition hover:bg-white"
             >
