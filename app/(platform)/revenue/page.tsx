@@ -20,6 +20,14 @@ type MarketInvoice = {
 type DashboardPayment = {
   amount: number | string;
   payment_date: string | null;
+  tip_amount: number | string | null;
+};
+
+type DashboardPayout = {
+  gross_amount: number | string;
+  fee_amount: number | string;
+  net_amount: number | string;
+  arrival_date: string | null;
 };
 
 type MarketCustomer = {
@@ -555,7 +563,7 @@ async function fetchDashboardPayments(
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabaseServer
       .from("jobber_payments")
-      .select("amount, payment_date")
+      .select("amount, payment_date, tip_amount")
       .gte("payment_date", startDate)
       .lte("payment_date", endDate)
       .range(from, from + pageSize - 1);
@@ -563,6 +571,43 @@ async function fetchDashboardPayments(
     if (error) throw error;
 
     const batch = (data ?? []) as DashboardPayment[];
+    rows.push(...batch);
+
+    if (batch.length < pageSize) break;
+  }
+
+  return rows;
+}
+
+// Jobber's processing fee is charged at the PAYOUT level (payments get
+// batched into a payout that lands in the bank 1-2 days later), not on
+// the individual payment — see supabase/migrations/021_add_jobber_payouts.sql
+// for the full story. Filtered by arrival_date (when the payout actually
+// hit the bank), which is a different timeline than payment_date above —
+// each card built from this is labeled accordingly so the two aren't
+// mistaken for the same thing.
+async function fetchDashboardPayouts(
+  startDate: string,
+  endDate: string,
+): Promise<DashboardPayout[]> {
+  const pageSize = 1000;
+  const rows: DashboardPayout[] = [];
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseServer
+      .from("jobber_payouts")
+      .select("gross_amount, fee_amount, net_amount, arrival_date")
+      .gte("arrival_date", startDate)
+      .lte("arrival_date", endDate)
+      // Only payouts that actually happened (or are on their way) —
+      // FAILED/CANCELED payouts never moved real money, so a fee never
+      // actually got charged for them.
+      .in("payout_status", ["PAID", "IN_TRANSIT", "PENDING"])
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+
+    const batch = (data ?? []) as DashboardPayout[];
     rows.push(...batch);
 
     if (batch.length < pageSize) break;
@@ -725,6 +770,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       previousMarketInvoices,
       marketCustomers,
       dashboardPayments,
+      dashboardPayouts,
     ] = await Promise.all([
       supabaseServer
         .from("customer_financials")
@@ -794,6 +840,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       fetchMarketInvoices(previousStartDate, previousEndDate),
       fetchMarketCustomers(),
       fetchDashboardPayments(startDate, endDate),
+      fetchDashboardPayouts(startDate, endDate),
     ]);
 
     const queryErrors = [
@@ -891,6 +938,16 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       dashboardPayments.length > 0
         ? totalPayments / dashboardPayments.length
         : 0;
+
+    const totalTips = dashboardPayments.reduce(
+      (sum, payment) => sum + toNumber(payment.tip_amount),
+      0,
+    );
+
+    const totalProcessingFees = dashboardPayouts.reduce(
+      (sum, payout) => sum + toNumber(payout.fee_amount),
+      0,
+    );
 
     const customerLocationMap = new Map(
       marketCustomers.map((customer) => [customer.jobber_client_id, customer]),
@@ -990,6 +1047,18 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
         value: formatCurrency(averagePayment),
         subtitle: `${formatNumber(dashboardPayments.length)} payments received`,
         icon: "💵",
+      },
+      {
+        title: "Tips Collected",
+        value: formatCurrency(totalTips),
+        subtitle: `Payments received · ${marketDateLabel}`,
+        icon: "🙌",
+      },
+      {
+        title: "Processing Fees",
+        value: formatCurrency(totalProcessingFees),
+        subtitle: `${formatNumber(dashboardPayouts.length)} payouts arrived · ${marketDateLabel}`,
+        icon: "🏦",
       },
     ];
 

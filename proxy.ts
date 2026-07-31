@@ -45,6 +45,7 @@ const CRON_PATHS = [
   "/api/jobber/sync-invoices",
   "/api/jobber/sync-jobs",
   "/api/jobber/sync-payments",
+  "/api/jobber/sync-payouts",
   "/api/jobber/sync-visits",
   "/api/jobber/process-webhooks",
 ];

@@ -39,6 +39,10 @@
     {
       "path": "/api/jobber/sync-visits",
       "schedule": "45 13 * * *"
+    },
+    {
+      "path": "/api/jobber/sync-payouts",
+      "schedule": "50 13 * * *"
     }
   ]
 }
