@@ -1,26 +1,27 @@
-// One-off introspection route: does Jobber's payment record schema
-// expose a processing-fee field anywhere?
-// Round 1: PaymentRecord has no direct fee field.
-// Round 2: "allocations" is just invoice/quote payment splitting, not
-// fees — but surfaced PayoutRecord and *BalanceTransaction types.
-// Round 3: PayoutRecord itself has direct feeAmount/grossAmount/
-// netAmount fields (Int, likely cents given the type — PaymentRecord's
-// own amount is a Float/dollars, so this needs confirming once real
-// data comes back) — no need to dig into individual balance
-// transactions for an aggregate fee total per payout.
-// Round 4: the payoutRecords query field's actual arguments (to know
-// how to page through it), PayoutRecordConnection's shape, and the
-// PayoutStatus/PayoutMethod/Payout enum values (to filter to only
-// completed payouts and label things sensibly). Deleted once the real
-// feature (surfacing tips/fees on Revenue) is confirmed working.
+// One-off introspection route: where do Jobber's per-transaction credit
+// card / ACH processing fees actually live?
+// Rounds 1-4 (see git history) confirmed PaymentRecord has no direct fee
+// field, and PayoutRecord's feeAmount comes back as 0 for every real
+// payout on this account (gross_amount === net_amount on all of them) —
+// so the payout-level fee isn't where the per-transaction card/ACH fee
+// shows up, if it's tracked at all via this API.
+// Round 5: PaymentRecord's own fields are prefixed "jobberPayment*"
+// (jobberPaymentLast4, jobberPaymentPaymentMethod,
+// jobberPaymentTransactionStatus) — a common GraphQL pattern for a
+// record type proxying a few fields from a related object without
+// exposing the whole thing. Looking for that underlying "JobberPayment"
+// type directly (it may expose a fee PaymentRecord doesn't), plus a
+// broader type-name scan for anything "Payment"-shaped that round 2's
+// narrower fee/allocation/payout scan wouldn't have caught.
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 
 export const dynamic = "force-dynamic";
 
-const ARG_TYPE_FRAGMENT = `
+const TYPE_FRAGMENT = `
   name
-  args {
+  kind
+  fields {
     name
     type {
       name
@@ -38,66 +39,43 @@ const ARG_TYPE_FRAGMENT = `
 `;
 
 const INTROSPECTION_QUERY = `
-  query PaymentFeeSchemaCheckRound4 {
-    queryType: __type(name: "Query") {
-      fields {
-        ${ARG_TYPE_FRAGMENT}
+  query PaymentFeeSchemaCheckRound5 {
+    __schema {
+      types {
+        name
+        kind
       }
     }
-    payoutConnection: __type(name: "PayoutRecordConnection") {
-      name
-      fields {
-        name
-        type {
-          name
-          kind
-          ofType {
-            name
-            kind
-          }
-        }
-      }
+    jobberPayment: __type(name: "JobberPayment") {
+      ${TYPE_FRAGMENT}
     }
-    payoutStatus: __type(name: "PayoutStatus") {
-      enumValues {
-        name
-      }
+    cardPayment: __type(name: "CardPayment") {
+      ${TYPE_FRAGMENT}
     }
-    payoutMethod: __type(name: "PayoutMethod") {
-      enumValues {
-        name
-      }
-    }
-    payoutType: __type(name: "Payout") {
-      enumValues {
-        name
-      }
+    achPayment: __type(name: "AchPayment") {
+      ${TYPE_FRAGMENT}
     }
   }
 `;
 
 export async function GET() {
   const { data, errors } = await jobberGraphQL<{
-    queryType: {
-      fields: { name: string; args: { name: string }[] }[];
-    };
-    payoutConnection: unknown;
-    payoutStatus: unknown;
-    payoutMethod: unknown;
-    payoutType: unknown;
+    __schema: { types: { name: string; kind: string }[] };
+    jobberPayment: unknown;
+    cardPayment: unknown;
+    achPayment: unknown;
   }>(INTROSPECTION_QUERY);
 
-  const payoutFields = (data?.queryType?.fields ?? []).filter((f) =>
-    /^payoutRecords?$/.test(f.name)
+  const paymentRelatedTypes = (data?.__schema?.types ?? []).filter((t) =>
+    /payment/i.test(t.name)
   );
 
   return NextResponse.json({
     data: {
-      payoutFields,
-      payoutConnection: data?.payoutConnection,
-      payoutStatus: data?.payoutStatus,
-      payoutMethod: data?.payoutMethod,
-      payoutType: data?.payoutType,
+      paymentRelatedTypes,
+      jobberPayment: data?.jobberPayment,
+      cardPayment: data?.cardPayment,
+      achPayment: data?.achPayment,
     },
     errors,
   });
