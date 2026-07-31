@@ -57,6 +57,7 @@ const BACKUP_TABLES: BackupTable[] = [
   { table: "jobber_visits" },
   { table: "jobber_payments" },
   { table: "jobber_payouts" },
+  { table: "jobber_payment_fees" },
 ];
 
 async function fetchAllRows(

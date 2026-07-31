@@ -23,11 +23,10 @@ type DashboardPayment = {
   tip_amount: number | string | null;
 };
 
-type DashboardPayout = {
-  gross_amount: number | string;
+type DashboardPaymentFee = {
   fee_amount: number | string;
-  net_amount: number | string;
-  arrival_date: string | null;
+  surcharge_amount: number | string;
+  entry_date: string | null;
 };
 
 type MarketCustomer = {
@@ -579,35 +578,31 @@ async function fetchDashboardPayments(
   return rows;
 }
 
-// Jobber's processing fee is charged at the PAYOUT level (payments get
-// batched into a payout that lands in the bank 1-2 days later), not on
-// the individual payment — see supabase/migrations/021_add_jobber_payouts.sql
-// for the full story. Filtered by arrival_date (when the payout actually
-// hit the bank), which is a different timeline than payment_date above —
-// each card built from this is labeled accordingly so the two aren't
-// mistaken for the same thing.
-async function fetchDashboardPayouts(
+// Jobber's real per-transaction credit-card/ACH processing fee lives on
+// individual payment records (jobber_payment_fees), NOT on the payout —
+// see supabase/migrations/022_add_jobber_payment_fees.sql for the full
+// story (jobber_payouts.fee_amount was confirmed to always be 0 on this
+// account). Filtered by entry_date (when the payment itself happened),
+// matching the same timeline as payment_date used for Tips/Average
+// Payment above.
+async function fetchDashboardPaymentFees(
   startDate: string,
   endDate: string,
-): Promise<DashboardPayout[]> {
+): Promise<DashboardPaymentFee[]> {
   const pageSize = 1000;
-  const rows: DashboardPayout[] = [];
+  const rows: DashboardPaymentFee[] = [];
 
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabaseServer
-      .from("jobber_payouts")
-      .select("gross_amount, fee_amount, net_amount, arrival_date")
-      .gte("arrival_date", startDate)
-      .lte("arrival_date", endDate)
-      // Only payouts that actually happened (or are on their way) —
-      // FAILED/CANCELED payouts never moved real money, so a fee never
-      // actually got charged for them.
-      .in("payout_status", ["PAID", "IN_TRANSIT", "PENDING"])
+      .from("jobber_payment_fees")
+      .select("fee_amount, surcharge_amount, entry_date")
+      .gte("entry_date", startDate)
+      .lte("entry_date", endDate)
       .range(from, from + pageSize - 1);
 
     if (error) throw error;
 
-    const batch = (data ?? []) as DashboardPayout[];
+    const batch = (data ?? []) as DashboardPaymentFee[];
     rows.push(...batch);
 
     if (batch.length < pageSize) break;
@@ -770,7 +765,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       previousMarketInvoices,
       marketCustomers,
       dashboardPayments,
-      dashboardPayouts,
+      dashboardPaymentFees,
     ] = await Promise.all([
       supabaseServer
         .from("customer_financials")
@@ -840,7 +835,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       fetchMarketInvoices(previousStartDate, previousEndDate),
       fetchMarketCustomers(),
       fetchDashboardPayments(startDate, endDate),
-      fetchDashboardPayouts(startDate, endDate),
+      fetchDashboardPaymentFees(startDate, endDate),
     ]);
 
     const queryErrors = [
@@ -944,8 +939,9 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       0,
     );
 
-    const totalProcessingFees = dashboardPayouts.reduce(
-      (sum, payout) => sum + toNumber(payout.fee_amount),
+    const totalProcessingFees = dashboardPaymentFees.reduce(
+      (sum, fee) =>
+        sum + toNumber(fee.fee_amount) + toNumber(fee.surcharge_amount),
       0,
     );
 
@@ -1057,7 +1053,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       {
         title: "Processing Fees",
         value: formatCurrency(totalProcessingFees),
-        subtitle: `${formatNumber(dashboardPayouts.length)} payouts arrived · ${marketDateLabel}`,
+        subtitle: `Credit card / ACH fees · ${formatNumber(dashboardPaymentFees.length)} charged payments · ${marketDateLabel}`,
         icon: "🏦",
       },
     ];
