@@ -111,7 +111,7 @@ export const ALWAYS_ADMIN_ONLY_PREFIXES = [
 // the route level instead of in-page. Not part of the configurable
 // SECTION_PREFIXES system — an admin can't grant this to staff via
 // /settings/permissions, same as ALWAYS_ADMIN_ONLY_PREFIXES.
-export const MANAGER_PLUS_PREFIXES = ["/crew-status"];
+export const MANAGER_PLUS_PREFIXES = ["/crew-status", "/timecards"];
 
 export type RolePermissionsMap = Record<
   Exclude<Role, "admin">,

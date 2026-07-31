@@ -39,3 +39,18 @@ export async function requireAdmin(): Promise<SessionUser> {
 
   return user;
 }
+
+// Manager or admin — staff excluded. For routes gated the same way as
+// lib/permissionRules.ts's MANAGER_PLUS_PREFIXES (Crew Status,
+// Timecards): the page-level route gate is the real enforcement, this
+// is defense in depth for the route handler/action underneath it,
+// same relationship requireAdmin has with ALWAYS_ADMIN_ONLY_PREFIXES.
+export async function requireManager(): Promise<SessionUser> {
+  const user = await getCurrentUser();
+
+  if (!user || user.role === "staff") {
+    throw new Error("Manager access required.");
+  }
+
+  return user;
+}

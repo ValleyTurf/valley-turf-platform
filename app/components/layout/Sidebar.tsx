@@ -37,6 +37,11 @@ const topLevelItems: NavItem[] = [
     icon: "🚚",
   },
   {
+    name: "Timeclock",
+    href: "/timeclock",
+    icon: "⏰",
+  },
+  {
     name: "Recurring Services",
     href: "/recurring-services",
     icon: "🔁",
@@ -52,7 +57,10 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
   {
     title: "Operations",
     icon: "📡",
-    items: [{ name: "Crew Status", href: "/crew-status", icon: "📡" }],
+    items: [
+      { name: "Crew Status", href: "/crew-status", icon: "📡" },
+      { name: "Timecards", href: "/timecards", icon: "🗓️" },
+    ],
   },
   {
     title: "Customers",
