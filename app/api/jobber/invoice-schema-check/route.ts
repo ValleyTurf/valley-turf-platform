@@ -2,11 +2,12 @@
 // throwaway pattern used for the job-edit and visit mutation discovery
 // rounds earlier (deleted once the real feature is confirmed working).
 // Round 1 (invoiceCreate exists, takes InvoiceCreateInput, required
-// fields are clientId/dueDetails/tax/lineItems) is done. Round 2: the
-// exact shapes of dueDetails (InvoiceDueDetails!), tax (TaxInputType!),
-// and lineItems (a list of some not-yet-named input object — round 1's
-// query wasn't deep enough to resolve its name through the
-// NON_NULL(LIST(NON_NULL(?))) wrapper).
+// fields are clientId/dueDetails/tax/lineItems) is done. Round 2 found
+// dueDetails=InvoiceDueDetails{dueDate,invoiceNet}, tax=TaxInputType{
+// taxRateId, taxCalculationMethod!: TaxCalculationMethodType!}, and the
+// real line-item type name: InvoiceCreationLineItemInput. Round 3:
+// that line item type's fields, plus the TaxCalculationMethodType enum
+// values (need to know what to pass when an invoice has no tax rate).
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 
@@ -30,8 +31,8 @@ const TYPE_FRAGMENT = `
 `;
 
 const INTROSPECTION_QUERY = `
-  query InvoiceSchemaCheckRound2 {
-    invoiceCreateInput: __type(name: "InvoiceCreateInput") {
+  query InvoiceSchemaCheckRound3 {
+    lineItemInput: __type(name: "InvoiceCreationLineItemInput") {
       name
       inputFields {
         name
@@ -40,67 +41,16 @@ const INTROSPECTION_QUERY = `
         }
       }
     }
-    invoiceDueDetails: __type(name: "InvoiceDueDetails") {
+    taxCalcMethodEnum: __type(name: "TaxCalculationMethodType") {
       name
-      inputFields {
+      enumValues {
         name
-        type {
-          ${TYPE_FRAGMENT}
-        }
       }
     }
-    taxInputType: __type(name: "TaxInputType") {
+    invoiceStatusEnum: __type(name: "InvoiceStatusTypeEnum") {
       name
-      inputFields {
+      enumValues {
         name
-        type {
-          ${TYPE_FRAGMENT}
-        }
-      }
-    }
-    discountInput: __type(name: "DiscountInput") {
-      name
-      inputFields {
-        name
-        type {
-          ${TYPE_FRAGMENT}
-        }
-      }
-    }
-    lineItemGuess1: __type(name: "InvoiceLineItemCreateAttributes") {
-      name
-      inputFields {
-        name
-        type {
-          ${TYPE_FRAGMENT}
-        }
-      }
-    }
-    lineItemGuess2: __type(name: "InvoiceCreateLineItemAttributes") {
-      name
-      inputFields {
-        name
-        type {
-          ${TYPE_FRAGMENT}
-        }
-      }
-    }
-    lineItemGuess3: __type(name: "LineItemCreateAttributes") {
-      name
-      inputFields {
-        name
-        type {
-          ${TYPE_FRAGMENT}
-        }
-      }
-    }
-    lineItemGuess4: __type(name: "InvoiceLineItemAttributes") {
-      name
-      inputFields {
-        name
-        type {
-          ${TYPE_FRAGMENT}
-        }
       }
     }
   }
