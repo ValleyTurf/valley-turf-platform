@@ -14,6 +14,7 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
+import { completeVisit } from "./actions";
 
 type MyDayPageProps = {
   searchParams: Promise<{ date?: string }>;
@@ -414,6 +415,22 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                       </a>
                     )}
                   </div>
+
+                  {(visit.visit_status ?? "").toUpperCase() !== "COMPLETED" && (
+                    <form action={completeVisit} className="mt-2">
+                      <input
+                        type="hidden"
+                        name="visit_id"
+                        value={visit.jobber_visit_id}
+                      />
+                      <button
+                        type="submit"
+                        className="w-full rounded-xl bg-[#d4af37] px-4 py-2.5 text-center text-sm font-bold text-[#174734] transition hover:bg-[#c49f2f]"
+                      >
+                        Mark Complete
+                      </button>
+                    </form>
+                  )}
                 </article>
               );
             })}

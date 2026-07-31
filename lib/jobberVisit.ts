@@ -124,3 +124,50 @@ export async function skipJobberVisit(
 
   return { ok: true, value: null };
 }
+
+// visitComplete(visitId, input: VisitCompleteInput) — input's own type
+// isn't wrapped in NON_NULL in the schema (confirmed during the same
+// round-1 visit-mutation introspection that found visitEditSchedule/
+// visitDelete), meaning the argument itself is optional. Marking a stop
+// done from My Day doesn't need anything beyond "complete it now," so
+// this omits input entirely rather than spending a round of
+// introspection on VisitCompleteInput's fields for something unused.
+const VISIT_COMPLETE_MUTATION = `
+  mutation CompleteVisit($visitId: EncodedId!) {
+    visitComplete(visitId: $visitId) {
+      visit {
+        id
+        visitStatus
+        completedAt
+      }
+      userErrors {
+        message
+      }
+    }
+  }
+`;
+
+export async function completeJobberVisit(
+  visitId: string
+): Promise<MutationOutcome<{ completedAt: string | null }>> {
+  const { data, errors } = await jobberGraphQL<{
+    visitComplete: {
+      visit: { id: string; visitStatus: string | null; completedAt: string | null } | null;
+      userErrors: { message: string }[];
+    } | null;
+  }>(VISIT_COMPLETE_MUTATION, { visitId });
+
+  if (errors?.length) {
+    return { ok: false, error: errors.map((e) => e.message).join("; ") };
+  }
+
+  const userErrors = data?.visitComplete?.userErrors ?? [];
+  if (userErrors.length > 0) {
+    return { ok: false, error: userErrors.map((e) => e.message).join("; ") };
+  }
+
+  return {
+    ok: true,
+    value: { completedAt: data?.visitComplete?.visit?.completedAt ?? null },
+  };
+}
