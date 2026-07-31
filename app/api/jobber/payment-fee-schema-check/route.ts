@@ -1,27 +1,26 @@
 // One-off introspection route: does Jobber's payment record schema
 // expose a processing-fee field anywhere?
 // Round 1: PaymentRecord has no direct fee field.
-// Round 2: "allocations" turned out to just be invoice/quote payment
-// splitting (PaymentRecordAllocationInterface only has `amount`, no
-// fee) — but the full-schema type scan surfaced PayoutRecord and a
-// family of "*BalanceTransaction" types (FeeAdjustmentBalanceTransaction,
-// InstantPayoutFeeBalanceTransaction, RefundFeeBalanceTransaction, etc.),
-// which is how payment processors normally model this: individual
-// payments get batched into a payout, and the FEE is a ledger line on
-// the payout, not the payment. Round 3: PayoutRecord's own fields (to
-// find what holds the balance transactions), two of the
-// BalanceTransaction types' fields directly, and the Query type's
-// top-level fields filtered for "payout" (to find how to actually query
-// this at all). Deleted once the real feature (surfacing tips/fees on
-// Revenue) is confirmed working.
+// Round 2: "allocations" is just invoice/quote payment splitting, not
+// fees — but surfaced PayoutRecord and *BalanceTransaction types.
+// Round 3: PayoutRecord itself has direct feeAmount/grossAmount/
+// netAmount fields (Int, likely cents given the type — PaymentRecord's
+// own amount is a Float/dollars, so this needs confirming once real
+// data comes back) — no need to dig into individual balance
+// transactions for an aggregate fee total per payout.
+// Round 4: the payoutRecords query field's actual arguments (to know
+// how to page through it), PayoutRecordConnection's shape, and the
+// PayoutStatus/PayoutMethod/Payout enum values (to filter to only
+// completed payouts and label things sensibly). Deleted once the real
+// feature (surfacing tips/fees on Revenue) is confirmed working.
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 
 export const dynamic = "force-dynamic";
 
-const TYPE_FRAGMENT = `
+const ARG_TYPE_FRAGMENT = `
   name
-  fields {
+  args {
     name
     type {
       name
@@ -39,47 +38,66 @@ const TYPE_FRAGMENT = `
 `;
 
 const INTROSPECTION_QUERY = `
-  query PaymentFeeSchemaCheckRound3 {
+  query PaymentFeeSchemaCheckRound4 {
     queryType: __type(name: "Query") {
       fields {
+        ${ARG_TYPE_FRAGMENT}
+      }
+    }
+    payoutConnection: __type(name: "PayoutRecordConnection") {
+      name
+      fields {
+        name
+        type {
+          name
+          kind
+          ofType {
+            name
+            kind
+          }
+        }
+      }
+    }
+    payoutStatus: __type(name: "PayoutStatus") {
+      enumValues {
         name
       }
     }
-    payoutRecord: __type(name: "PayoutRecord") {
-      ${TYPE_FRAGMENT}
+    payoutMethod: __type(name: "PayoutMethod") {
+      enumValues {
+        name
+      }
     }
-    feeAdjustment: __type(name: "FeeAdjustmentBalanceTransaction") {
-      ${TYPE_FRAGMENT}
-    }
-    instantPayoutFee: __type(name: "InstantPayoutFeeBalanceTransaction") {
-      ${TYPE_FRAGMENT}
-    }
-    refundFee: __type(name: "RefundFeeBalanceTransaction") {
-      ${TYPE_FRAGMENT}
+    payoutType: __type(name: "Payout") {
+      enumValues {
+        name
+      }
     }
   }
 `;
 
 export async function GET() {
   const { data, errors } = await jobberGraphQL<{
-    queryType: { fields: { name: string }[] };
-    payoutRecord: unknown;
-    feeAdjustment: unknown;
-    instantPayoutFee: unknown;
-    refundFee: unknown;
+    queryType: {
+      fields: { name: string; args: { name: string }[] }[];
+    };
+    payoutConnection: unknown;
+    payoutStatus: unknown;
+    payoutMethod: unknown;
+    payoutType: unknown;
   }>(INTROSPECTION_QUERY);
 
-  const payoutRelatedQueryFields = (data?.queryType?.fields ?? []).filter(
-    (f) => /payout/i.test(f.name)
+  const payoutFields = (data?.queryType?.fields ?? []).filter((f) =>
+    /^payoutRecords?$/.test(f.name)
   );
 
   return NextResponse.json({
     data: {
-      payoutRelatedQueryFields,
-      payoutRecord: data?.payoutRecord,
-      feeAdjustment: data?.feeAdjustment,
-      instantPayoutFee: data?.instantPayoutFee,
-      refundFee: data?.refundFee,
+      payoutFields,
+      payoutConnection: data?.payoutConnection,
+      payoutStatus: data?.payoutStatus,
+      payoutMethod: data?.payoutMethod,
+      payoutType: data?.payoutType,
     },
     errors,
   });
