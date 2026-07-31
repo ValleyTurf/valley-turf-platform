@@ -16,6 +16,7 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { haversineMiles } from "@/lib/geoDistance";
+import { computeRouteLegs } from "@/lib/googleRoutes";
 import { completeVisit } from "./actions";
 import VisitTimer from "./VisitTimer";
 
@@ -356,37 +357,93 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
     (v) => (v.visit_status ?? "").toUpperCase() === "COMPLETED"
   ).length;
 
-  // Straight-line miles between each consecutive stop, in the same
-  // order they're shown (already sorted by start_at). Only computed
-  // between pairs where BOTH ends have real coordinates — a gap with a
-  // missing address just isn't shown rather than guessed at. This is
-  // "as the crow flies," not a real driving distance (see
-  // lib/geoDistance.ts for why), so every display of it is labeled as
-  // an estimate.
-  const distanceToNext: (number | null)[] = visits.map((visit, index) => {
-    const next = visits[index + 1];
-    if (!next) return null;
-
-    const fromContact = visit.jobber_client_id
+  // Real driving distance/time between each consecutive stop, via
+  // Google's Routes API (lib/googleRoutes.ts) when GOOGLE_ROUTES_API_KEY
+  // is configured. Falls back to the straight-line haversineMiles()
+  // estimate (lib/geoDistance.ts) per contiguous run of stops where the
+  // real routing call isn't available (no key) or fails (network error,
+  // Google API error) — grouped into "runs" of consecutive stops that
+  // all have coordinates, since a real route can only be computed across
+  // an unbroken chain, and one stop missing an address shouldn't take
+  // out the estimate for the stops around it.
+  const visitCoords: (LatLng | null)[] = visits.map((visit) => {
+    const contact = visit.jobber_client_id
       ? contactMap.get(visit.jobber_client_id) ?? null
       : null;
-    const toContact = next.jobber_client_id
-      ? contactMap.get(next.jobber_client_id) ?? null
-      : null;
 
-    const from = contactLatLng(fromContact);
-    const to = contactLatLng(toContact);
-
-    if (!from || !to) return null;
-
-    return haversineMiles(from.lat, from.lng, to.lat, to.lng);
+    return contactLatLng(contact);
   });
+
+  let runStart: number | null = null;
+  const coordRuns: { start: number; end: number }[] = [];
+
+  for (let i = 0; i < visitCoords.length; i++) {
+    if (visitCoords[i]) {
+      if (runStart === null) runStart = i;
+    } else if (runStart !== null) {
+      coordRuns.push({ start: runStart, end: i - 1 });
+      runStart = null;
+    }
+  }
+  if (runStart !== null) {
+    coordRuns.push({ start: runStart, end: visitCoords.length - 1 });
+  }
+
+  const runResults = await Promise.all(
+    coordRuns
+      .filter((run) => run.end > run.start)
+      .map(async (run) => {
+        const runCoords = visitCoords
+          .slice(run.start, run.end + 1)
+          .map((coord) => coord as LatLng);
+
+        const legs = await computeRouteLegs(runCoords);
+
+        return { run, runCoords, legs };
+      })
+  );
+
+  const distanceToNext: (number | null)[] = new Array(visits.length).fill(
+    null
+  );
+  const durationToNext: (number | null)[] = new Array(visits.length).fill(
+    null
+  );
+
+  for (const { run, runCoords, legs } of runResults) {
+    for (let i = run.start; i < run.end; i++) {
+      const localIndex = i - run.start;
+
+      if (legs) {
+        distanceToNext[i] = legs[localIndex].distanceMiles;
+        durationToNext[i] = legs[localIndex].durationMinutes;
+      } else {
+        const from = runCoords[localIndex];
+        const to = runCoords[localIndex + 1];
+
+        distanceToNext[i] = haversineMiles(from.lat, from.lng, to.lat, to.lng);
+        durationToNext[i] = null;
+      }
+    }
+  }
 
   const totalMiles = distanceToNext.reduce(
     (sum: number, miles) => sum + (miles ?? 0),
     0
   );
   const hasAnyDistance = distanceToNext.some((miles) => miles != null);
+  const totalMinutes = durationToNext.reduce(
+    (sum: number, minutes) => sum + (minutes ?? 0),
+    0
+  );
+  const hasAnyDuration = durationToNext.some((minutes) => minutes != null);
+  // True only when every leg that has a distance also has a real
+  // duration — i.e. nothing fell back to the straight-line estimate.
+  const allDistancesAreReal =
+    hasAnyDistance &&
+    distanceToNext.every(
+      (miles, i) => miles == null || durationToNext[i] != null
+    );
 
   const prevHref = `/my-day?date=${formatDateInput(addDays(selectedDate, -1))}`;
   const nextHref = `/my-day?date=${formatDateInput(addDays(selectedDate, 1))}`;
@@ -439,7 +496,19 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
             ? "No stops scheduled."
             : `${visits.length} stop${visits.length === 1 ? "" : "s"} · ${doneCount} done`}
           {hasAnyDistance && (
-            <span> · ~{formatMiles(totalMiles)} today (straight-line)</span>
+            <span>
+              {" "}
+              · ~{formatMiles(totalMiles)}
+              {hasAnyDuration
+                ? ` · ~${Math.round(totalMinutes)} min drive time`
+                : ""}{" "}
+              today
+              {allDistancesAreReal
+                ? ""
+                : hasAnyDuration
+                  ? " (partly estimated)"
+                  : " (straight-line)"}
+            </span>
           )}
         </p>
 
@@ -478,6 +547,7 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                 : null;
               const navLinks = navigateLinks(contact);
               const milesToNext = distanceToNext[index];
+              const minutesToNext = durationToNext[index];
               const assignedNames = assignedNamesByVisit.get(visit.jobber_visit_id) ?? [];
               // Crew already know they're on it (that's why it's on their
               // list) — the useful bit is who ELSE is coming. Managers/
@@ -619,7 +689,12 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
 
                   {milesToNext != null && (
                     <p className="py-1 text-center text-xs font-semibold text-[#9c7a20]">
-                      🚗 ~{formatMiles(milesToNext)} to next stop
+                      🚗 ~{formatMiles(milesToNext)}
+                      {minutesToNext != null
+                        ? ` · ~${Math.round(minutesToNext)} min`
+                        : ""}{" "}
+                      to next stop
+                      {minutesToNext == null ? " (straight-line)" : ""}
                     </p>
                   )}
                 </Fragment>
