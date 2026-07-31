@@ -1,52 +1,40 @@
-// One-off introspection route: where do Jobber's per-transaction credit
-// card / ACH processing fees actually live?
-// Round 7 found the real path: a TOP-LEVEL Query.paymentRecords field
-// returning PaymentRecordInterfaceConnection (distinct from
-// Invoice.paymentRecords, which returns the unrelated plain
-// PaymentRecordConnection with no fee data). Round 8: introspect that
-// top-level field's arguments (so we know how to scope/page it) and the
-// PaymentRecordInterfaceConnection type's own fields (nodes/edges shape),
-// to confirm this is queryable the way we need before writing the real
-// sync query.
+// One-off introspection/data route: where do Jobber's per-transaction
+// credit card / ACH processing fees actually live?
+// Round 8 confirmed a top-level Query.paymentRecords(filter, sort, after,
+// before, first, last) field returning PaymentRecordInterfaceConnection —
+// the polymorphic connection whose nodes resolve to PaymentRecordInterface
+// (distinct from Invoice.paymentRecords, which only ever returns the
+// unrelated plain PaymentRecord with no fee data).
+// Round 9 switches from pure schema introspection to a REAL query: pull a
+// handful of actual payment records through this new path with inline
+// fragments for the credit-card/ACH concrete types, to confirm the field
+// names are right and see real fee values (and whether "id" lines up with
+// what's already stored in jobber_payments.jobber_payment_id).
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 
 export const dynamic = "force-dynamic";
 
-const INTROSPECTION_QUERY = `
-  query PaymentFeeSchemaCheckRound8 {
-    queryType: __type(name: "Query") {
-      fields {
-        name
-        args {
-          name
-          type {
-            name
-            kind
-            ofType {
-              name
-              kind
-            }
-          }
+const REAL_DATA_QUERY = `
+  query PaymentFeeSchemaCheckRound9 {
+    paymentRecords(first: 5, sort: { key: ENTRY_DATE, direction: DESCENDING }) {
+      totalCount
+      nodes {
+        __typename
+        id
+        amount
+        entryDate
+        adjustmentType
+        paymentType
+        invoice {
+          id
         }
-      }
-    }
-    connectionType: __type(name: "PaymentRecordInterfaceConnection") {
-      name
-      kind
-      fields {
-        name
-        type {
-          name
-          kind
-          ofType {
-            name
-            kind
-            ofType {
-              name
-              kind
-            }
-          }
+        ... on JobberPaymentsCreditCardPaymentRecord {
+          feeAmount
+          surchargeAmount
+        }
+        ... on JobberPaymentsACHPaymentRecord {
+          feeAmount
         }
       }
     }
@@ -55,46 +43,11 @@ const INTROSPECTION_QUERY = `
 
 export async function GET() {
   const { data, errors } = await jobberGraphQL<{
-    queryType: {
-      fields: {
-        name: string;
-        args: {
-          name: string;
-          type: {
-            name: string | null;
-            kind: string;
-            ofType: { name: string | null; kind: string } | null;
-          };
-        }[];
-      }[];
+    paymentRecords: {
+      totalCount: number;
+      nodes: Record<string, unknown>[];
     };
-    connectionType: {
-      name: string;
-      kind: string;
-      fields: {
-        name: string;
-        type: {
-          name: string | null;
-          kind: string;
-          ofType: {
-            name: string | null;
-            kind: string;
-            ofType: { name: string | null; kind: string } | null;
-          } | null;
-        };
-      }[];
-    };
-  }>(INTROSPECTION_QUERY);
+  }>(REAL_DATA_QUERY);
 
-  const topLevelPaymentRecordsField = (data?.queryType?.fields ?? []).find(
-    (f) => f.name === "paymentRecords"
-  );
-
-  return NextResponse.json({
-    data: {
-      topLevelPaymentRecordsField,
-      connectionType: data?.connectionType,
-    },
-    errors,
-  });
+  return NextResponse.json({ data, errors });
 }
