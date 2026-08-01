@@ -27,7 +27,7 @@ import VisitTimer from "./VisitTimer";
 // breaks if these get recreated with a new point-in-time row (see
 // /materials' end_date rollover) — a name just has to keep matching.
 const QUICK_ENTRY_MATERIALS = ["Infill", "OxyTurf"];
-const QUICK_ENTRY_EQUIPMENT = ["Blower", "Power Broom", "Vacuum"];
+const QUICK_ENTRY_EQUIPMENT = ["Blower", "Power Broom", "Turf Vacuum"];
 
 // Must match the identical transform in ./actions.ts's
 // saveVisitJobCostQuickEntry — kept as two independent copies rather

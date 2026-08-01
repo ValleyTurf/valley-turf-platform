@@ -12,7 +12,7 @@ import { completeJobberVisit } from "@/lib/jobberVisit";
 // there's no way to share one constant between the two without a third
 // file just for this. If the curated list ever changes, update both.
 const QUICK_ENTRY_MATERIALS = ["Infill", "OxyTurf"];
-const QUICK_ENTRY_EQUIPMENT = ["Blower", "Power Broom", "Vacuum"];
+const QUICK_ENTRY_EQUIPMENT = ["Blower", "Power Broom", "Turf Vacuum"];
 
 // Marks a stop done from the field — see lib/jobberVisit.ts's
 // completeJobberVisit for the mutation itself. A plain <form action>
