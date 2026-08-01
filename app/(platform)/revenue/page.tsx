@@ -766,6 +766,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       marketCustomers,
       dashboardPayments,
       dashboardPaymentFees,
+      previousServiceCategoryRevenue,
     ] = await Promise.all([
       supabaseServer
         .from("customer_financials")
@@ -836,6 +837,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       fetchMarketCustomers(),
       fetchDashboardPayments(startDate, endDate),
       fetchDashboardPaymentFees(startDate, endDate),
+      fetchServiceCategoryRevenue(previousStartDate, previousEndDate),
     ]);
 
     const queryErrors = [
@@ -991,6 +993,18 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
 
     const totalMarketRevenue = marketSummaries.reduce(
       (sum, market) => sum + market.revenue,
+      0,
+    );
+
+    const previousServiceCategoryMap = new Map(
+      previousServiceCategoryRevenue.map((service) => [
+        service.category,
+        service,
+      ]),
+    );
+
+    const totalServiceRevenue = serviceCategoryRevenue.reduce(
+      (sum, service) => sum + service.revenue,
       0,
     );
 
@@ -1438,6 +1452,9 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
               <p className="mt-2 text-sm font-semibold text-[#174734]">
                 {marketDateLabel}
               </p>
+              <p className="mt-1 text-xs text-[#6b705c]">
+                Compared with {previousMarketDateLabel}
+              </p>
             </div>
 
             {serviceCategoryRevenue.length === 0 ? (
@@ -1446,7 +1463,24 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
               </p>
             ) : (
               <div className="mt-7 space-y-3">
-                {serviceCategoryRevenue.map((service, index) => (
+                {serviceCategoryRevenue.map((service, index) => {
+                  const averageTicket =
+                    service.invoiceCount > 0
+                      ? service.revenue / service.invoiceCount
+                      : 0;
+                  const revenueShare =
+                    totalServiceRevenue > 0
+                      ? service.revenue / totalServiceRevenue
+                      : 0;
+                  const previousService = previousServiceCategoryMap.get(
+                    service.category,
+                  );
+                  const revenueChange = calculatePercentChange(
+                    service.revenue,
+                    previousService?.revenue ?? 0,
+                  );
+
+                  return (
                   <div
                     key={service.category}
                     className="rounded-2xl border border-[#e7e2d5] p-4"
@@ -1470,6 +1504,21 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                       <p className="shrink-0 text-xl font-bold text-[#9c7a20]">
                         {formatCurrency(service.revenue)}
                       </p>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 border-t border-[#eee9dc] pt-3 text-xs text-[#6b705c]">
+                      <span>{formatCurrency(averageTicket)} avg ticket</span>
+                      <span>{formatPercent(revenueShare)} of revenue</span>
+                      <span className="flex items-center gap-1.5">
+                        <span
+                          className={`rounded-full px-2 py-0.5 font-bold ${comparisonClasses(
+                            revenueChange,
+                          )}`}
+                        >
+                          {formatComparison(revenueChange)}
+                        </span>
+                        vs previous period
+                      </span>
                     </div>
 
                     {service.customerIds.size > 0 && (
@@ -1497,7 +1546,8 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                       </details>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </section>
