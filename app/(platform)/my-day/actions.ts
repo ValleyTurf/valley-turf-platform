@@ -6,6 +6,14 @@ import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
 import { completeJobberVisit } from "@/lib/jobberVisit";
 
+// Kept as a private, file-local copy of the same list rendered on the My
+// Day page (QUICK_ENTRY_MATERIALS/QUICK_ENTRY_EQUIPMENT in page.tsx) —
+// this file is "use server" and can only export async functions, so
+// there's no way to share one constant between the two without a third
+// file just for this. If the curated list ever changes, update both.
+const QUICK_ENTRY_MATERIALS = ["Infill", "OxyTurf"];
+const QUICK_ENTRY_EQUIPMENT = ["Blower", "Power Broom", "Vacuum"];
+
 // Marks a stop done from the field — see lib/jobberVisit.ts's
 // completeJobberVisit for the mutation itself. A plain <form action>
 // rather than useTransition/client state (unlike the schedule page's
@@ -155,4 +163,160 @@ export async function stopVisitTimer(
   revalidatePath("/my-day");
 
   return { error: null };
+}
+
+// Quick job-cost entry for the crew: Infill/OxyTurf usage and
+// Blower/Power Broom/Vacuum equipment, right on the My Day card, instead
+// of making a tech wait for a manager to log it later on the full /job-costs
+// page (which still exists for the fuller material list plus
+// manager-only fields like mileage/fuel). Writes to the exact same
+// visit_material_usage/visit_equipment_usage tables /job-costs reads
+// from, so anything saved here shows up there immediately — same "value
+// present = save, blank = leave untouched" behavior for materials as
+// saveVisitCosts (app/(platform)/materials/actions.ts), and the same
+// "delete then re-insert checked ones" pattern for equipment.
+export async function saveVisitJobCostQuickEntry(
+  visitId: string,
+  formData: FormData
+): Promise<void> {
+  const actor = await getCurrentUser();
+
+  if (!actor || !visitId) {
+    return;
+  }
+
+  // Same "lowercase, spaces -> underscores" transform the My Day page
+  // uses to build each field's name= attribute — quickEntryFieldKey() in
+  // my-day/page.tsx. Kept as an independent copy rather than a shared
+  // import: this file is "use server" and can only export async
+  // functions (see the commit that fixed the Vercel build for exporting
+  // a plain constant from a 'use server' file), so a shared helper isn't
+  // an option without a third file just for this.
+  function fieldKey(name: string): string {
+    return name.toLowerCase().replace(/\s+/g, "_");
+  }
+
+  const materialFields = QUICK_ENTRY_MATERIALS.map((materialName) => ({
+    formKey: fieldKey(materialName),
+    materialName,
+  }));
+
+  const equipmentFields = QUICK_ENTRY_EQUIPMENT.map((equipmentName) => ({
+    formKey: fieldKey(equipmentName),
+    equipmentName,
+  }));
+
+  const [materialsResult, equipmentResult] = await Promise.all([
+    supabaseServer
+      .from("materials")
+      .select("id, name, unit_cost")
+      .in(
+        "name",
+        materialFields.map((field) => field.materialName)
+      ),
+    supabaseServer
+      .from("equipment")
+      .select("id, name")
+      .in(
+        "name",
+        equipmentFields.map((field) => field.equipmentName)
+      ),
+  ]);
+
+  const materialByName = new Map<
+    string,
+    { id: string; unit_cost: number }
+  >();
+  for (const row of materialsResult.data ?? []) {
+    materialByName.set(row.name as string, {
+      id: row.id as string,
+      unit_cost: Number(row.unit_cost ?? 0),
+    });
+  }
+
+  const equipmentByName = new Map<string, string>();
+  for (const row of equipmentResult.data ?? []) {
+    equipmentByName.set(row.name as string, row.id as string);
+  }
+
+  const usageRows: {
+    jobber_visit_id: string;
+    material_id: string;
+    quantity_used: number;
+    unit_cost_at_time: number;
+  }[] = [];
+
+  for (const field of materialFields) {
+    const material = materialByName.get(field.materialName);
+    if (!material) continue;
+
+    const rawValue = formData.get(field.formKey);
+    const quantity =
+      typeof rawValue === "string" ? Number(rawValue.trim()) : NaN;
+
+    if (!Number.isFinite(quantity) || quantity <= 0) continue;
+
+    usageRows.push({
+      jobber_visit_id: visitId,
+      material_id: material.id,
+      quantity_used: quantity,
+      unit_cost_at_time: material.unit_cost,
+    });
+  }
+
+  if (usageRows.length > 0) {
+    const { error } = await supabaseServer
+      .from("visit_material_usage")
+      .upsert(usageRows, { onConflict: "jobber_visit_id,material_id" });
+
+    if (error) {
+      console.error(
+        `saveVisitJobCostQuickEntry material usage failed for ${visitId}:`,
+        error
+      );
+    }
+  }
+
+  const knownEquipmentIds = equipmentFields
+    .map((field) => equipmentByName.get(field.equipmentName))
+    .filter((id): id is string => Boolean(id));
+
+  if (knownEquipmentIds.length > 0) {
+    const checkedEquipmentIds = equipmentFields
+      .filter((field) => formData.get(field.formKey) === "1")
+      .map((field) => equipmentByName.get(field.equipmentName))
+      .filter((id): id is string => Boolean(id));
+
+    const { error: deleteError } = await supabaseServer
+      .from("visit_equipment_usage")
+      .delete()
+      .eq("jobber_visit_id", visitId)
+      .in("equipment_id", knownEquipmentIds);
+
+    if (deleteError) {
+      console.error(
+        `saveVisitJobCostQuickEntry equipment reset failed for ${visitId}:`,
+        deleteError
+      );
+    } else if (checkedEquipmentIds.length > 0) {
+      const { error: insertError } = await supabaseServer
+        .from("visit_equipment_usage")
+        .insert(
+          checkedEquipmentIds.map((equipmentId) => ({
+            jobber_visit_id: visitId,
+            equipment_id: equipmentId,
+          }))
+        );
+
+      if (insertError) {
+        console.error(
+          `saveVisitJobCostQuickEntry equipment save failed for ${visitId}:`,
+          insertError
+        );
+      }
+    }
+  }
+
+  revalidatePath("/my-day");
+  revalidatePath("/job-costs");
 }

@@ -17,8 +17,26 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { haversineMiles } from "@/lib/geoDistance";
 import { computeRouteLegs, HOME_BASE_ADDRESS } from "@/lib/googleRoutes";
-import { completeVisit } from "./actions";
+import { completeVisit, saveVisitJobCostQuickEntry } from "./actions";
 import VisitTimer from "./VisitTimer";
+
+// Fixed, curated subset of materials/equipment shown right on the crew
+// card — not the full Materials & Costs list (that stays on the
+// dedicated /job-costs page, along with manager-only fields like mileage
+// and fuel). Looked up by name rather than hardcoded IDs, so nothing
+// breaks if these get recreated with a new point-in-time row (see
+// /materials' end_date rollover) — a name just has to keep matching.
+const QUICK_ENTRY_MATERIALS = ["Infill", "OxyTurf"];
+const QUICK_ENTRY_EQUIPMENT = ["Blower", "Power Broom", "Vacuum"];
+
+// Must match the identical transform in ./actions.ts's
+// saveVisitJobCostQuickEntry — kept as two independent copies rather
+// than a shared import since actions.ts is "use server" and can only
+// export async functions (see the commit that fixed the Vercel build
+// for exporting a plain constant from a 'use server' file).
+function quickEntryFieldKey(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, "_");
+}
 
 type MyDayPageProps = {
   searchParams: Promise<{ date?: string }>;
@@ -61,6 +79,28 @@ type TimeLogRow = {
   jobber_visit_id: string;
   started_at: string;
   stopped_at: string | null;
+};
+
+type QuickEntryMaterial = {
+  id: string;
+  name: string;
+  unit_label: string;
+};
+
+type QuickEntryEquipment = {
+  id: string;
+  name: string;
+};
+
+type MaterialUsageRow = {
+  jobber_visit_id: string;
+  material_id: string;
+  quantity_used: number | string;
+};
+
+type EquipmentUsageRow = {
+  jobber_visit_id: string;
+  equipment_id: string;
 };
 
 function getPhoenixToday(): Date {
@@ -314,6 +354,63 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
       log.jobber_visit_id,
       (loggedMinutesByVisit.get(log.jobber_visit_id) ?? 0) + minutes
     );
+  }
+
+  // Quick job-cost entry: a fixed, curated subset of materials/equipment
+  // (see QUICK_ENTRY_MATERIALS/QUICK_ENTRY_EQUIPMENT above), looked up
+  // by name rather than assumed to exist — if they haven't been set up
+  // yet in Materials & Costs, this section just doesn't render rather
+  // than crashing or showing a blank/broken field.
+  const [{ data: quickMaterialsData }, { data: quickEquipmentData }] =
+    await Promise.all([
+      supabaseServer
+        .from("materials")
+        .select("id, name, unit_label")
+        .in("name", QUICK_ENTRY_MATERIALS)
+        .or(`end_date.is.null,end_date.gt.${dateStr}`),
+      supabaseServer
+        .from("equipment")
+        .select("id, name")
+        .in("name", QUICK_ENTRY_EQUIPMENT)
+        .or(`retired_date.is.null,retired_date.gt.${dateStr}`),
+    ]);
+
+  const quickMaterials = (quickMaterialsData ?? []) as QuickEntryMaterial[];
+  const quickEquipment = (quickEquipmentData ?? []) as QuickEntryEquipment[];
+
+  const quickMaterialIds = quickMaterials.map((m) => m.id);
+  const quickEquipmentIds = quickEquipment.map((e) => e.id);
+
+  const [{ data: quickUsageData }, { data: quickEquipmentUsageData }] =
+    await Promise.all([
+      quickMaterialIds.length > 0 && visitIds.length > 0
+        ? supabaseServer
+            .from("visit_material_usage")
+            .select("jobber_visit_id, material_id, quantity_used")
+            .in("jobber_visit_id", visitIds)
+            .in("material_id", quickMaterialIds)
+        : Promise.resolve({ data: [] as MaterialUsageRow[] }),
+      quickEquipmentIds.length > 0 && visitIds.length > 0
+        ? supabaseServer
+            .from("visit_equipment_usage")
+            .select("jobber_visit_id, equipment_id")
+            .in("jobber_visit_id", visitIds)
+            .in("equipment_id", quickEquipmentIds)
+        : Promise.resolve({ data: [] as EquipmentUsageRow[] }),
+    ]);
+
+  const quickUsageMap = new Map<string, number>();
+  for (const row of (quickUsageData ?? []) as MaterialUsageRow[]) {
+    quickUsageMap.set(
+      `${row.jobber_visit_id}:${row.material_id}`,
+      Number(row.quantity_used ?? 0)
+    );
+  }
+
+  const quickEquipmentUsageSet = new Set<string>();
+  for (const row of (quickEquipmentUsageData ??
+    []) as EquipmentUsageRow[]) {
+    quickEquipmentUsageSet.add(`${row.jobber_visit_id}:${row.equipment_id}`);
   }
 
   // The current user's one active (if any) timer — global, not scoped
@@ -730,6 +827,75 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                         Call
                       </a>
                     </div>
+                  )}
+
+                  {(quickMaterials.length > 0 || quickEquipment.length > 0) && (
+                    <form
+                      action={saveVisitJobCostQuickEntry.bind(
+                        null,
+                        visit.jobber_visit_id
+                      )}
+                      className="mt-3 space-y-2 rounded-xl border border-[#174734]/15 bg-[#f7f6f1] p-3"
+                    >
+                      <p className="text-xs font-bold uppercase tracking-wide text-[#174734]/70">
+                        Job Costs
+                      </p>
+
+                      {quickMaterials.length > 0 && (
+                        <div className="grid grid-cols-2 gap-2">
+                          {quickMaterials.map((material) => (
+                            <label
+                              key={material.id}
+                              className="text-xs font-semibold text-[#174734]"
+                            >
+                              {material.name}
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                name={quickEntryFieldKey(material.name)}
+                                defaultValue={
+                                  quickUsageMap.get(
+                                    `${visit.jobber_visit_id}:${material.id}`
+                                  ) || ""
+                                }
+                                placeholder={material.unit_label ?? ""}
+                                className="mt-1 w-full rounded-lg border border-[#174734]/20 px-2 py-1.5 text-sm"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      )}
+
+                      {quickEquipment.length > 0 && (
+                        <div className="flex flex-wrap gap-3">
+                          {quickEquipment.map((equipment) => (
+                            <label
+                              key={equipment.id}
+                              className="flex items-center gap-1.5 text-xs font-semibold text-[#174734]"
+                            >
+                              <input
+                                type="checkbox"
+                                name={quickEntryFieldKey(equipment.name)}
+                                value="1"
+                                defaultChecked={quickEquipmentUsageSet.has(
+                                  `${visit.jobber_visit_id}:${equipment.id}`
+                                )}
+                                className="h-4 w-4 rounded border-[#174734]/30"
+                              />
+                              {equipment.name}
+                            </label>
+                          ))}
+                        </div>
+                      )}
+
+                      <button
+                        type="submit"
+                        className="w-full rounded-lg border border-[#174734] px-3 py-1.5 text-xs font-bold text-[#174734] transition hover:bg-white"
+                      >
+                        Save Job Costs
+                      </button>
+                    </form>
                   )}
 
                   {(visit.visit_status ?? "").toUpperCase() !== "COMPLETED" && (
