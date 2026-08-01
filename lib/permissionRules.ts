@@ -27,7 +27,8 @@ export type PermissionSection =
   | "settings_audit"
   | "quotes"
   | "jobs"
-  | "customer_portal";
+  | "customer_portal"
+  | "general_access";
 
 export const SECTIONS: { id: PermissionSection; label: string; description: string }[] = [
   {
@@ -74,6 +75,12 @@ export const SECTIONS: { id: PermissionSection; label: string; description: stri
     description:
       "Viewing and replying to customer service requests and messages submitted through the customer portal.",
   },
+  {
+    id: "general_access",
+    label: "General Access",
+    description:
+      "Dashboard, Schedule, Recurring Services, Customer Map, Customers, Leads, Links & QR, and Log Job Costs — everything outside the day-to-day My Day + Timeclock workflow. Off by default for staff, so field crew only see today's stops and their own clock.",
+  },
 ];
 
 const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
@@ -96,6 +103,23 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
   quotes: ["/quotes"],
   jobs: ["/jobs"],
   customer_portal: ["/messages"],
+  // Everything that used to be open to every logged-in role simply
+  // because nothing gated it — not because it was ever meant to be
+  // universally accessible. Grouped under one switch rather than a
+  // section per page: for a crew this small, "field crew" vs. "office
+  // access" is the actual distinction that matters, not page-by-page
+  // toggles. My Day and Timeclock are deliberately NOT in this list —
+  // they stay open to every role unconditionally.
+  general_access: [
+    "/dashboard",
+    "/schedule",
+    "/recurring-services",
+    "/map",
+    "/customers",
+    "/leads",
+    "/codes",
+    "/job-costs",
+  ],
 };
 
 // Structurally admin-only, always — not editable via role_permissions.
@@ -136,6 +160,7 @@ export function emptyPermissions(): RolePermissionsMap {
     quotes: false,
     jobs: false,
     customer_portal: false,
+    general_access: false,
   };
 
   return { manager: { ...blank }, staff: { ...blank } };

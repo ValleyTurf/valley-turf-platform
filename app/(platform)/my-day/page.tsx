@@ -949,12 +949,18 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
           </div>
         )}
 
-        <Link
-          href="/schedule"
-          className="mt-6 block text-center text-sm font-semibold text-[#9c7a20] hover:underline"
-        >
-          View full schedule →
-        </Link>
+        {/* /schedule is behind general_access now, which staff don't
+            have by default (see lib/permissionRules.ts) — pointing them
+            at a link they can't use isn't useful, and just bounces them
+            back to /my-day. */}
+        {!isCrewOnly && (
+          <Link
+            href="/schedule"
+            className="mt-6 block text-center text-sm font-semibold text-[#9c7a20] hover:underline"
+          >
+            View full schedule →
+          </Link>
+        )}
       </div>
     </main>
   );

@@ -164,6 +164,25 @@ export default function Sidebar({
   // enforces the real gate; this just avoids dead-end links). Uses the
   // same section-permission logic as the server-side gate so the two
   // never drift.
+  //
+  // Applies to topLevelItems too, not just the collapsible groups below:
+  // Dashboard/Schedule/Recurring Services/Customer Map are gated by
+  // general_access same as anything else now (see
+  // lib/permissionRules.ts) — My Day and Timeclock aren't in any gated
+  // prefix list, so they pass this filter unconditionally and stay
+  // visible to every role.
+  const visibleTopLevelItems = useMemo(() => {
+    if (user?.role === "admin") {
+      return topLevelItems;
+    }
+
+    const role = user?.role ?? "staff";
+
+    return topLevelItems.filter((item) =>
+      isPathAllowedForRole(item.href, role, permissions)
+    );
+  }, [user?.role, permissions]);
+
   const visibleGroups = useMemo(() => {
     if (user?.role === "admin") {
       return groups;
@@ -277,7 +296,7 @@ export default function Sidebar({
         </div>
 
         <nav className="space-y-1 p-4">
-          {topLevelItems.map((item) => (
+          {visibleTopLevelItems.map((item) => (
             <Link
               key={item.href}
               href={item.href}

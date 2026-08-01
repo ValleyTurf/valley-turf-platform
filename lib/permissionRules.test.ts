@@ -14,6 +14,7 @@ const ALL_ALLOWED: RolePermissionsMap = {
     quotes: true,
     jobs: true,
     customer_portal: true,
+    general_access: true,
   },
   staff: {
     job_costing: true,
@@ -24,6 +25,7 @@ const ALL_ALLOWED: RolePermissionsMap = {
     quotes: true,
     jobs: true,
     customer_portal: true,
+    general_access: true,
   },
 };
 
@@ -37,6 +39,7 @@ const NONE_ALLOWED: RolePermissionsMap = {
     quotes: false,
     jobs: false,
     customer_portal: false,
+    general_access: false,
   },
   staff: {
     job_costing: false,
@@ -47,6 +50,7 @@ const NONE_ALLOWED: RolePermissionsMap = {
     quotes: false,
     jobs: false,
     customer_portal: false,
+    general_access: false,
   },
 };
 
@@ -126,25 +130,62 @@ describe("isPathAllowedForRole", () => {
   });
 
   it("does not false-positive match a path that merely starts with the same characters", () => {
-    // /customers is NOT gated, only /customers/intelligence is.
-    expect(isPathAllowedForRole("/customers", "staff", NONE_ALLOWED)).toBe(
-      true
-    );
-    expect(
-      isPathAllowedForRole("/customers/123", "staff", NONE_ALLOWED)
-    ).toBe(true);
-
     // A path like "/teamwork" should not match the "/team" prefix.
     expect(isPathAllowedForRole("/teamwork", "staff", NONE_ALLOWED)).toBe(
       true
     );
   });
 
-  it("leaves ungated paths open to every role", () => {
+  it("resolves /customers/intelligence to customer_intelligence, not general_access, even though /customers is also gated", () => {
+    const customerIntelOnly: RolePermissionsMap = {
+      ...NONE_ALLOWED,
+      staff: { ...NONE_ALLOWED.staff, customer_intelligence: true },
+    };
+
+    expect(
+      isPathAllowedForRole("/customers/intelligence", "staff", customerIntelOnly)
+    ).toBe(true);
+    // general_access is still off, so plain /customers stays blocked.
+    expect(
+      isPathAllowedForRole("/customers", "staff", customerIntelOnly)
+    ).toBe(false);
+  });
+
+  it("gates general_access the same way as any other section", () => {
     expect(isPathAllowedForRole("/dashboard", "staff", NONE_ALLOWED)).toBe(
+      false
+    );
+    expect(isPathAllowedForRole("/dashboard", "staff", ALL_ALLOWED)).toBe(
       true
     );
     expect(isPathAllowedForRole("/schedule", "manager", NONE_ALLOWED)).toBe(
+      false
+    );
+    expect(isPathAllowedForRole("/customers", "staff", NONE_ALLOWED)).toBe(
+      false
+    );
+    expect(
+      isPathAllowedForRole("/customers/123", "staff", NONE_ALLOWED)
+    ).toBe(false);
+    expect(isPathAllowedForRole("/job-costs", "staff", NONE_ALLOWED)).toBe(
+      false
+    );
+    // /job-costing-analytics is a different, already-gated (job_costing)
+    // path that merely shares a prefix with /job-costs — must not be
+    // affected by general_access at all.
+    expect(
+      isPathAllowedForRole("/job-costing-analytics", "staff", {
+        ...NONE_ALLOWED,
+        staff: { ...NONE_ALLOWED.staff, job_costing: true },
+      })
+    ).toBe(true);
+  });
+
+  it("leaves My Day, Timeclock, and account/logout-style paths open to every role regardless of permissions", () => {
+    expect(isPathAllowedForRole("/my-day", "staff", NONE_ALLOWED)).toBe(
+      true
+    );
+    expect(isPathAllowedForRole("/timeclock", "staff", NONE_ALLOWED)).toBe(
       true
     );
     expect(isPathAllowedForRole("/account", "staff", NONE_ALLOWED)).toBe(

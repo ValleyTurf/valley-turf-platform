@@ -26,7 +26,12 @@ export default async function PlatformLayout({
     const pathname = headerList.get("x-pathname");
 
     if (pathname && !isPathAllowedForRole(pathname, user.role, permissions)) {
-      redirect("/dashboard");
+      // Not /dashboard — that's now behind general_access, which staff
+      // don't have by default (see lib/permissionRules.ts). Redirecting
+      // a blocked request to another blocked page would loop forever.
+      // My Day has no entry in any gated prefix list, so it's always a
+      // safe landing spot for every role.
+      redirect("/my-day");
     }
   }
 

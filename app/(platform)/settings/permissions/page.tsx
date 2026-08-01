@@ -11,7 +11,12 @@ export default async function PermissionsPage() {
   const user = await getCurrentUser();
 
   if (!user || user.role !== "admin") {
-    redirect("/dashboard");
+    // Defense in depth only — (platform)/layout.tsx already blocks any
+    // non-admin from reaching this page via ALWAYS_ADMIN_ONLY_PREFIXES.
+    // /my-day, not /dashboard: /dashboard is now behind general_access,
+    // which a non-admin may not have, and redirecting a blocked request
+    // to another blocked page would loop.
+    redirect("/my-day");
   }
 
   const permissions = await getRolePermissions();
