@@ -545,7 +545,7 @@ export default async function RecurringServicesPage({
         )}
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow sm:p-5">
-          <p className="text-sm text-[#6b705c]">
+          <p className="text-lg font-semibold text-[#174734] sm:text-xl">
             {formatRangeLabel(start, end)} · {visits.length} visit
             {visits.length === 1 ? "" : "s"} · {uniqueCustomers} customer
             {uniqueCustomers === 1 ? "" : "s"}
