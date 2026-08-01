@@ -13,6 +13,11 @@ type RecurringServicesPageProps = {
     range?: string;
     start?: string;
     end?: string;
+    // Only meaningful when range === "month" — how many calendar months
+    // ahead of the current one to show (1 = next month, 2 = the one
+    // after that, etc). Lets "Next Month" generalize into a few more
+    // pills (2/3 Months Out) without a new RangeKey per month.
+    months?: string;
   }>;
 };
 
@@ -105,7 +110,8 @@ function getRangeBounds(
   range: RangeKey,
   today: Date,
   customStart: string | undefined,
-  customEnd: string | undefined
+  customEnd: string | undefined,
+  monthsAhead: number
 ): { start: Date; end: Date } {
   if (range === "7") {
     return { start: today, end: addDays(today, 6) };
@@ -116,8 +122,8 @@ function getRangeBounds(
     const month = today.getUTCMonth();
 
     return {
-      start: new Date(Date.UTC(year, month + 1, 1)),
-      end: new Date(Date.UTC(year, month + 2, 0)),
+      start: new Date(Date.UTC(year, month + monthsAhead, 1)),
+      end: new Date(Date.UTC(year, month + monthsAhead + 1, 0)),
     };
   }
 
@@ -308,8 +314,22 @@ export default async function RecurringServicesPage({
       ? (params.range as RangeKey)
       : "30";
 
+  const parsedMonthsAhead = Number(params.months);
+  const monthsAhead =
+    range === "month" &&
+    Number.isFinite(parsedMonthsAhead) &&
+    parsedMonthsAhead >= 1
+      ? Math.round(parsedMonthsAhead)
+      : 1;
+
   const today = getPhoenixToday();
-  const { start, end } = getRangeBounds(range, today, params.start, params.end);
+  const { start, end } = getRangeBounds(
+    range,
+    today,
+    params.start,
+    params.end,
+    monthsAhead
+  );
 
   const rangeStart = `${toDateInput(start)}T00:00:00-07:00`;
   const rangeEnd = `${toDateInput(end)}T23:59:59-07:00`;
@@ -398,11 +418,32 @@ export default async function RecurringServicesPage({
     visits.map((visit) => visit.jobber_client_id).filter(Boolean)
   ).size;
 
+  // Same per-customer, per-job-counted-once logic every CategoryBox
+  // already runs internally (see uniqueCustomersFor's comment) — just
+  // run once across every visit in the window instead of per bucket, so
+  // a customer with recurring jobs in two different categories still
+  // only has each job's total counted once. Since categoryByJobId maps
+  // each job to exactly one category, this total always equals the sum
+  // of what the five CategoryBoxes show individually — nothing here can
+  // double-count relative to them.
+  const allCustomers = uniqueCustomersFor(visits, jobTotalByJobId);
+  const grandTotal = allCustomers.reduce(
+    (sum, customer) => sum + (customer.estimatedAmount ?? 0),
+    0
+  );
+  const hasAnyMissingPrice = allCustomers.some(
+    (customer) => customer.estimatedAmount === null
+  );
+
   const error = jobsError || visitsError;
 
-  function hrefFor(nextRange: RangeKey): string {
+  function hrefFor(nextRange: RangeKey, monthsAheadValue = 1): string {
     const next = new URLSearchParams();
     next.set("range", nextRange);
+
+    if (nextRange === "month") {
+      next.set("months", String(monthsAheadValue));
+    }
 
     if (nextRange === "custom") {
       next.set("start", toDateInput(start));
@@ -429,11 +470,6 @@ export default async function RecurringServicesPage({
           </p>
 
           <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Upcoming Recurring Services</h1>
-
-          <p className="mt-2 max-w-2xl text-[#6b705c]">
-            Who&apos;s getting recurring service (per Jobber&apos;s own job type) and
-            what kind, without waiting on a revenue forecast.
-          </p>
         </header>
 
         <section className="mt-6 flex flex-wrap gap-2">
@@ -444,10 +480,22 @@ export default async function RecurringServicesPage({
             Next 30 Days
           </Link>
           <Link
-            href={hrefFor("month")}
-            className={rangePillClasses(range === "month")}
+            href={hrefFor("month", 1)}
+            className={rangePillClasses(range === "month" && monthsAhead === 1)}
           >
             Next Month
+          </Link>
+          <Link
+            href={hrefFor("month", 2)}
+            className={rangePillClasses(range === "month" && monthsAhead === 2)}
+          >
+            2 Months Out
+          </Link>
+          <Link
+            href={hrefFor("month", 3)}
+            className={rangePillClasses(range === "month" && monthsAhead === 3)}
+          >
+            3 Months Out
           </Link>
           <Link
             href={hrefFor("custom")}
@@ -496,11 +544,27 @@ export default async function RecurringServicesPage({
           </form>
         )}
 
-        <p className="mt-4 text-sm text-[#6b705c]">
-          {formatRangeLabel(start, end)} · {visits.length} visit
-          {visits.length === 1 ? "" : "s"} · {uniqueCustomers} customer
-          {uniqueCustomers === 1 ? "" : "s"}
-        </p>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow sm:p-5">
+          <p className="text-sm text-[#6b705c]">
+            {formatRangeLabel(start, end)} · {visits.length} visit
+            {visits.length === 1 ? "" : "s"} · {uniqueCustomers} customer
+            {uniqueCustomers === 1 ? "" : "s"}
+          </p>
+
+          <div className="text-right">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[#9c7a20]">
+              Total for period
+            </p>
+            <p className="text-2xl font-bold text-[#174734]">
+              {formatCurrency(grandTotal)}
+            </p>
+            {hasAnyMissingPrice && (
+              <p className="text-xs text-[#9c9887]">
+                Some visits are missing a job total
+              </p>
+            )}
+          </div>
+        </div>
 
         {error ? (
           <section className="mt-6 rounded-2xl border border-red-200 bg-white p-5 shadow">
