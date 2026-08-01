@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
+import { toPhoenixDateString } from "@/lib/phoenixDate";
 import {
   checkNotAlreadyRunning,
   completeSyncRun,
@@ -131,21 +132,11 @@ function cleanText(
   return cleaned ? cleaned : null;
 }
 
-function cleanDate(
-  value: string | null | undefined
-): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-
-  return date.toISOString().slice(0, 10);
-}
+// Jobber's issuedDate/dueDate are real ISO8601DateTime timestamps, not
+// bare dates (confirmed live: an invoice issued 2026-08-01T01:26:22Z —
+// 6:26pm Phoenix time on July 31st — was synced in showing August 1st
+// under the old UTC-slice logic). See lib/phoenixDate.ts for the fix.
+const cleanDate = toPhoenixDateString;
 
 function cleanAmount(
   value: number | string | null | undefined

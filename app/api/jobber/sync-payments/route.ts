@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
+import { toPhoenixDateString } from "@/lib/phoenixDate";
 import {
   checkNotAlreadyRunning,
   completeSyncRun,
@@ -92,19 +93,11 @@ function cleanAmount(
   return Number.isNaN(amount) ? 0 : amount;
 }
 
-function cleanDate(value: string | null | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-
-  return date.toISOString().slice(0, 10);
-}
+// entryDate is a real ISO8601DateTime timestamp — see lib/phoenixDate.ts
+// for why converting to UTC before slicing off the date (the old
+// approach here) shifts anything that happened in the evening Phoenix
+// time onto the wrong calendar day.
+const cleanDate = toPhoenixDateString;
 
 function formatPayment(
   invoice: JobberInvoice,

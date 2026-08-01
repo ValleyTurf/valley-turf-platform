@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
+import { toPhoenixDateString } from "@/lib/phoenixDate";
 import {
   checkNotAlreadyRunning,
   completeSyncRun,
@@ -77,11 +78,11 @@ function cleanText(value: string | null | undefined): string | null {
   return cleaned ? cleaned : null;
 }
 
-function cleanDate(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
-}
+// arrivalDate is a real ISO8601DateTime timestamp — see
+// lib/phoenixDate.ts for why converting to UTC before slicing off the
+// date shifts anything that happened in the evening Phoenix time onto
+// the wrong calendar day.
+const cleanDate = toPhoenixDateString;
 
 // PayoutRecord's feeAmount/grossAmount/netAmount are typed as Int in
 // Jobber's schema (unlike PaymentRecord.amount, a Float) — treated here
