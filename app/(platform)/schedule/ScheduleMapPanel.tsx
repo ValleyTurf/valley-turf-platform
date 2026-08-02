@@ -30,7 +30,7 @@ export default function ScheduleMapPanel({
   selectedId: string | null;
   onSelectPin: (id: string) => void;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
 
   if (!open) {
     return (
