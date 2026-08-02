@@ -425,7 +425,7 @@ export default async function SchedulePage({
   searchParams,
 }: SchedulePageProps) {
   const params = await searchParams;
-  const view: ViewMode = isViewMode(params.view) ? params.view : "day";
+  const view: ViewMode = isViewMode(params.view) ? params.view : "month";
   const selectedDate = parseDate(params.date);
   const dateStr = formatDateInput(selectedDate);
 
@@ -659,19 +659,7 @@ export default async function SchedulePage({
               </p>
 
               <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Schedule</h1>
-
-              <p className="mt-2 max-w-2xl text-[#6b705c]">
-                Real visit data synced from Jobber — who&apos;s scheduled where,
-                and when.
-              </p>
             </div>
-
-            <Link
-              href="/job-costs"
-              className="w-full rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246] lg:w-auto"
-            >
-              Log Job Costs
-            </Link>
           </header>
 
           <div className="mt-5 flex flex-wrap gap-2">

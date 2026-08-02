@@ -51,25 +51,45 @@ export default function ScheduleGrids({
                   <p className="text-xs text-[#6b705c]">No visits</p>
                 ) : (
                   <>
-                    {visibleVisits.map((visit) => (
-                      <button
-                        key={visit.id}
-                        type="button"
-                        onClick={() => onSelectVisit(visit)}
-                        className={`flex w-full items-center gap-1.5 rounded text-left text-xs ${
-                          visit.id === selectedId
-                            ? "ring-2 ring-[#d4af37]"
-                            : ""
-                        }`}
-                      >
-                        <span
-                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${visit.statusDotClass}`}
-                        />
-                        <span className="truncate hover:underline">
-                          {visit.startTimeLabel} · {visit.customerName}
-                        </span>
-                      </button>
-                    ))}
+                    {visibleVisits.map((visit) => {
+                      const completed = visit.statusLabel === "Completed";
+
+                      return (
+                        <button
+                          key={visit.id}
+                          type="button"
+                          onClick={() => onSelectVisit(visit)}
+                          className={`flex w-full items-start gap-1.5 rounded text-left text-xs ${
+                            visit.id === selectedId
+                              ? "ring-2 ring-[#d4af37]"
+                              : ""
+                          }`}
+                        >
+                          <span
+                            className={`mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full ${visit.statusDotClass}`}
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span
+                              className={`flex items-center gap-1 truncate hover:underline ${
+                                completed
+                                  ? "text-[#6b705c] line-through"
+                                  : ""
+                              }`}
+                            >
+                              {completed && (
+                                <span className="text-green-600 no-underline">
+                                  ✓
+                                </span>
+                              )}
+                              {visit.startTimeLabel} · {visit.customerName}
+                            </span>
+                            <span className="block truncate text-[10px] text-[#9c7a20]">
+                              {visit.serviceLabel}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
                     {remaining > 0 && (
                       <p className="text-xs font-semibold text-[#9c7a20]">
                         +{remaining} more
@@ -148,28 +168,45 @@ export default function ScheduleGrids({
                   </Link>
 
                   <div className="mt-1 space-y-1">
-                    {dayVisits.map((visit) => (
-                      <button
-                        key={visit.id}
-                        type="button"
-                        draggable
-                        onDragStart={(event) => {
-                          event.dataTransfer.setData(VISIT_DRAG_TYPE, visit.id);
-                          event.dataTransfer.effectAllowed = "move";
-                        }}
-                        onClick={() => onSelectVisit(visit)}
-                        title={`${visit.serviceLabel} — ${visit.customerName} (drag to move)`}
-                        className={`block w-full cursor-grab truncate rounded px-1.5 py-0.5 text-left text-[10px] font-semibold leading-tight transition hover:brightness-95 active:cursor-grabbing ${
-                          visit.serviceChipClass
-                        } ${
-                          visit.id === selectedId
-                            ? "ring-2 ring-[#174734]"
-                            : ""
-                        }`}
-                      >
-                        {visit.startTimeLabel} {visit.customerName}
-                      </button>
-                    ))}
+                    {dayVisits.map((visit) => {
+                      const completed = visit.statusLabel === "Completed";
+
+                      return (
+                        <button
+                          key={visit.id}
+                          type="button"
+                          draggable
+                          onDragStart={(event) => {
+                            event.dataTransfer.setData(
+                              VISIT_DRAG_TYPE,
+                              visit.id
+                            );
+                            event.dataTransfer.effectAllowed = "move";
+                          }}
+                          onClick={() => onSelectVisit(visit)}
+                          title={`${visit.serviceLabel} — ${visit.customerName} (drag to move)`}
+                          className={`block w-full cursor-grab truncate rounded px-1.5 py-0.5 text-left text-[10px] leading-tight transition hover:brightness-95 active:cursor-grabbing ${
+                            visit.serviceChipClass
+                          } ${
+                            visit.id === selectedId
+                              ? "ring-2 ring-[#174734]"
+                              : ""
+                          }`}
+                        >
+                          <span
+                            className={`flex items-center gap-1 truncate font-semibold ${
+                              completed ? "line-through opacity-70" : ""
+                            }`}
+                          >
+                            {completed && <span className="no-underline">✓</span>}
+                            {visit.startTimeLabel} {visit.customerName}
+                          </span>
+                          <span className="block truncate font-normal opacity-80">
+                            {visit.serviceLabel}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               );

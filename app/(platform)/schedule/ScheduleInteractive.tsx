@@ -135,7 +135,18 @@ export default function ScheduleInteractive({
                           : ""}
                       </p>
 
-                      <p className="mt-1 font-semibold">{visit.customerName}</p>
+                      <p
+                        className={`mt-1 flex items-center gap-1.5 font-semibold ${
+                          visit.statusLabel === "Completed"
+                            ? "text-[#6b705c] line-through"
+                            : ""
+                        }`}
+                      >
+                        {visit.statusLabel === "Completed" && (
+                          <span className="text-green-600 no-underline">✓</span>
+                        )}
+                        {visit.customerName}
+                      </p>
 
                       {visit.service && (
                         <p className="flex items-center gap-1.5 text-sm text-[#6b705c]">
