@@ -1,15 +1,17 @@
 "use client";
 
-// Client component specifically so a failed save (bad photo upload, DB
-// error, etc.) has somewhere to show up — the previous plain <form
-// action> version called a server action that only console.error'd on
-// failure, which from the customer page looked exactly like "I click Add
-// Note and nothing happens." Builds FormData from the form element
-// itself (native, so the file input's actual File objects come through)
-// rather than useActionState, since this needs an explicit reset-on-
-// success step the form's uncontrolled inputs wouldn't otherwise get.
+// Client component for two reasons: (1) a failed save needs somewhere to
+// show up — a plain <form action> version of this called a server action
+// that only console.error'd on failure, which looked exactly like "I
+// click Add Note and nothing happens"; (2) photos have to be uploaded
+// directly from the browser to Supabase Storage (uploadVisitPhotosFromBrowser)
+// BEFORE calling addVisitNote — routing the raw file bytes through
+// addVisitNote itself would hit Vercel's ~4.5MB Serverless Function body
+// cap, which a single real phone photo can exceed on its own. See
+// lib/visitPhotoUploadAction.ts for the full story.
 import { useRef, useState, useTransition } from "react";
 import { addVisitNote } from "./actions";
+import { uploadVisitPhotosFromBrowser } from "@/lib/uploadVisitPhotosClient";
 
 // label is pre-formatted server-side (page.tsx) rather than passed as a
 // raw date + a formatting function — a plain function can't cross the
@@ -31,16 +33,56 @@ export default function AddVisitNoteForm({
   const formRef = useRef<HTMLFormElement>(null);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setWarning(null);
     setSaved(false);
 
-    const formData = new FormData(event.currentTarget);
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const jobberVisitId = formData.get("jobber_visit_id");
+
+    const fileInput = form.elements.namedItem("photos");
+    const files =
+      fileInput instanceof HTMLInputElement && fileInput.files
+        ? Array.from(fileInput.files)
+        : [];
+
+    // The raw files never get sent to addVisitNote — only the storage
+    // paths they upload to, appended below once the upload finishes.
+    formData.delete("photos");
 
     startTransition(async () => {
+      if (files.length > 0 && typeof jobberVisitId === "string" && jobberVisitId) {
+        setUploadStatus(
+          files.length === 1
+            ? "Uploading photo…"
+            : `Uploading ${files.length} photos…`
+        );
+
+        const upload = await uploadVisitPhotosFromBrowser(jobberVisitId, files);
+
+        setUploadStatus(null);
+
+        if (upload.paths.length === 0 && upload.error) {
+          setError(`Photo upload failed: ${upload.error}`);
+          return;
+        }
+
+        formData.set("photo_paths", JSON.stringify(upload.paths));
+
+        if (upload.error) {
+          setWarning(
+            `${upload.paths.length} of ${files.length} photo(s) uploaded — the rest failed: ${upload.error}`
+          );
+        }
+      }
+
       const result = await addVisitNote(jobberClientId, formData);
 
       if (result.error) {
@@ -96,10 +138,13 @@ export default function AddVisitNoteForm({
         disabled={isPending}
         className="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246] disabled:opacity-60"
       >
-        {isPending ? "Saving…" : "Add Note"}
+        {uploadStatus ?? (isPending ? "Saving…" : "Add Note")}
       </button>
 
       {error && <p className="text-xs font-semibold text-red-600">{error}</p>}
+      {warning && !error && (
+        <p className="text-xs font-semibold text-amber-700">{warning}</p>
+      )}
       {saved && !error && (
         <p className="text-xs font-semibold text-green-700">Note saved.</p>
       )}

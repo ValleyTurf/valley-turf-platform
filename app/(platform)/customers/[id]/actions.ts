@@ -4,10 +4,7 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
-import {
-  insertVisitNote,
-  uploadVisitNotePhotos,
-} from "@/lib/visitNotes";
+import { insertVisitNote, parsePhotoPathsField } from "@/lib/visitNotes";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
@@ -126,12 +123,15 @@ export async function updateGeneralNotes(
 // picking which past visit this is about) — see my-day/actions.ts's
 // addVisitNoteFromMyDay for the field-capture counterpart, which skips
 // the visit picker since My Day already knows which visit the card is
-// for. Both call the same lib/visitNotes.ts helpers. Called from
-// AddVisitNoteForm.tsx (a client component, not a plain <form action>)
-// specifically so the {error} return value has somewhere to go — an
-// earlier plain-form version of this swallowed failures into a
-// server-only console.error, which looked from the field like the
-// button just did nothing.
+// for. Both share lib/visitNotes.ts's insertVisitNote/parsePhotoPathsField.
+// Called from AddVisitNoteForm.tsx (a client component, not a plain
+// <form action>) specifically so the {error} return value has somewhere
+// to go, AND because photos are uploaded directly from the browser to
+// storage before this action is ever called (see
+// lib/uploadVisitPhotosClient.ts) — this action only ever receives the
+// resulting paths, never raw file bytes, so it stays a tiny request well
+// under Vercel's Serverless Function body limit no matter how large or
+// how many photos were attached.
 export async function addVisitNote(
   jobberClientId: string,
   formData: FormData
@@ -139,21 +139,10 @@ export async function addVisitNote(
   const actor = await getCurrentUser();
   const jobberVisitId = cleanText(formData.get("jobber_visit_id"));
   const note = cleanText(formData.get("note"));
-  const photoFiles = formData
-    .getAll("photos")
-    .filter((entry): entry is File => entry instanceof File);
+  const photoPaths = parsePhotoPathsField(formData);
 
   if (!jobberVisitId) {
     return { error: "Choose which visit this note is about." };
-  }
-
-  const photoPaths = await uploadVisitNotePhotos(jobberVisitId, photoFiles);
-
-  if (photoFiles.length > 0 && photoPaths.length === 0) {
-    return {
-      error:
-        "Photo upload failed — the note wasn't saved. Try again, or save with just text for now.",
-    };
   }
 
   const result = await insertVisitNote({

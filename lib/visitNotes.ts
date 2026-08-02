@@ -2,9 +2,19 @@
 // the field, tied to the visit they're actively on) and the customer page
 // (office staff, after the fact, picking which past visit a note is
 // about). Both actions.ts files (my-day and customers/[id]) call these
-// same functions so photo upload and the note row shape never drift
-// between the two entry points. See 026_add_visit_notes_and_turf_range.sql
-// for the visit_notes table and visit-photos storage bucket.
+// same functions so the note row shape never drifts between the two
+// entry points. See 026_add_visit_notes_and_turf_range.sql for the
+// visit_notes table and visit-photos storage bucket.
+//
+// Photo upload itself does NOT live here anymore — it used to
+// (uploadVisitNotePhotos, routing bytes through this server-only module
+// via a multipart Server Action call), but that meant every photo
+// counted against Vercel's ~4.5MB Serverless Function body cap, which a
+// single real phone photo can exceed on its own. See
+// lib/visitPhotoUploadAction.ts + lib/uploadVisitPhotosClient.ts for the
+// direct-browser-to-storage replacement — by the time a note reaches
+// insertVisitNote below, its photos are already uploaded and all this
+// needs is the resulting storage paths.
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
 
@@ -31,47 +41,33 @@ export type VisitNoteGroup = {
   notes: VisitNote[];
 };
 
-// Uploads whatever real (non-empty) files were attached to a note and
-// returns the storage paths that succeeded. Never throws — a failed
-// upload just means that one photo doesn't get attached; the note itself
-// (and any other photos) still saves. Random UUID filenames rather than
-// the original filename, both to avoid collisions and because the
-// original name (which might contain a customer's name from a phone's
-// camera roll) has no reason to end up in storage.
-export async function uploadVisitNotePhotos(
-  jobberVisitId: string,
-  files: File[]
-): Promise<string[]> {
-  const paths: string[] = [];
-
-  for (const file of files) {
-    if (!file || typeof file.size !== "number" || file.size === 0) continue;
-
-    const extMatch = /\.([a-zA-Z0-9]+)$/.exec(file.name || "");
-    const ext = extMatch ? extMatch[1].toLowerCase() : "jpg";
-    const path = `${jobberVisitId}/${crypto.randomUUID()}.${ext}`;
-
-    const { error } = await supabaseServer.storage
-      .from(PHOTO_BUCKET)
-      .upload(path, file, {
-        contentType: file.type || "image/jpeg",
-        upsert: false,
-      });
-
-    if (error) {
-      console.error(`Visit note photo upload failed (${path}):`, error.message);
-      continue;
-    }
-
-    paths.push(path);
-  }
-
-  return paths;
-}
-
 export function visitNotePhotoUrl(path: string): string {
   return supabaseServer.storage.from(PHOTO_BUCKET).getPublicUrl(path).data
     .publicUrl;
+}
+
+// Both addVisitNote (customers/[id]/actions.ts) and addVisitNoteFromMyDay
+// (my-day/actions.ts) receive already-uploaded photo storage paths as a
+// JSON-encoded "photo_paths" field (see lib/uploadVisitPhotosClient.ts —
+// the browser uploads the actual files, then sets this field before
+// calling the action) rather than raw File entries. Malformed/missing
+// input is treated as "no photos" rather than an error — the note text
+// alone is still worth saving.
+export function parsePhotoPathsField(formData: FormData): string[] {
+  const raw = formData.get("photo_paths");
+
+  if (typeof raw !== "string" || !raw) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function insertVisitNote(params: {

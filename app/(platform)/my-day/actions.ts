@@ -5,7 +5,7 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
 import { completeJobberVisit } from "@/lib/jobberVisit";
-import { insertVisitNote, uploadVisitNotePhotos } from "@/lib/visitNotes";
+import { insertVisitNote, parsePhotoPathsField } from "@/lib/visitNotes";
 
 // Kept as a private, file-local copy of the same list rendered on the My
 // Day page (QUICK_ENTRY_MATERIALS/QUICK_ENTRY_EQUIPMENT in page.tsx) —
@@ -324,17 +324,21 @@ export async function saveVisitJobCostQuickEntry(
 
 // Field capture counterpart to addVisitNote in
 // customers/[id]/actions.ts — no visit picker needed here since the
-// form is already scoped to one visit's card. Same shared
-// lib/visitNotes.ts helpers, so a note added from a phone in the field
-// shows up identically to one added later from the office on the
-// customer page. Requires jobber_client_id (not just the visit id)
-// since visit_notes denormalizes it for the customer page's per-client
-// query — passed through as a hidden field from the card, which already
-// has it from the jobber_visits row. Called from VisitNoteForm.tsx (a
-// client component), not a plain <form action>, specifically so the
-// {error} return value has somewhere to display — a plain form here
-// swallowed failures into a server-only console.error, which from the
-// field looked exactly like the Save button doing nothing.
+// form is already scoped to one visit's card. Shares
+// lib/visitNotes.ts's insertVisitNote/parsePhotoPathsField, so a note
+// added from a phone in the field shows up identically to one added
+// later from the office on the customer page. Requires jobber_client_id
+// (not just the visit id) since visit_notes denormalizes it for the
+// customer page's per-client query — passed through as a prop from the
+// card, which already has it from the jobber_visits row. Called from
+// VisitNoteForm.tsx (a client component), not a plain <form action>,
+// both for the {error} return value (a plain form here swallowed
+// failures into a server-only console.error, which from the field
+// looked exactly like the Save button doing nothing) AND because photos
+// are uploaded directly from the browser to storage before this action
+// is ever called (lib/uploadVisitPhotosClient.ts) — this action only
+// ever receives the resulting paths, keeping the request tiny
+// regardless of how large or how many photos were attached.
 export async function addVisitNoteFromMyDay(
   visitId: string,
   clientId: string,
@@ -349,18 +353,7 @@ export async function addVisitNoteFromMyDay(
   const rawNote = formData.get("note");
   const note =
     typeof rawNote === "string" && rawNote.trim() ? rawNote.trim() : null;
-  const photoFiles = formData
-    .getAll("photos")
-    .filter((entry): entry is File => entry instanceof File);
-
-  const photoPaths = await uploadVisitNotePhotos(visitId, photoFiles);
-
-  if (photoFiles.length > 0 && photoPaths.length === 0) {
-    return {
-      error:
-        "Photo upload failed — the note wasn't saved. Try again, or save with just text for now.",
-    };
-  }
+  const photoPaths = parsePhotoPathsField(formData);
 
   const result = await insertVisitNote({
     jobberVisitId: visitId,
