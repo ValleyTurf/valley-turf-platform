@@ -741,7 +741,18 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                         )}
                       </p>
                       <p className="mt-0.5 font-semibold">
-                        {visit.customer_name || "Unnamed Customer"}
+                        {visit.jobber_client_id && !isCrewOnly ? (
+                          <Link
+                            href={`/customers/${encodeURIComponent(
+                              visit.jobber_client_id
+                            )}`}
+                            className="hover:underline"
+                          >
+                            {visit.customer_name || "Unnamed Customer"}
+                          </Link>
+                        ) : (
+                          visit.customer_name || "Unnamed Customer"
+                        )}
                       </p>
                       {service && (
                         <p className="text-xs text-[#6b705c]">{service}</p>
