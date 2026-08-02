@@ -5,7 +5,21 @@ import { useState } from "react";
 // Preset ranges for properties nobody's measured exactly — kept as plain
 // strings (not a min/max pair) since they're stored verbatim in
 // customers.turf_size_range and only ever displayed, never computed with.
-const RANGE_OPTIONS = ["<300", "300-500", "500-1000", "1000-2000", "2000+"];
+const RANGE_OPTIONS = [
+  "<300",
+  "300-500",
+  "500-750",
+  "750-1000",
+  "1000-1250",
+  "1250-1500",
+  "1500-1750",
+  "1750-2000",
+  "2000-2250",
+  "2250-2500",
+  "2500-2750",
+  "2750-3000",
+  ">3000",
+];
 
 const inputClasses =
   "mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20";
