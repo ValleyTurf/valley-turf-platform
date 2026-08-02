@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 // Deliberately from lib/permissionRules, NOT lib/permissions — this is a
 // "use client" component, and lib/permissions.ts pulls in
 // lib/supabase-server.ts (which calls createClient() at module scope).
@@ -211,21 +211,28 @@ export default function Sidebar({
 
   // Close the mobile drawer automatically whenever the route changes, and
   // make sure whichever group contains the new active page is expanded.
-  useEffect(() => {
+  // Deliberately NOT a useEffect — this is React's own documented
+  // pattern for "adjust state when a prop changes": a conditional
+  // setState call during render, guarded by comparing against the
+  // previous value held in state (see
+  // https://react.dev/learn/you-might-not-need-an-effect
+  // #adjusting-some-state-when-a-prop-changes). An effect would apply
+  // the change one render late — the drawer would still be visible for
+  // one frame after navigating, before the effect ran and closed it.
+  const [prevPathname, setPrevPathname] = useState(pathname);
+
+  if (pathname !== prevPathname) {
+    setPrevPathname(pathname);
     setOpen(false);
 
-    setOpenGroups((current) => {
-      const activeGroup = groups.find((group) =>
-        groupContainsActiveItem(pathname, group.items)
-      );
+    const activeGroup = groups.find((group) =>
+      groupContainsActiveItem(pathname, group.items)
+    );
 
-      if (!activeGroup || current[activeGroup.title]) {
-        return current;
-      }
-
-      return { ...current, [activeGroup.title]: true };
-    });
-  }, [pathname]);
+    if (activeGroup && !openGroups[activeGroup.title]) {
+      setOpenGroups({ ...openGroups, [activeGroup.title]: true });
+    }
+  }
 
   function toggleGroup(title: string) {
     setOpenGroups((current) => ({

@@ -411,738 +411,706 @@ function buildCustomerSummaries(
 export default async function CustomerIntelligencePage({
   searchParams,
 }: PageProps) {
-  try {
-    const params = await searchParams;
+  const params = await searchParams;
 
-    const timeframe: Timeframe = isTimeframe(params.timeframe)
-      ? params.timeframe
-      : "last-month";
+  const timeframe: Timeframe = isTimeframe(params.timeframe)
+    ? params.timeframe
+    : "last-month";
 
-    const marketMode: "city" | "zip" =
-      params.market === "city" ? "city" : "zip";
+  const marketMode: "city" | "zip" =
+    params.market === "city" ? "city" : "zip";
 
-    const { startDate, endDate, label } = getDateRange(
-      timeframe,
-      params.start,
-      params.end,
-    );
+  const { startDate, endDate, label } = getDateRange(
+    timeframe,
+    params.start,
+    params.end,
+  );
 
-    const [
-      customers,
-      invoices,
-      recurringServiceRows,
-      intelligenceExclusions,
-    ] = await Promise.all([
-      fetchCustomers(),
-      fetchInvoices(),
-      fetchRecurringServiceRows(),
-      fetchIntelligenceExclusions(),
-    ]);
+  const [
+    customers,
+    invoices,
+    recurringServiceRows,
+    intelligenceExclusions,
+  ] = await Promise.all([
+    fetchCustomers(),
+    fetchInvoices(),
+    fetchRecurringServiceRows(),
+    fetchIntelligenceExclusions(),
+  ]);
 
-    const summaries = buildCustomerSummaries(customers, invoices);
+  const summaries = buildCustomerSummaries(customers, invoices);
 
-    const periodInvoices = invoices.filter(
-      (invoice) =>
-        invoice.issue_date &&
-        invoice.issue_date >= startDate &&
-        invoice.issue_date <= endDate,
-    );
+  const periodInvoices = invoices.filter(
+    (invoice) =>
+      invoice.issue_date &&
+      invoice.issue_date >= startDate &&
+      invoice.issue_date <= endDate,
+  );
 
-    const activeCustomerIds = new Set(
-      periodInvoices
-        .map((invoice) => invoice.jobber_client_id)
-        .filter((value): value is string => Boolean(value)),
-    );
+  const activeCustomerIds = new Set(
+    periodInvoices
+      .map((invoice) => invoice.jobber_client_id)
+      .filter((value): value is string => Boolean(value)),
+  );
 
-    const customersWithInvoices = summaries.filter(
-      (summary) => summary.invoiceCount > 0,
-    );
+  const customersWithInvoices = summaries.filter(
+    (summary) => summary.invoiceCount > 0,
+  );
 
-    const repeatCustomers = customersWithInvoices.filter(
-      (summary) => summary.invoiceCount >= 2,
-    );
+  const repeatCustomers = customersWithInvoices.filter(
+    (summary) => summary.invoiceCount >= 2,
+  );
 
-    const repeatRate =
-      customersWithInvoices.length > 0
-        ? repeatCustomers.length / customersWithInvoices.length
-        : 0;
+  const repeatRate =
+    customersWithInvoices.length > 0
+      ? repeatCustomers.length / customersWithInvoices.length
+      : 0;
 
-    const averageCustomerValue =
-      customersWithInvoices.length > 0
-        ? customersWithInvoices.reduce(
-            (sum, summary) => sum + summary.lifetimeRevenue,
-            0,
-          ) / customersWithInvoices.length
-        : 0;
+  const averageCustomerValue =
+    customersWithInvoices.length > 0
+      ? customersWithInvoices.reduce(
+          (sum, summary) => sum + summary.lifetimeRevenue,
+          0,
+        ) / customersWithInvoices.length
+      : 0;
 
-    const recurringClientIds = new Set(
-      recurringServiceRows
-        .filter((row) => row.is_recurring_service && row.jobber_client_id)
-        .map((row) => row.jobber_client_id as string),
-    );
+  const recurringClientIds = new Set(
+    recurringServiceRows
+      .filter((row) => row.is_recurring_service && row.jobber_client_id)
+      .map((row) => row.jobber_client_id as string),
+  );
 
-    const reactivationExcludedClientIds = new Set(
-      intelligenceExclusions.map((row) => row.jobber_client_id),
-    );
+  const reactivationExcludedClientIds = new Set(
+    intelligenceExclusions.map((row) => row.jobber_client_id),
+  );
 
-    const recurringOpportunities = summaries
-      .filter(
-        (summary) =>
-          summary.invoiceCount >= 3 &&
-          !recurringClientIds.has(summary.customer.jobber_client_id) &&
-          summary.latestInvoiceDate,
-      )
-      .sort((a, b) => {
-        if (b.invoiceCount !== a.invoiceCount) {
-          return b.invoiceCount - a.invoiceCount;
-        }
-
-        return b.lifetimeRevenue - a.lifetimeRevenue;
-      })
-      .slice(0, 15);
-
-    const reactivationCandidates = summaries
-      .filter(
-        (summary) =>
-          summary.invoiceCount > 0 &&
-          summary.daysSinceLastInvoice !== null &&
-          summary.daysSinceLastInvoice >= 90 &&
-          summary.daysSinceLastInvoice < 548 &&
-          !recurringClientIds.has(summary.customer.jobber_client_id) &&
-          !reactivationExcludedClientIds.has(
-            summary.customer.jobber_client_id,
-          ),
-      )
-      .sort(
-        (a, b) =>
-          (b.daysSinceLastInvoice ?? 0) - (a.daysSinceLastInvoice ?? 0),
-      );
-
-    const reactivationBuckets: ReactivationBucket[] = [
-      {
-        title: "3–6 Months",
-        subtitle: "90–179 days since last invoice",
-        customers: reactivationCandidates.filter(
-          (summary) =>
-            (summary.daysSinceLastInvoice ?? 0) >= 90 &&
-            (summary.daysSinceLastInvoice ?? 0) < 180,
-        ),
-      },
-      {
-        title: "6–12 Months",
-        subtitle: "180–364 days since last invoice",
-        customers: reactivationCandidates.filter(
-          (summary) =>
-            (summary.daysSinceLastInvoice ?? 0) >= 180 &&
-            (summary.daysSinceLastInvoice ?? 0) < 365,
-        ),
-      },
-      {
-        title: "12–18 Months",
-        subtitle: "365–547 days since last invoice",
-        customers: reactivationCandidates.filter(
-          (summary) =>
-            (summary.daysSinceLastInvoice ?? 0) >= 365 &&
-            (summary.daysSinceLastInvoice ?? 0) < 548,
-        ),
-      },
-    ];
-
-    const topCustomers = [...customersWithInvoices]
-      .sort((a, b) => b.lifetimeRevenue - a.lifetimeRevenue)
-      .slice(0, 10);
-
-    const customerMap = new Map(
-      customers.map((customer) => [
-        customer.jobber_client_id,
-        customer,
-      ]),
-    );
-
-    const summaryMap = new Map(
-      summaries.map((summary) => [
-        summary.customer.jobber_client_id,
-        summary,
-      ]),
-    );
-
-    const marketMap = new Map<
-      string,
-      {
-        customerIds: Set<string>;
-        repeatCustomerIds: Set<string>;
-        revenue: number;
-      }
-    >();
-
-    for (const invoice of periodInvoices) {
-      if (!invoice.jobber_client_id) continue;
-
-      const customer = customerMap.get(invoice.jobber_client_id);
-      const rawMarket =
-        marketMode === "city" ? customer?.city : customer?.postal_code;
-      const market = rawMarket?.trim();
-
-      if (!market) continue;
-
-      const key = marketMode === "city" ? market.toUpperCase() : market;
-
-      const existing = marketMap.get(key) ?? {
-        customerIds: new Set<string>(),
-        repeatCustomerIds: new Set<string>(),
-        revenue: 0,
-      };
-
-      existing.customerIds.add(invoice.jobber_client_id);
-      existing.revenue += toNumber(invoice.invoice_total);
-
-      const summary = summaryMap.get(invoice.jobber_client_id);
-
-      if (summary && summary.invoiceCount >= 2) {
-        existing.repeatCustomerIds.add(invoice.jobber_client_id);
+  const recurringOpportunities = summaries
+    .filter(
+      (summary) =>
+        summary.invoiceCount >= 3 &&
+        !recurringClientIds.has(summary.customer.jobber_client_id) &&
+        summary.latestInvoiceDate,
+    )
+    .sort((a, b) => {
+      if (b.invoiceCount !== a.invoiceCount) {
+        return b.invoiceCount - a.invoiceCount;
       }
 
-      marketMap.set(key, existing);
+      return b.lifetimeRevenue - a.lifetimeRevenue;
+    })
+    .slice(0, 15);
+
+  const reactivationCandidates = summaries
+    .filter(
+      (summary) =>
+        summary.invoiceCount > 0 &&
+        summary.daysSinceLastInvoice !== null &&
+        summary.daysSinceLastInvoice >= 90 &&
+        summary.daysSinceLastInvoice < 548 &&
+        !recurringClientIds.has(summary.customer.jobber_client_id) &&
+        !reactivationExcludedClientIds.has(
+          summary.customer.jobber_client_id,
+        ),
+    )
+    .sort(
+      (a, b) =>
+        (b.daysSinceLastInvoice ?? 0) - (a.daysSinceLastInvoice ?? 0),
+    );
+
+  const reactivationBuckets: ReactivationBucket[] = [
+    {
+      title: "3–6 Months",
+      subtitle: "90–179 days since last invoice",
+      customers: reactivationCandidates.filter(
+        (summary) =>
+          (summary.daysSinceLastInvoice ?? 0) >= 90 &&
+          (summary.daysSinceLastInvoice ?? 0) < 180,
+      ),
+    },
+    {
+      title: "6–12 Months",
+      subtitle: "180–364 days since last invoice",
+      customers: reactivationCandidates.filter(
+        (summary) =>
+          (summary.daysSinceLastInvoice ?? 0) >= 180 &&
+          (summary.daysSinceLastInvoice ?? 0) < 365,
+      ),
+    },
+    {
+      title: "12–18 Months",
+      subtitle: "365–547 days since last invoice",
+      customers: reactivationCandidates.filter(
+        (summary) =>
+          (summary.daysSinceLastInvoice ?? 0) >= 365 &&
+          (summary.daysSinceLastInvoice ?? 0) < 548,
+      ),
+    },
+  ];
+
+  const topCustomers = [...customersWithInvoices]
+    .sort((a, b) => b.lifetimeRevenue - a.lifetimeRevenue)
+    .slice(0, 10);
+
+  const customerMap = new Map(
+    customers.map((customer) => [
+      customer.jobber_client_id,
+      customer,
+    ]),
+  );
+
+  const summaryMap = new Map(
+    summaries.map((summary) => [
+      summary.customer.jobber_client_id,
+      summary,
+    ]),
+  );
+
+  const marketMap = new Map<
+    string,
+    {
+      customerIds: Set<string>;
+      repeatCustomerIds: Set<string>;
+      revenue: number;
+    }
+  >();
+
+  for (const invoice of periodInvoices) {
+    if (!invoice.jobber_client_id) continue;
+
+    const customer = customerMap.get(invoice.jobber_client_id);
+    const rawMarket =
+      marketMode === "city" ? customer?.city : customer?.postal_code;
+    const market = rawMarket?.trim();
+
+    if (!market) continue;
+
+    const key = marketMode === "city" ? market.toUpperCase() : market;
+
+    const existing = marketMap.get(key) ?? {
+      customerIds: new Set<string>(),
+      repeatCustomerIds: new Set<string>(),
+      revenue: 0,
+    };
+
+    existing.customerIds.add(invoice.jobber_client_id);
+    existing.revenue += toNumber(invoice.invoice_total);
+
+    const summary = summaryMap.get(invoice.jobber_client_id);
+
+    if (summary && summary.invoiceCount >= 2) {
+      existing.repeatCustomerIds.add(invoice.jobber_client_id);
     }
 
-    const marketSummaries: MarketSummary[] = Array.from(
-      marketMap.entries(),
-    )
-      .map(([key, value]) => ({
-        market:
-          marketMode === "city"
-            ? key.replace(/\b\w/g, (character) => character.toUpperCase())
-            : key,
-        customers: value.customerIds.size,
-        repeatCustomers: value.repeatCustomerIds.size,
-        revenue: value.revenue,
-        averageCustomerValue:
-          value.customerIds.size > 0
-            ? value.revenue / value.customerIds.size
-            : 0,
-        repeatRate:
-          value.customerIds.size > 0
-            ? value.repeatCustomerIds.size / value.customerIds.size
-            : 0,
-      }))
-      .sort((a, b) => b.customers - a.customers)
-      .slice(0, 10);
+    marketMap.set(key, existing);
+  }
 
-    const timeframeOptions: Array<{ value: Timeframe; label: string }> = [
-      { value: "last-7-days", label: "Last 7 Days" },
-      { value: "last-month", label: "Last Month" },
-      { value: "this-month", label: "This Month" },
-      { value: "last-90-days", label: "Last 90 Days" },
-      { value: "ytd", label: "YTD" },
-      { value: "custom", label: "Custom" },
-    ];
+  const marketSummaries: MarketSummary[] = Array.from(
+    marketMap.entries(),
+  )
+    .map(([key, value]) => ({
+      market:
+        marketMode === "city"
+          ? key.replace(/\b\w/g, (character) => character.toUpperCase())
+          : key,
+      customers: value.customerIds.size,
+      repeatCustomers: value.repeatCustomerIds.size,
+      revenue: value.revenue,
+      averageCustomerValue:
+        value.customerIds.size > 0
+          ? value.revenue / value.customerIds.size
+          : 0,
+      repeatRate:
+        value.customerIds.size > 0
+          ? value.repeatCustomerIds.size / value.customerIds.size
+          : 0,
+    }))
+    .sort((a, b) => b.customers - a.customers)
+    .slice(0, 10);
 
-    const cards = [
-      {
-        title: "Active Customers",
-        value: formatNumber(activeCustomerIds.size),
-        subtitle: `Customers invoiced · ${label}`,
-        icon: "👥",
-      },
-      {
-        title: "Repeat Customer Rate",
-        value: formatPercent(repeatRate),
-        subtitle: `${formatNumber(repeatCustomers.length)} repeat customers`,
-        icon: "🔁",
-      },
-      {
-        title: "Average Customer Value",
-        value: formatCurrency(averageCustomerValue),
-        subtitle: "Lifetime invoiced value",
-        icon: "💎",
-      },
-      {
-        title: "Reactivation Opportunities",
-        value: formatNumber(reactivationCandidates.length),
-        subtitle: "3–18 months since last activity",
-        icon: "📈",
-      },
-    ];
+  const timeframeOptions: Array<{ value: Timeframe; label: string }> = [
+    { value: "last-7-days", label: "Last 7 Days" },
+    { value: "last-month", label: "Last Month" },
+    { value: "this-month", label: "This Month" },
+    { value: "last-90-days", label: "Last 90 Days" },
+    { value: "ytd", label: "YTD" },
+    { value: "custom", label: "Custom" },
+  ];
 
-    return (
-      <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
-        <div className="mx-auto max-w-7xl">
-          <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
-                Valley Turf Revival OS
-              </p>
+  const cards = [
+    {
+      title: "Active Customers",
+      value: formatNumber(activeCustomerIds.size),
+      subtitle: `Customers invoiced · ${label}`,
+      icon: "👥",
+    },
+    {
+      title: "Repeat Customer Rate",
+      value: formatPercent(repeatRate),
+      subtitle: `${formatNumber(repeatCustomers.length)} repeat customers`,
+      icon: "🔁",
+    },
+    {
+      title: "Average Customer Value",
+      value: formatCurrency(averageCustomerValue),
+      subtitle: "Lifetime invoiced value",
+      icon: "💎",
+    },
+    {
+      title: "Reactivation Opportunities",
+      value: formatNumber(reactivationCandidates.length),
+      subtitle: "3–18 months since last activity",
+      icon: "📈",
+    },
+  ];
 
-              <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
-                Customer Intelligence
-              </h1>
+  return (
+    <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
+      <div className="mx-auto max-w-7xl">
+        <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
+              Valley Turf Revival OS
+            </p>
 
-              <p className="mt-2 max-w-2xl text-[#6b705c]">
-                Identify repeat behavior, recurring opportunities, at-risk
-                customers, and your strongest customer markets.
-              </p>
-            </div>
+            <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
+              Customer Intelligence
+            </h1>
 
-            <Link
-              href="/customers"
-              className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
-            >
-              Customer Directory
-            </Link>
-          </header>
+            <p className="mt-2 max-w-2xl text-[#6b705c]">
+              Identify repeat behavior, recurring opportunities, at-risk
+              customers, and your strongest customer markets.
+            </p>
+          </div>
 
-          <section
-            id="customer-intelligence-filters"
-            className="mt-8 scroll-mt-6 rounded-3xl bg-white p-6 shadow"
+          <Link
+            href="/customers"
+            className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
           >
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
-                  Customer Snapshot
-                </p>
+            Customer Directory
+          </Link>
+        </header>
 
-                <h2 className="mt-1 text-2xl font-bold">{label}</h2>
-              </div>
+        <section
+          id="customer-intelligence-filters"
+          className="mt-8 scroll-mt-6 rounded-3xl bg-white p-6 shadow"
+        >
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
+                Customer Snapshot
+              </p>
 
-              <div className="flex flex-wrap gap-2">
-                {timeframeOptions.map((option) => (
-                  <Link
-                    key={option.value}
-                    href={makeHref(
-                      timeframe,
-                      marketMode,
-                      { timeframe: option.value },
-                      params.start,
-                      params.end,
-                    )}
-                    scroll={false}
-                    className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
-                      timeframe === option.value
-                        ? "bg-[#d4af37] text-[#174734]"
-                        : "border border-[#d8d3c6] bg-white text-[#6b705c] hover:border-[#d4af37]"
-                    }`}
-                  >
-                    {option.label}
-                  </Link>
-                ))}
-              </div>
+              <h2 className="mt-1 text-2xl font-bold">{label}</h2>
             </div>
 
-            {timeframe === "custom" ? (
-              <form
-                method="GET"
-                action="/customers/intelligence#customer-intelligence-filters"
-                className="mt-5 flex flex-wrap items-end gap-3 rounded-2xl bg-[#f7f6f1] p-4"
-              >
-                <input type="hidden" name="timeframe" value="custom" />
-                <input type="hidden" name="market" value={marketMode} />
-
-                <label className="text-sm font-semibold text-[#6b705c]">
-                  Start date
-                  <input
-                    type="date"
-                    name="start"
-                    defaultValue={startDate}
-                    className="mt-1 block rounded-xl border border-[#d8d3c6] bg-white px-3 py-2 text-[#174734]"
-                  />
-                </label>
-
-                <label className="text-sm font-semibold text-[#6b705c]">
-                  End date
-                  <input
-                    type="date"
-                    name="end"
-                    defaultValue={endDate}
-                    className="mt-1 block rounded-xl border border-[#d8d3c6] bg-white px-3 py-2 text-[#174734]"
-                  />
-                </label>
-
-                <button
-                  type="submit"
-                  className="rounded-xl bg-[#174734] px-5 py-2.5 text-sm font-bold text-white"
+            <div className="flex flex-wrap gap-2">
+              {timeframeOptions.map((option) => (
+                <Link
+                  key={option.value}
+                  href={makeHref(
+                    timeframe,
+                    marketMode,
+                    { timeframe: option.value },
+                    params.start,
+                    params.end,
+                  )}
+                  scroll={false}
+                  className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
+                    timeframe === option.value
+                      ? "bg-[#d4af37] text-[#174734]"
+                      : "border border-[#d8d3c6] bg-white text-[#6b705c] hover:border-[#d4af37]"
+                  }`}
                 >
-                  Apply Dates
-                </button>
-              </form>
-            ) : null}
-          </section>
+                  {option.label}
+                </Link>
+              ))}
+            </div>
+          </div>
 
-          <section className="mt-6 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-            {cards.map((card) => (
-              <article
-                key={card.title}
-                className="rounded-3xl bg-white p-6 shadow"
+          {timeframe === "custom" ? (
+            <form
+              method="GET"
+              action="/customers/intelligence#customer-intelligence-filters"
+              className="mt-5 flex flex-wrap items-end gap-3 rounded-2xl bg-[#f7f6f1] p-4"
+            >
+              <input type="hidden" name="timeframe" value="custom" />
+              <input type="hidden" name="market" value={marketMode} />
+
+              <label className="text-sm font-semibold text-[#6b705c]">
+                Start date
+                <input
+                  type="date"
+                  name="start"
+                  defaultValue={startDate}
+                  className="mt-1 block rounded-xl border border-[#d8d3c6] bg-white px-3 py-2 text-[#174734]"
+                />
+              </label>
+
+              <label className="text-sm font-semibold text-[#6b705c]">
+                End date
+                <input
+                  type="date"
+                  name="end"
+                  defaultValue={endDate}
+                  className="mt-1 block rounded-xl border border-[#d8d3c6] bg-white px-3 py-2 text-[#174734]"
+                />
+              </label>
+
+              <button
+                type="submit"
+                className="rounded-xl bg-[#174734] px-5 py-2.5 text-sm font-bold text-white"
               >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
-                      {card.title}
-                    </p>
+                Apply Dates
+              </button>
+            </form>
+          ) : null}
+        </section>
 
-                    <p className="mt-3 text-4xl font-bold">{card.value}</p>
-
-                    <p className="mt-2 text-sm text-[#6b705c]">
-                      {card.subtitle}
-                    </p>
-                  </div>
-
-                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#f7f6f1] text-3xl">
-                    {card.icon}
-                  </div>
-                </div>
-              </article>
-            ))}
-          </section>
-
-          <section className="mt-8 grid gap-6 xl:grid-cols-2">
-            <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
-              <h2 className="text-2xl font-bold">
-                Recurring Opportunities
-              </h2>
-
-              <p className="mt-1 text-[#6b705c]">
-                Customers with 3+ invoices and no recurring-service history
-                in synced Jobber service data.
-              </p>
-
-              <div className="mt-6 space-y-3">
-                {recurringOpportunities.length === 0 ? (
-                  <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
-                    No recurring opportunities found.
+        <section className="mt-6 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+          {cards.map((card) => (
+            <article
+              key={card.title}
+              className="rounded-3xl bg-white p-6 shadow"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
+                    {card.title}
                   </p>
-                ) : (
-                  recurringOpportunities.map((summary) => (
-                    <Link
-                      key={summary.customer.jobber_client_id}
-                      href={`/customers/${encodeURIComponent(
-                        summary.customer.jobber_client_id,
-                      )}`}
-                      className="block rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
-                    >
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div>
-                          <p className="font-bold">
-                            {summary.customer.full_name ||
-                              summary.customer.company_name ||
-                              "Unnamed Customer"}
-                          </p>
 
-                          <p className="mt-1 text-sm text-[#6b705c]">
-                            {summary.customer.city || "Unknown city"}
-                            {summary.customer.postal_code
-                              ? ` · ${summary.customer.postal_code}`
-                              : ""}
-                          </p>
-                        </div>
+                  <p className="mt-3 text-4xl font-bold">{card.value}</p>
 
-                        <p className="text-xl font-bold text-[#9c7a20]">
-                          {formatCurrency(summary.lifetimeRevenue)}
-                        </p>
-                      </div>
+                  <p className="mt-2 text-sm text-[#6b705c]">
+                    {card.subtitle}
+                  </p>
+                </div>
 
-                      <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm text-[#6b705c]">
-                        <span>{formatNumber(summary.invoiceCount)} invoices</span>
-                        <span>
-                          {formatCurrency(summary.averageTicket)} avg ticket
-                        </span>
-                        <span>
-                          Last invoice {formatDate(summary.latestInvoiceDate)}
-                        </span>
-                      </div>
-                    </Link>
-                  ))
-                )}
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#f7f6f1] text-3xl">
+                  {card.icon}
+                </div>
               </div>
             </article>
+          ))}
+        </section>
 
-            <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
-              <h2 className="text-2xl font-bold">Reactivation Pipeline</h2>
+        <section className="mt-8 grid gap-6 xl:grid-cols-2">
+          <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
+            <h2 className="text-2xl font-bold">
+              Recurring Opportunities
+            </h2>
 
-              <p className="mt-1 text-[#6b705c]">
-                Non-recurring customers grouped by time since their last invoice.
-                Customers at 18+ months are automatically left off the active list.
-              </p>
+            <p className="mt-1 text-[#6b705c]">
+              Customers with 3+ invoices and no recurring-service history
+              in synced Jobber service data.
+            </p>
 
-              <div className="mt-6 space-y-5">
-                {reactivationBuckets.map((bucket) => (
-                  <div
-                    key={bucket.title}
-                    className="rounded-2xl border border-[#e7e2d5] p-5"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <h3 className="text-lg font-bold">{bucket.title}</h3>
-                        <p className="mt-1 text-sm text-[#6b705c]">
-                          {bucket.subtitle}
-                        </p>
-                      </div>
-
-                      <span className="rounded-full bg-[#f7f6f1] px-3 py-1 text-sm font-bold">
-                        {formatNumber(bucket.customers.length)}
-                      </span>
-                    </div>
-
-                    <div className="mt-4 space-y-3">
-                      {bucket.customers.length === 0 ? (
-                        <p className="rounded-xl bg-[#f7f6f1] p-4 text-sm text-[#6b705c]">
-                          No customers in this reactivation group.
-                        </p>
-                      ) : (
-                        bucket.customers.slice(0, 15).map((summary) => (
-                          <div
-                            key={summary.customer.jobber_client_id}
-                            className="rounded-xl bg-[#f7f6f1] p-4"
-                          >
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                              <div>
-                                <Link
-                                  href={`/customers/${encodeURIComponent(
-                                    summary.customer.jobber_client_id,
-                                  )}`}
-                                  className="font-bold hover:text-[#9c7a20]"
-                                >
-                                  {summary.customer.full_name ||
-                                    summary.customer.company_name ||
-                                    "Unnamed Customer"}
-                                </Link>
-
-                                <p className="mt-1 text-sm text-[#6b705c]">
-                                  {formatNumber(
-                                    summary.daysSinceLastInvoice ?? 0,
-                                  )}{" "}
-                                  days since last invoice ·{" "}
-                                  {formatNumber(summary.invoiceCount)} invoices ·{" "}
-                                  {formatCurrency(summary.lifetimeRevenue)} lifetime
-                                </p>
-                              </div>
-
-                              <form
-                                action={excludeFromReactivation}
-                                className="flex flex-wrap items-center gap-2"
-                              >
-                                <input
-                                  type="hidden"
-                                  name="jobber_client_id"
-                                  value={summary.customer.jobber_client_id}
-                                />
-
-                                <select
-                                  name="reason"
-                                  defaultValue="moved"
-                                  className="rounded-lg border border-[#d8d3c6] bg-white px-3 py-2 text-xs font-semibold text-[#174734]"
-                                >
-                                  <option value="moved">Moved</option>
-                                  <option value="canceled_permanently">
-                                    Canceled Permanently
-                                  </option>
-                                  <option value="no_longer_has_turf">
-                                    No Longer Has Turf
-                                  </option>
-                                  <option value="do_not_contact">
-                                    Do Not Contact
-                                  </option>
-                                  <option value="bad_fit">Bad Fit</option>
-                                  <option value="other">Other</option>
-                                </select>
-
-                                <button
-                                  type="submit"
-                                  className="rounded-lg border border-[#174734] px-3 py-2 text-xs font-bold transition hover:bg-[#174734] hover:text-white"
-                                >
-                                  Remove From List
-                                </button>
-                              </form>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </article>
-          </section>
-
-          <section className="mt-8 grid gap-6 xl:grid-cols-2">
-            <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
-              <h2 className="text-2xl font-bold">Top Customers</h2>
-
-              <p className="mt-1 text-[#6b705c]">
-                Ranked by lifetime invoiced revenue.
-              </p>
-
-              <div className="mt-6 space-y-3">
-                {topCustomers.map((summary, index) => (
+            <div className="mt-6 space-y-3">
+              {recurringOpportunities.length === 0 ? (
+                <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+                  No recurring opportunities found.
+                </p>
+              ) : (
+                recurringOpportunities.map((summary) => (
                   <Link
                     key={summary.customer.jobber_client_id}
                     href={`/customers/${encodeURIComponent(
                       summary.customer.jobber_client_id,
                     )}`}
-                    className="flex items-center justify-between gap-4 rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
+                    className="block rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
                   >
-                    <div className="flex min-w-0 items-center gap-4">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#f7f6f1] font-bold">
-                        {index + 1}
-                      </div>
-
-                      <div className="min-w-0">
-                        <p className="truncate font-bold">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <p className="font-bold">
                           {summary.customer.full_name ||
                             summary.customer.company_name ||
                             "Unnamed Customer"}
                         </p>
 
                         <p className="mt-1 text-sm text-[#6b705c]">
-                          {formatNumber(summary.invoiceCount)} invoices ·{" "}
-                          {formatCurrency(summary.averageTicket)} avg ticket
-                        </p>
-                      </div>
-                    </div>
-
-                    <p className="font-bold">
-                      {formatCurrency(summary.lifetimeRevenue)}
-                    </p>
-                  </Link>
-                ))}
-              </div>
-            </article>
-
-            <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <h2 className="text-2xl font-bold">
-                    Customer Growth by Market
-                  </h2>
-
-                  <p className="mt-1 text-[#6b705c]">
-                    Customer activity during {label}.
-                  </p>
-                </div>
-
-                <div className="flex gap-2">
-                  <Link
-                    href={makeHref(
-                      timeframe,
-                      marketMode,
-                      { market: "zip" },
-                      params.start,
-                      params.end,
-                    )}
-                    scroll={false}
-                    className={`rounded-xl px-4 py-2 text-sm font-bold ${
-                      marketMode === "zip"
-                        ? "bg-[#174734] text-white"
-                        : "bg-[#f7f6f1] text-[#6b705c]"
-                    }`}
-                  >
-                    ZIP Codes
-                  </Link>
-
-                  <Link
-                    href={makeHref(
-                      timeframe,
-                      marketMode,
-                      { market: "city" },
-                      params.start,
-                      params.end,
-                    )}
-                    scroll={false}
-                    className={`rounded-xl px-4 py-2 text-sm font-bold ${
-                      marketMode === "city"
-                        ? "bg-[#174734] text-white"
-                        : "bg-[#f7f6f1] text-[#6b705c]"
-                    }`}
-                  >
-                    Cities
-                  </Link>
-                </div>
-              </div>
-
-              <div className="mt-6 space-y-3">
-                {marketSummaries.length === 0 ? (
-                  <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
-                    No customer market data found for this timeframe.
-                  </p>
-                ) : (
-                  marketSummaries.map((market, index) => (
-                    <div
-                      key={market.market}
-                      className="rounded-2xl border border-[#e7e2d5] p-5"
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-center gap-4">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#f7f6f1] font-bold">
-                            {index + 1}
-                          </div>
-
-                          <div>
-                            <p className="font-bold">{market.market}</p>
-                            <p className="mt-1 text-sm text-[#6b705c]">
-                              {formatNumber(market.customers)} active customers
-                            </p>
-                          </div>
-                        </div>
-
-                        <p className="font-bold">
-                          {formatCurrency(market.revenue)}
+                          {summary.customer.city || "Unknown city"}
+                          {summary.customer.postal_code
+                            ? ` · ${summary.customer.postal_code}`
+                            : ""}
                         </p>
                       </div>
 
-                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                        <div className="rounded-xl bg-[#f7f6f1] p-3">
-                          <p className="text-xs text-[#6b705c]">Repeat Rate</p>
-                          <p className="mt-1 font-bold">
-                            {formatPercent(market.repeatRate)}
-                          </p>
-                        </div>
-
-                        <div className="rounded-xl bg-[#f7f6f1] p-3">
-                          <p className="text-xs text-[#6b705c]">
-                            Avg Customer Value
-                          </p>
-                          <p className="mt-1 font-bold">
-                            {formatCurrency(market.averageCustomerValue)}
-                          </p>
-                        </div>
-                      </div>
+                      <p className="text-xl font-bold text-[#9c7a20]">
+                        {formatCurrency(summary.lifetimeRevenue)}
+                      </p>
                     </div>
-                  ))
-                )}
-              </div>
-            </article>
-          </section>
-        </div>
-      </main>
-    );
-  } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Customer intelligence could not be loaded.";
 
-    return (
-      <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
-        <div className="mx-auto max-w-7xl">
-          <section className="rounded-3xl bg-white p-5 shadow sm:p-8">
-            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
-              Valley Turf Revival OS
+                    <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm text-[#6b705c]">
+                      <span>{formatNumber(summary.invoiceCount)} invoices</span>
+                      <span>
+                        {formatCurrency(summary.averageTicket)} avg ticket
+                      </span>
+                      <span>
+                        Last invoice {formatDate(summary.latestInvoiceDate)}
+                      </span>
+                    </div>
+                  </Link>
+                ))
+              )}
+            </div>
+          </article>
+
+          <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
+            <h2 className="text-2xl font-bold">Reactivation Pipeline</h2>
+
+            <p className="mt-1 text-[#6b705c]">
+              Non-recurring customers grouped by time since their last invoice.
+              Customers at 18+ months are automatically left off the active list.
             </p>
 
-            <h1 className="mt-3 text-3xl font-bold">
-              Customer Intelligence could not be loaded
-            </h1>
+            <div className="mt-6 space-y-5">
+              {reactivationBuckets.map((bucket) => (
+                <div
+                  key={bucket.title}
+                  className="rounded-2xl border border-[#e7e2d5] p-5"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-lg font-bold">{bucket.title}</h3>
+                      <p className="mt-1 text-sm text-[#6b705c]">
+                        {bucket.subtitle}
+                      </p>
+                    </div>
 
-            <p className="mt-4 text-[#6b705c]">{message}</p>
+                    <span className="rounded-full bg-[#f7f6f1] px-3 py-1 text-sm font-bold">
+                      {formatNumber(bucket.customers.length)}
+                    </span>
+                  </div>
 
-            <Link
-              href="/customers"
-              className="mt-6 inline-block rounded-xl bg-[#174734] px-5 py-3 text-sm font-bold text-white"
-            >
-              Customer Directory
-            </Link>
-          </section>
-        </div>
-      </main>
-    );
-  }
+                  <div className="mt-4 space-y-3">
+                    {bucket.customers.length === 0 ? (
+                      <p className="rounded-xl bg-[#f7f6f1] p-4 text-sm text-[#6b705c]">
+                        No customers in this reactivation group.
+                      </p>
+                    ) : (
+                      bucket.customers.slice(0, 15).map((summary) => (
+                        <div
+                          key={summary.customer.jobber_client_id}
+                          className="rounded-xl bg-[#f7f6f1] p-4"
+                        >
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <Link
+                                href={`/customers/${encodeURIComponent(
+                                  summary.customer.jobber_client_id,
+                                )}`}
+                                className="font-bold hover:text-[#9c7a20]"
+                              >
+                                {summary.customer.full_name ||
+                                  summary.customer.company_name ||
+                                  "Unnamed Customer"}
+                              </Link>
+
+                              <p className="mt-1 text-sm text-[#6b705c]">
+                                {formatNumber(
+                                  summary.daysSinceLastInvoice ?? 0,
+                                )}{" "}
+                                days since last invoice ·{" "}
+                                {formatNumber(summary.invoiceCount)} invoices ·{" "}
+                                {formatCurrency(summary.lifetimeRevenue)} lifetime
+                              </p>
+                            </div>
+
+                            <form
+                              action={excludeFromReactivation}
+                              className="flex flex-wrap items-center gap-2"
+                            >
+                              <input
+                                type="hidden"
+                                name="jobber_client_id"
+                                value={summary.customer.jobber_client_id}
+                              />
+
+                              <select
+                                name="reason"
+                                defaultValue="moved"
+                                className="rounded-lg border border-[#d8d3c6] bg-white px-3 py-2 text-xs font-semibold text-[#174734]"
+                              >
+                                <option value="moved">Moved</option>
+                                <option value="canceled_permanently">
+                                  Canceled Permanently
+                                </option>
+                                <option value="no_longer_has_turf">
+                                  No Longer Has Turf
+                                </option>
+                                <option value="do_not_contact">
+                                  Do Not Contact
+                                </option>
+                                <option value="bad_fit">Bad Fit</option>
+                                <option value="other">Other</option>
+                              </select>
+
+                              <button
+                                type="submit"
+                                className="rounded-lg border border-[#174734] px-3 py-2 text-xs font-bold transition hover:bg-[#174734] hover:text-white"
+                              >
+                                Remove From List
+                              </button>
+                            </form>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+        </section>
+
+        <section className="mt-8 grid gap-6 xl:grid-cols-2">
+          <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
+            <h2 className="text-2xl font-bold">Top Customers</h2>
+
+            <p className="mt-1 text-[#6b705c]">
+              Ranked by lifetime invoiced revenue.
+            </p>
+
+            <div className="mt-6 space-y-3">
+              {topCustomers.map((summary, index) => (
+                <Link
+                  key={summary.customer.jobber_client_id}
+                  href={`/customers/${encodeURIComponent(
+                    summary.customer.jobber_client_id,
+                  )}`}
+                  className="flex items-center justify-between gap-4 rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
+                >
+                  <div className="flex min-w-0 items-center gap-4">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#f7f6f1] font-bold">
+                      {index + 1}
+                    </div>
+
+                    <div className="min-w-0">
+                      <p className="truncate font-bold">
+                        {summary.customer.full_name ||
+                          summary.customer.company_name ||
+                          "Unnamed Customer"}
+                      </p>
+
+                      <p className="mt-1 text-sm text-[#6b705c]">
+                        {formatNumber(summary.invoiceCount)} invoices ·{" "}
+                        {formatCurrency(summary.averageTicket)} avg ticket
+                      </p>
+                    </div>
+                  </div>
+
+                  <p className="font-bold">
+                    {formatCurrency(summary.lifetimeRevenue)}
+                  </p>
+                </Link>
+              ))}
+            </div>
+          </article>
+
+          <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="text-2xl font-bold">
+                  Customer Growth by Market
+                </h2>
+
+                <p className="mt-1 text-[#6b705c]">
+                  Customer activity during {label}.
+                </p>
+              </div>
+
+              <div className="flex gap-2">
+                <Link
+                  href={makeHref(
+                    timeframe,
+                    marketMode,
+                    { market: "zip" },
+                    params.start,
+                    params.end,
+                  )}
+                  scroll={false}
+                  className={`rounded-xl px-4 py-2 text-sm font-bold ${
+                    marketMode === "zip"
+                      ? "bg-[#174734] text-white"
+                      : "bg-[#f7f6f1] text-[#6b705c]"
+                  }`}
+                >
+                  ZIP Codes
+                </Link>
+
+                <Link
+                  href={makeHref(
+                    timeframe,
+                    marketMode,
+                    { market: "city" },
+                    params.start,
+                    params.end,
+                  )}
+                  scroll={false}
+                  className={`rounded-xl px-4 py-2 text-sm font-bold ${
+                    marketMode === "city"
+                      ? "bg-[#174734] text-white"
+                      : "bg-[#f7f6f1] text-[#6b705c]"
+                  }`}
+                >
+                  Cities
+                </Link>
+              </div>
+            </div>
+
+            <div className="mt-6 space-y-3">
+              {marketSummaries.length === 0 ? (
+                <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+                  No customer market data found for this timeframe.
+                </p>
+              ) : (
+                marketSummaries.map((market, index) => (
+                  <div
+                    key={market.market}
+                    className="rounded-2xl border border-[#e7e2d5] p-5"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-center gap-4">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#f7f6f1] font-bold">
+                          {index + 1}
+                        </div>
+
+                        <div>
+                          <p className="font-bold">{market.market}</p>
+                          <p className="mt-1 text-sm text-[#6b705c]">
+                            {formatNumber(market.customers)} active customers
+                          </p>
+                        </div>
+                      </div>
+
+                      <p className="font-bold">
+                        {formatCurrency(market.revenue)}
+                      </p>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-xl bg-[#f7f6f1] p-3">
+                        <p className="text-xs text-[#6b705c]">Repeat Rate</p>
+                        <p className="mt-1 font-bold">
+                          {formatPercent(market.repeatRate)}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl bg-[#f7f6f1] p-3">
+                        <p className="text-xs text-[#6b705c]">
+                          Avg Customer Value
+                        </p>
+                        <p className="mt-1 font-bold">
+                          {formatCurrency(market.averageCustomerValue)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </article>
+        </section>
+      </div>
+    </main>
+  );
 }

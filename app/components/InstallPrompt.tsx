@@ -59,11 +59,18 @@ function isRunningStandalone(): boolean {
 export default function InstallPrompt() {
   const [promptEvent, setPromptEvent] =
     useState<BeforeInstallPromptEvent | null>(null);
-  const [dismissed, setDismissed] = useState(false);
+  // Lazy initializer instead of useState(false) + setDismissed(true) in
+  // the effect below — same result, but the effect body no longer calls
+  // setState synchronously on mount (react-hooks/set-state-in-effect).
+  // The effect still re-checks this below so it can skip registering
+  // the beforeinstallprompt/appinstalled listeners entirely when they'd
+  // be pointless (already standalone or snoozed), same as before.
+  const [dismissed, setDismissed] = useState(
+    () => isRunningStandalone() || wasRecentlyDismissed()
+  );
 
   useEffect(() => {
     if (isRunningStandalone() || wasRecentlyDismissed()) {
-      setDismissed(true);
       return;
     }
 

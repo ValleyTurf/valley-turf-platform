@@ -730,725 +730,533 @@ function statusClasses(daysPastDue: number): string {
 }
 
 export default async function RevenuePage({ searchParams }: RevenuePageProps) {
-  try {
-    const params = await searchParams;
-    const timeframe: Timeframe = isTimeframe(params.timeframe)
-      ? params.timeframe
-      : "last-month";
-    const marketMode: MarketMode = isMarketMode(params.market)
-      ? params.market
-      : "zip";
-    const rankMetric: RankMetric = isRankMetric(params.rank)
-      ? params.rank
-      : "revenue";
+  const params = await searchParams;
+  const timeframe: Timeframe = isTimeframe(params.timeframe)
+    ? params.timeframe
+    : "last-month";
+  const marketMode: MarketMode = isMarketMode(params.market)
+    ? params.market
+    : "zip";
+  const rankMetric: RankMetric = isRankMetric(params.rank)
+    ? params.rank
+    : "revenue";
 
-    const {
-      startDate,
-      endDate,
-      label: marketDateLabel,
-    } = getDateRange(timeframe, params.start, params.end);
+  const {
+    startDate,
+    endDate,
+    label: marketDateLabel,
+  } = getDateRange(timeframe, params.start, params.end);
 
-    const {
-      startDate: previousStartDate,
-      endDate: previousEndDate,
-      label: previousMarketDateLabel,
-    } = getPreviousDateRange(timeframe, startDate, endDate);
-    const [
-      topCustomersResult,
-      outstandingResult,
-      serviceCategoryResult,
-      customerValueResult,
-      forecastResult,
-      overheadCosts,
-      marketInvoices,
-      serviceCategoryRevenue,
-      previousMarketInvoices,
-      marketCustomers,
-      dashboardPayments,
-      dashboardPaymentFees,
-      previousServiceCategoryRevenue,
-    ] = await Promise.all([
-      supabaseServer
-        .from("customer_financials")
-        .select(
-          `
-            jobber_client_id,
-            customer_name,
-            invoice_count,
-            lifetime_invoiced,
-            lifetime_collected,
-            outstanding_balance,
-            average_invoice,
-            first_invoice_date,
-            latest_invoice_date
-          `,
-        )
-        .order("lifetime_collected", { ascending: false })
-        .limit(10),
-
-      supabaseServer
-        .from("outstanding_invoices")
-        .select(
-          `
-            id,
-            jobber_invoice_id,
-            jobber_client_id,
-            invoice_number,
-            customer_name,
-            status,
-            issue_date,
-            due_date,
-            invoice_total,
-            amount_paid,
-            outstanding_balance,
-            payment_status,
-            days_past_due
-          `,
-        )
-        .order("outstanding_balance", { ascending: false })
-        .limit(15),
-
-      supabaseServer
-        .from("service_category_summary")
-        .select(
-          "service_category, job_count, recurring_count, one_off_count, customer_count",
-        )
-        .order("job_count", { ascending: false }),
-
-      supabaseServer
-        .from("customer_value_summary")
-        .select(
-          "total_customers, one_time_customers, repeat_customers, avg_customer_value, avg_invoices_per_customer",
-        )
-        .single(),
-
-      supabaseServer
-        .from("forecast_next_12_months_final")
-        .select(
-          "month, recurring_revenue_projected, seasonal_one_off_estimate, projected_total_revenue",
-        )
-        .order("month", { ascending: true }),
-
-      fetchOverheadCosts(),
-
-      fetchMarketInvoices(startDate, endDate),
-      fetchServiceCategoryRevenue(startDate, endDate),
-      fetchMarketInvoices(previousStartDate, previousEndDate),
-      fetchMarketCustomers(),
-      fetchDashboardPayments(startDate, endDate),
-      fetchDashboardPaymentFees(startDate, endDate),
-      fetchServiceCategoryRevenue(previousStartDate, previousEndDate),
-    ]);
-
-    const queryErrors = [
-      topCustomersResult.error,
-      outstandingResult.error,
-      serviceCategoryResult.error,
-      customerValueResult.error,
-      forecastResult.error,
-    ].filter(Boolean);
-
-    if (queryErrors.length > 0) {
-      throw new Error(
-        queryErrors
-          .map((error) => error?.message)
-          .filter(Boolean)
-          .join(", "),
-      );
-    }
-
-    const topCustomers = (topCustomersResult.data ?? []) as CustomerFinancial[];
-    const outstandingInvoices = (outstandingResult.data ??
-      []) as OutstandingInvoice[];
-    const serviceCategories = (serviceCategoryResult.data ??
-      []) as ServiceCategorySummary[];
-    const customerValue =
-      customerValueResult.data as CustomerValueSummary | null;
-    const forecastMonths = (forecastResult.data ?? []) as ForecastMonth[];
-
-    // Each invoice represents a completed service visit, so invoice count
-    // in the selected range is used as the "jobs completed" proxy — this is
-    // more reliable than jobber_jobs' status/date fields, which don't
-    // consistently reflect actual completion in this account's workflow.
-    const jobsCompleted = marketInvoices.length;
-
-    const totalOverheadForRange = calculateOverheadForRange(
-      overheadCosts,
-      startDate,
-      endDate,
-    );
-
-    const overheadPerJob =
-      jobsCompleted > 0 ? totalOverheadForRange / jobsCompleted : null;
-
-    const maxForecastValue = Math.max(
-      1,
-      ...forecastMonths.map((m) => toNumber(m.projected_total_revenue)),
-    );
-
-    const totalForecastRevenue = forecastMonths.reduce(
-      (sum, m) => sum + toNumber(m.projected_total_revenue),
-      0,
-    );
-
-    const totalForecastRecurring = forecastMonths.reduce(
-      (sum, m) => sum + toNumber(m.recurring_revenue_projected),
-      0,
-    );
-
-    const totalRecurringJobs = serviceCategories.reduce(
-      (sum, c) => sum + toNumber(c.recurring_count),
-      0,
-    );
-    const totalOneOffJobs = serviceCategories.reduce(
-      (sum, c) => sum + toNumber(c.one_off_count),
-      0,
-    );
-    const totalCategorizedJobs = totalRecurringJobs + totalOneOffJobs;
-
-    const repeatCustomerRate =
-      customerValue && toNumber(customerValue.total_customers) > 0
-        ? toNumber(customerValue.repeat_customers) /
-          toNumber(customerValue.total_customers)
-        : 0;
-
-    const dashboardRevenue = marketInvoices.reduce(
-      (sum, invoice) => sum + toNumber(invoice.invoice_total),
-      0,
-    );
-
-    const dashboardOutstandingInvoices = marketInvoices.filter(
-      (invoice) => toNumber(invoice.outstanding_balance) > 0,
-    );
-
-    const dashboardOutstandingBalance = dashboardOutstandingInvoices.reduce(
-      (sum, invoice) => sum + toNumber(invoice.outstanding_balance),
-      0,
-    );
-
-    const totalPayments = dashboardPayments.reduce(
-      (sum, payment) => sum + toNumber(payment.amount),
-      0,
-    );
-
-    const averagePayment =
-      dashboardPayments.length > 0
-        ? totalPayments / dashboardPayments.length
-        : 0;
-
-    const totalTips = dashboardPayments.reduce(
-      (sum, payment) => sum + toNumber(payment.tip_amount),
-      0,
-    );
-
-    const totalProcessingFees = dashboardPaymentFees.reduce(
-      (sum, fee) =>
-        sum + toNumber(fee.fee_amount) + toNumber(fee.surcharge_amount),
-      0,
-    );
-
-    const customerLocationMap = new Map(
-      marketCustomers.map((customer) => [customer.jobber_client_id, customer]),
-    );
-
-    // Shared by the Revenue by Market and Revenue by Service drill-downs
-    // below — both only have client IDs from their revenue aggregation,
-    // so this is what turns those IDs back into clickable names.
-    const customerNameMap = new Map(
-      marketCustomers.map((customer) => [
-        customer.jobber_client_id,
-        customer.full_name || "Unnamed Customer",
-      ]),
-    );
-
-    function namesForCustomerIds(
-      customerIds: Set<string>,
-    ): { id: string; name: string }[] {
-      return Array.from(customerIds)
-        .map((id) => ({
-          id,
-          name: customerNameMap.get(id) ?? "Unnamed Customer",
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name));
-    }
-
-    const marketSummaries = buildMarketSummaries(
-      marketInvoices,
-      customerLocationMap,
-      marketMode,
-    );
-
-    const previousMarketSummaries = buildMarketSummaries(
-      previousMarketInvoices,
-      customerLocationMap,
-      marketMode,
-    );
-
-    const previousMarketMap = new Map(
-      previousMarketSummaries.map((market) => [
-        marketMode === "city" ? market.market.toUpperCase() : market.market,
-        market,
-      ]),
-    );
-
-    const totalMarketRevenue = marketSummaries.reduce(
-      (sum, market) => sum + market.revenue,
-      0,
-    );
-
-    const previousServiceCategoryMap = new Map(
-      previousServiceCategoryRevenue.map((service) => [
-        service.category,
-        service,
-      ]),
-    );
-
-    const totalServiceRevenue = serviceCategoryRevenue.reduce(
-      (sum, service) => sum + service.revenue,
-      0,
-    );
-
-    const topMarkets = marketSummaries
-      .sort(
-        (a, b) =>
-          marketMetricValue(b, rankMetric) - marketMetricValue(a, rankMetric),
+  const {
+    startDate: previousStartDate,
+    endDate: previousEndDate,
+    label: previousMarketDateLabel,
+  } = getPreviousDateRange(timeframe, startDate, endDate);
+  const [
+    topCustomersResult,
+    outstandingResult,
+    serviceCategoryResult,
+    customerValueResult,
+    forecastResult,
+    overheadCosts,
+    marketInvoices,
+    serviceCategoryRevenue,
+    previousMarketInvoices,
+    marketCustomers,
+    dashboardPayments,
+    dashboardPaymentFees,
+    previousServiceCategoryRevenue,
+  ] = await Promise.all([
+    supabaseServer
+      .from("customer_financials")
+      .select(
+        `
+          jobber_client_id,
+          customer_name,
+          invoice_count,
+          lifetime_invoiced,
+          lifetime_collected,
+          outstanding_balance,
+          average_invoice,
+          first_invoice_date,
+          latest_invoice_date
+        `,
       )
-      .slice(0, 10);
+      .order("lifetime_collected", { ascending: false })
+      .limit(10),
 
-    const timeframeOptions: Array<{ value: Timeframe; label: string }> = [
-      { value: "last-7-days", label: "Last 7 Days" },
-      { value: "last-month", label: "Last Month" },
-      { value: "this-month", label: "This Month" },
-      { value: "last-90-days", label: "Last 90 Days" },
-      { value: "ytd", label: "YTD" },
-      { value: "custom", label: "Custom" },
-    ];
+    supabaseServer
+      .from("outstanding_invoices")
+      .select(
+        `
+          id,
+          jobber_invoice_id,
+          jobber_client_id,
+          invoice_number,
+          customer_name,
+          status,
+          issue_date,
+          due_date,
+          invoice_total,
+          amount_paid,
+          outstanding_balance,
+          payment_status,
+          days_past_due
+        `,
+      )
+      .order("outstanding_balance", { ascending: false })
+      .limit(15),
 
-    const rankOptions: Array<{ value: RankMetric; label: string }> = [
-      { value: "revenue", label: "Revenue" },
-      { value: "average-ticket", label: "Average Ticket" },
-      { value: "customers", label: "Customers" },
-      { value: "revenue-per-customer", label: "Revenue / Customer" },
-    ];
+    supabaseServer
+      .from("service_category_summary")
+      .select(
+        "service_category, job_count, recurring_count, one_off_count, customer_count",
+      )
+      .order("job_count", { ascending: false }),
 
-    const primaryCards = [
-      {
-        title: "Revenue",
-        value: formatCurrency(dashboardRevenue),
-        subtitle: `Invoices issued · ${marketDateLabel}`,
-        icon: "📈",
-      },
-      {
-        title: "Outstanding Invoices",
-        value: formatCurrency(dashboardOutstandingBalance),
-        subtitle: `${formatNumber(
-          dashboardOutstandingInvoices.length,
-        )} invoices with balances`,
-        icon: "📄",
-      },
-      {
-        title: "Jobs Completed",
-        value: formatNumber(jobsCompleted),
-        subtitle: `Invoiced service visits · ${marketDateLabel}`,
-        icon: "✅",
-      },
-      {
-        title: "Average Payment",
-        value: formatCurrency(averagePayment),
-        subtitle: `${formatNumber(dashboardPayments.length)} payments received`,
-        icon: "💵",
-      },
-      {
-        title: "Tips Collected",
-        value: formatCurrency(totalTips),
-        subtitle: `Payments received · ${marketDateLabel}`,
-        icon: "🙌",
-      },
-      {
-        title: "Processing Fees",
-        value: formatCurrency(totalProcessingFees),
-        subtitle: `Credit card / ACH fees · ${formatNumber(dashboardPaymentFees.length)} charged payments · ${marketDateLabel}`,
-        icon: "🏦",
-      },
-    ];
+    supabaseServer
+      .from("customer_value_summary")
+      .select(
+        "total_customers, one_time_customers, repeat_customers, avg_customer_value, avg_invoices_per_customer",
+      )
+      .single(),
 
-    return (
-      <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
-        <div className="mx-auto max-w-7xl">
-          <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+    supabaseServer
+      .from("forecast_next_12_months_final")
+      .select(
+        "month, recurring_revenue_projected, seasonal_one_off_estimate, projected_total_revenue",
+      )
+      .order("month", { ascending: true }),
+
+    fetchOverheadCosts(),
+
+    fetchMarketInvoices(startDate, endDate),
+    fetchServiceCategoryRevenue(startDate, endDate),
+    fetchMarketInvoices(previousStartDate, previousEndDate),
+    fetchMarketCustomers(),
+    fetchDashboardPayments(startDate, endDate),
+    fetchDashboardPaymentFees(startDate, endDate),
+    fetchServiceCategoryRevenue(previousStartDate, previousEndDate),
+  ]);
+
+  const queryErrors = [
+    topCustomersResult.error,
+    outstandingResult.error,
+    serviceCategoryResult.error,
+    customerValueResult.error,
+    forecastResult.error,
+  ].filter(Boolean);
+
+  if (queryErrors.length > 0) {
+    throw new Error(
+      queryErrors
+        .map((error) => error?.message)
+        .filter(Boolean)
+        .join(", "),
+    );
+  }
+
+  const topCustomers = (topCustomersResult.data ?? []) as CustomerFinancial[];
+  const outstandingInvoices = (outstandingResult.data ??
+    []) as OutstandingInvoice[];
+  const serviceCategories = (serviceCategoryResult.data ??
+    []) as ServiceCategorySummary[];
+  const customerValue =
+    customerValueResult.data as CustomerValueSummary | null;
+  const forecastMonths = (forecastResult.data ?? []) as ForecastMonth[];
+
+  // Each invoice represents a completed service visit, so invoice count
+  // in the selected range is used as the "jobs completed" proxy — this is
+  // more reliable than jobber_jobs' status/date fields, which don't
+  // consistently reflect actual completion in this account's workflow.
+  const jobsCompleted = marketInvoices.length;
+
+  const totalOverheadForRange = calculateOverheadForRange(
+    overheadCosts,
+    startDate,
+    endDate,
+  );
+
+  const overheadPerJob =
+    jobsCompleted > 0 ? totalOverheadForRange / jobsCompleted : null;
+
+  const maxForecastValue = Math.max(
+    1,
+    ...forecastMonths.map((m) => toNumber(m.projected_total_revenue)),
+  );
+
+  const totalForecastRevenue = forecastMonths.reduce(
+    (sum, m) => sum + toNumber(m.projected_total_revenue),
+    0,
+  );
+
+  const totalForecastRecurring = forecastMonths.reduce(
+    (sum, m) => sum + toNumber(m.recurring_revenue_projected),
+    0,
+  );
+
+  const totalRecurringJobs = serviceCategories.reduce(
+    (sum, c) => sum + toNumber(c.recurring_count),
+    0,
+  );
+  const totalOneOffJobs = serviceCategories.reduce(
+    (sum, c) => sum + toNumber(c.one_off_count),
+    0,
+  );
+  const totalCategorizedJobs = totalRecurringJobs + totalOneOffJobs;
+
+  const repeatCustomerRate =
+    customerValue && toNumber(customerValue.total_customers) > 0
+      ? toNumber(customerValue.repeat_customers) /
+        toNumber(customerValue.total_customers)
+      : 0;
+
+  const dashboardRevenue = marketInvoices.reduce(
+    (sum, invoice) => sum + toNumber(invoice.invoice_total),
+    0,
+  );
+
+  const dashboardOutstandingInvoices = marketInvoices.filter(
+    (invoice) => toNumber(invoice.outstanding_balance) > 0,
+  );
+
+  const dashboardOutstandingBalance = dashboardOutstandingInvoices.reduce(
+    (sum, invoice) => sum + toNumber(invoice.outstanding_balance),
+    0,
+  );
+
+  const totalPayments = dashboardPayments.reduce(
+    (sum, payment) => sum + toNumber(payment.amount),
+    0,
+  );
+
+  const averagePayment =
+    dashboardPayments.length > 0
+      ? totalPayments / dashboardPayments.length
+      : 0;
+
+  const totalTips = dashboardPayments.reduce(
+    (sum, payment) => sum + toNumber(payment.tip_amount),
+    0,
+  );
+
+  const totalProcessingFees = dashboardPaymentFees.reduce(
+    (sum, fee) =>
+      sum + toNumber(fee.fee_amount) + toNumber(fee.surcharge_amount),
+    0,
+  );
+
+  const customerLocationMap = new Map(
+    marketCustomers.map((customer) => [customer.jobber_client_id, customer]),
+  );
+
+  // Shared by the Revenue by Market and Revenue by Service drill-downs
+  // below — both only have client IDs from their revenue aggregation,
+  // so this is what turns those IDs back into clickable names.
+  const customerNameMap = new Map(
+    marketCustomers.map((customer) => [
+      customer.jobber_client_id,
+      customer.full_name || "Unnamed Customer",
+    ]),
+  );
+
+  function namesForCustomerIds(
+    customerIds: Set<string>,
+  ): { id: string; name: string }[] {
+    return Array.from(customerIds)
+      .map((id) => ({
+        id,
+        name: customerNameMap.get(id) ?? "Unnamed Customer",
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  const marketSummaries = buildMarketSummaries(
+    marketInvoices,
+    customerLocationMap,
+    marketMode,
+  );
+
+  const previousMarketSummaries = buildMarketSummaries(
+    previousMarketInvoices,
+    customerLocationMap,
+    marketMode,
+  );
+
+  const previousMarketMap = new Map(
+    previousMarketSummaries.map((market) => [
+      marketMode === "city" ? market.market.toUpperCase() : market.market,
+      market,
+    ]),
+  );
+
+  const totalMarketRevenue = marketSummaries.reduce(
+    (sum, market) => sum + market.revenue,
+    0,
+  );
+
+  const previousServiceCategoryMap = new Map(
+    previousServiceCategoryRevenue.map((service) => [
+      service.category,
+      service,
+    ]),
+  );
+
+  const totalServiceRevenue = serviceCategoryRevenue.reduce(
+    (sum, service) => sum + service.revenue,
+    0,
+  );
+
+  const topMarkets = marketSummaries
+    .sort(
+      (a, b) =>
+        marketMetricValue(b, rankMetric) - marketMetricValue(a, rankMetric),
+    )
+    .slice(0, 10);
+
+  const timeframeOptions: Array<{ value: Timeframe; label: string }> = [
+    { value: "last-7-days", label: "Last 7 Days" },
+    { value: "last-month", label: "Last Month" },
+    { value: "this-month", label: "This Month" },
+    { value: "last-90-days", label: "Last 90 Days" },
+    { value: "ytd", label: "YTD" },
+    { value: "custom", label: "Custom" },
+  ];
+
+  const rankOptions: Array<{ value: RankMetric; label: string }> = [
+    { value: "revenue", label: "Revenue" },
+    { value: "average-ticket", label: "Average Ticket" },
+    { value: "customers", label: "Customers" },
+    { value: "revenue-per-customer", label: "Revenue / Customer" },
+  ];
+
+  const primaryCards = [
+    {
+      title: "Revenue",
+      value: formatCurrency(dashboardRevenue),
+      subtitle: `Invoices issued · ${marketDateLabel}`,
+      icon: "📈",
+    },
+    {
+      title: "Outstanding Invoices",
+      value: formatCurrency(dashboardOutstandingBalance),
+      subtitle: `${formatNumber(
+        dashboardOutstandingInvoices.length,
+      )} invoices with balances`,
+      icon: "📄",
+    },
+    {
+      title: "Jobs Completed",
+      value: formatNumber(jobsCompleted),
+      subtitle: `Invoiced service visits · ${marketDateLabel}`,
+      icon: "✅",
+    },
+    {
+      title: "Average Payment",
+      value: formatCurrency(averagePayment),
+      subtitle: `${formatNumber(dashboardPayments.length)} payments received`,
+      icon: "💵",
+    },
+    {
+      title: "Tips Collected",
+      value: formatCurrency(totalTips),
+      subtitle: `Payments received · ${marketDateLabel}`,
+      icon: "🙌",
+    },
+    {
+      title: "Processing Fees",
+      value: formatCurrency(totalProcessingFees),
+      subtitle: `Credit card / ACH fees · ${formatNumber(dashboardPaymentFees.length)} charged payments · ${marketDateLabel}`,
+      icon: "🏦",
+    },
+  ];
+
+  return (
+    <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
+      <div className="mx-auto max-w-7xl">
+        <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
+              Valley Turf Revival OS
+            </p>
+
+            <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Financial Dashboard</h1>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            <Link
+              href="/materials"
+              className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold transition hover:bg-white"
+            >
+              Manage Costs
+            </Link>
+          </div>
+        </header>
+
+        <section
+          id="financial-snapshot"
+          className="mt-8 scroll-mt-6 rounded-3xl bg-white p-6 shadow"
+        >
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
-                Valley Turf Revival OS
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
+                Financial Snapshot
               </p>
-
-              <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Financial Dashboard</h1>
+              <h2 className="mt-1 text-2xl font-bold">{marketDateLabel}</h2>
+              <p className="mt-1 text-sm text-[#6b705c]">
+                The cards and market analytics below use this selected period.
+              </p>
             </div>
 
-            <div className="flex flex-wrap gap-3">
-              <Link
-                href="/materials"
-                className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold transition hover:bg-white"
-              >
-                Manage Costs
-              </Link>
-            </div>
-          </header>
-
-          <section
-            id="financial-snapshot"
-            className="mt-8 scroll-mt-6 rounded-3xl bg-white p-6 shadow"
-          >
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
-                  Financial Snapshot
-                </p>
-                <h2 className="mt-1 text-2xl font-bold">{marketDateLabel}</h2>
-                <p className="mt-1 text-sm text-[#6b705c]">
-                  The cards and market analytics below use this selected period.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                {timeframeOptions.map((option) => (
-                  <Link
-                    key={option.value}
-                    href={makeMarketHref(
-                      timeframe,
-                      marketMode,
-                      rankMetric,
-                      { timeframe: option.value },
-                      params.start,
-                      params.end,
-                    )}
-                    scroll={false}
-                    className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
-                      timeframe === option.value
-                        ? "bg-[#d4af37] text-[#174734]"
-                        : "border border-[#d8d3c6] bg-white text-[#6b705c] hover:border-[#d4af37]"
-                    }`}
-                  >
-                    {option.label}
-                  </Link>
-                ))}
-              </div>
-            </div>
-
-            {timeframe === "custom" ? (
-              <form
-                method="GET"
-                action="/revenue#financial-snapshot"
-                className="mt-5 flex flex-wrap items-end gap-3 rounded-2xl bg-[#f7f6f1] p-4"
-              >
-                <input type="hidden" name="timeframe" value="custom" />
-                <input type="hidden" name="market" value={marketMode} />
-                <input type="hidden" name="rank" value={rankMetric} />
-
-                <label className="text-sm font-semibold text-[#6b705c]">
-                  Start date
-                  <input
-                    type="date"
-                    name="start"
-                    defaultValue={startDate}
-                    className="mt-1 block rounded-xl border border-[#d8d3c6] bg-white px-3 py-2 text-[#174734]"
-                  />
-                </label>
-
-                <label className="text-sm font-semibold text-[#6b705c]">
-                  End date
-                  <input
-                    type="date"
-                    name="end"
-                    defaultValue={endDate}
-                    className="mt-1 block rounded-xl border border-[#d8d3c6] bg-white px-3 py-2 text-[#174734]"
-                  />
-                </label>
-
-                <button
-                  type="submit"
-                  className="rounded-xl bg-[#174734] px-5 py-2.5 text-sm font-bold text-white"
-                >
-                  Apply Dates
-                </button>
-              </form>
-            ) : null}
-          </section>
-
-          <section className="mt-6 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-            {primaryCards.map((card) => (
-              <article
-                key={card.title}
-                className="rounded-3xl bg-white p-6 shadow"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
-                      {card.title}
-                    </p>
-
-                    <p className="mt-3 text-4xl font-bold">{card.value}</p>
-
-                    <p className="mt-2 text-sm text-[#6b705c]">
-                      {card.subtitle}
-                    </p>
-                  </div>
-
-                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#f7f6f1] text-3xl">
-                    {card.icon}
-                  </div>
-                </div>
-              </article>
-            ))}
-          </section>
-
-          <section className="mt-6 rounded-3xl border border-[#e3ded1] bg-white p-6 shadow-sm">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
-                  Job Costing
-                </p>
-
-                <h2 className="mt-1 text-xl font-bold">
-                  Overhead Cost Per Job
-                </h2>
-
-                <p className="mt-1 text-sm text-[#6b705c]">
-                  Overhead for {marketDateLabel}, prorated by day and divided
-                  across {formatNumber(jobsCompleted)} invoiced service visit
-                  {jobsCompleted === 1 ? "" : "s"} in that period.{" "}
-                  <Link
-                    href="/materials"
-                    className="font-semibold text-[#9c7a20] hover:underline"
-                  >
-                    Manage costs →
-                  </Link>
-                </p>
-              </div>
-
-              {overheadPerJob !== null ? (
-                <div className="shrink-0 sm:text-right">
-                  <p className="text-3xl font-bold">
-                    {formatCurrency(overheadPerJob)}
-                    <span className="ml-1 text-base font-normal text-[#6b705c]">
-                      / job
-                    </span>
-                  </p>
-
-                  <p className="mt-1 text-sm text-[#6b705c]">
-                    {formatCurrency(totalOverheadForRange)} total ÷{" "}
-                    {formatNumber(jobsCompleted)} jobs
-                  </p>
-                </div>
-              ) : (
-                <p className="shrink-0 text-sm text-[#6b705c]">
-                  No invoiced service visits in this period yet.
-                </p>
-              )}
-            </div>
-          </section>
-
-          <div className="mt-8 grid gap-6 lg:grid-cols-2">
-          <section
-            id="revenue-by-market"
-            className="scroll-mt-6 rounded-3xl bg-white p-5 shadow sm:p-8"
-          >
-            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-              <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
-                  Market Intelligence
-                </p>
-                <h2 className="mt-2 text-2xl font-bold">Revenue by Market</h2>
-                <p className="mt-2 text-sm font-semibold text-[#174734]">
-                  {marketDateLabel}
-                </p>
-                <p className="mt-1 text-xs text-[#6b705c]">
-                  Compared with {previousMarketDateLabel}
-                </p>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2">
+              {timeframeOptions.map((option) => (
                 <Link
+                  key={option.value}
                   href={makeMarketHref(
                     timeframe,
                     marketMode,
                     rankMetric,
-                    { market: "zip" },
+                    { timeframe: option.value },
                     params.start,
                     params.end,
                   )}
                   scroll={false}
                   className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
-                    marketMode === "zip"
-                      ? "bg-[#174734] text-white"
-                      : "border border-[#d8d3c6] bg-[#f7f6f1] text-[#174734]"
+                    timeframe === option.value
+                      ? "bg-[#d4af37] text-[#174734]"
+                      : "border border-[#d8d3c6] bg-white text-[#6b705c] hover:border-[#d4af37]"
                   }`}
                 >
-                  ZIP Codes
+                  {option.label}
                 </Link>
+              ))}
+            </div>
+          </div>
+
+          {timeframe === "custom" ? (
+            <form
+              method="GET"
+              action="/revenue#financial-snapshot"
+              className="mt-5 flex flex-wrap items-end gap-3 rounded-2xl bg-[#f7f6f1] p-4"
+            >
+              <input type="hidden" name="timeframe" value="custom" />
+              <input type="hidden" name="market" value={marketMode} />
+              <input type="hidden" name="rank" value={rankMetric} />
+
+              <label className="text-sm font-semibold text-[#6b705c]">
+                Start date
+                <input
+                  type="date"
+                  name="start"
+                  defaultValue={startDate}
+                  className="mt-1 block rounded-xl border border-[#d8d3c6] bg-white px-3 py-2 text-[#174734]"
+                />
+              </label>
+
+              <label className="text-sm font-semibold text-[#6b705c]">
+                End date
+                <input
+                  type="date"
+                  name="end"
+                  defaultValue={endDate}
+                  className="mt-1 block rounded-xl border border-[#d8d3c6] bg-white px-3 py-2 text-[#174734]"
+                />
+              </label>
+
+              <button
+                type="submit"
+                className="rounded-xl bg-[#174734] px-5 py-2.5 text-sm font-bold text-white"
+              >
+                Apply Dates
+              </button>
+            </form>
+          ) : null}
+        </section>
+
+        <section className="mt-6 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+          {primaryCards.map((card) => (
+            <article
+              key={card.title}
+              className="rounded-3xl bg-white p-6 shadow"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
+                    {card.title}
+                  </p>
+
+                  <p className="mt-3 text-4xl font-bold">{card.value}</p>
+
+                  <p className="mt-2 text-sm text-[#6b705c]">
+                    {card.subtitle}
+                  </p>
+                </div>
+
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#f7f6f1] text-3xl">
+                  {card.icon}
+                </div>
+              </div>
+            </article>
+          ))}
+        </section>
+
+        <section className="mt-6 rounded-3xl border border-[#e3ded1] bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
+                Job Costing
+              </p>
+
+              <h2 className="mt-1 text-xl font-bold">
+                Overhead Cost Per Job
+              </h2>
+
+              <p className="mt-1 text-sm text-[#6b705c]">
+                Overhead for {marketDateLabel}, prorated by day and divided
+                across {formatNumber(jobsCompleted)} invoiced service visit
+                {jobsCompleted === 1 ? "" : "s"} in that period.{" "}
                 <Link
-                  href={makeMarketHref(
-                    timeframe,
-                    marketMode,
-                    rankMetric,
-                    { market: "city" },
-                    params.start,
-                    params.end,
-                  )}
-                  scroll={false}
-                  className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
-                    marketMode === "city"
-                      ? "bg-[#174734] text-white"
-                      : "border border-[#d8d3c6] bg-[#f7f6f1] text-[#174734]"
-                  }`}
+                  href="/materials"
+                  className="font-semibold text-[#9c7a20] hover:underline"
                 >
-                  Cities
+                  Manage costs →
                 </Link>
-              </div>
+              </p>
             </div>
 
-            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm text-[#6b705c]">
-                Ranked by{" "}
-                <span className="font-bold text-[#174734]">
-                  {
-                    rankOptions.find((option) => option.value === rankMetric)
-                      ?.label
-                  }
-                </span>
-              </p>
+            {overheadPerJob !== null ? (
+              <div className="shrink-0 sm:text-right">
+                <p className="text-3xl font-bold">
+                  {formatCurrency(overheadPerJob)}
+                  <span className="ml-1 text-base font-normal text-[#6b705c]">
+                    / job
+                  </span>
+                </p>
 
-              <div className="flex flex-wrap gap-2">
-                {rankOptions.map((option) => (
-                  <Link
-                    key={option.value}
-                    href={makeMarketHref(
-                      timeframe,
-                      marketMode,
-                      rankMetric,
-                      { rank: option.value },
-                      params.start,
-                      params.end,
-                    )}
-                    scroll={false}
-                    className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
-                      rankMetric === option.value
-                        ? "bg-[#174734] text-white"
-                        : "bg-[#f7f6f1] text-[#6b705c] hover:text-[#174734]"
-                    }`}
-                  >
-                    {option.label}
-                  </Link>
-                ))}
+                <p className="mt-1 text-sm text-[#6b705c]">
+                  {formatCurrency(totalOverheadForRange)} total ÷{" "}
+                  {formatNumber(jobsCompleted)} jobs
+                </p>
               </div>
-            </div>
-
-            {topMarkets.length === 0 ? (
-              <p className="mt-6 rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
-                No invoice revenue with customer location data was found for
-                this timeframe.
-              </p>
             ) : (
-              <>
-                <div className="mt-7 space-y-4">
-                  {topMarkets.map((market, index) => {
-                    const metricValue = marketMetricValue(market, rankMetric);
-                    const revenueShare =
-                      totalMarketRevenue > 0
-                        ? market.revenue / totalMarketRevenue
-                        : 0;
-                    const marketKey =
-                      marketMode === "city"
-                        ? market.market.toUpperCase()
-                        : market.market;
-                    const previousMarket = previousMarketMap.get(marketKey);
-                    const previousMetricValue = previousMarket
-                      ? marketMetricValue(previousMarket, rankMetric)
-                      : 0;
-                    const metricChange = calculatePercentChange(
-                      metricValue,
-                      previousMetricValue,
-                    );
-
-                    return (
-                      <details
-                        key={market.market}
-                        className="group rounded-2xl border border-[#e7e2d5] px-5 py-3"
-                      >
-                        <summary className="flex cursor-pointer list-none items-center gap-4">
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#f7f6f1] text-sm font-bold">
-                            {index + 1}
-                          </div>
-
-                          <p className="min-w-0 flex-1 truncate font-bold">
-                            {market.market}
-                          </p>
-
-                          <p className="shrink-0 text-lg font-bold text-[#9c7a20]">
-                            {formatMarketMetric(metricValue, rankMetric)}
-                          </p>
-
-                          <span className="shrink-0 text-[#9c9887] transition group-open:rotate-90">
-                            ›
-                          </span>
-                        </summary>
-
-                        <div className="mt-4 border-t border-[#eee9dc] pt-4">
-                          <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-[#6b705c]">
-                            <span>
-                              {formatNumber(market.customerIds.size)} customer
-                              {market.customerIds.size === 1 ? "" : "s"}
-                            </span>
-                            <span>
-                              {formatCurrency(market.averageTicket)} avg
-                              ticket
-                            </span>
-                            <span>
-                              {formatPercent(revenueShare)} of located revenue
-                            </span>
-                            <span className="flex items-center gap-1.5">
-                              <span
-                                className={`rounded-full px-2 py-0.5 font-bold ${comparisonClasses(
-                                  metricChange,
-                                )}`}
-                              >
-                                {formatComparison(metricChange)}
-                              </span>
-                              vs previous period
-                            </span>
-                          </div>
-
-                          {market.customerIds.size > 0 && (
-                            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-[#eee9dc] pt-3">
-                              {namesForCustomerIds(market.customerIds).map(
-                                (customer) => (
-                                  <Link
-                                    key={customer.id}
-                                    href={`/customers/${encodeURIComponent(
-                                      customer.id,
-                                    )}`}
-                                    className="text-xs font-semibold text-[#9c7a20] hover:underline"
-                                  >
-                                    {customer.name}
-                                  </Link>
-                                ),
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </details>
-                    );
-                  })}
-                </div>
-              </>
+              <p className="shrink-0 text-sm text-[#6b705c]">
+                No invoiced service visits in this period yet.
+              </p>
             )}
-          </section>
+          </div>
+        </section>
 
-          <section className="rounded-3xl bg-white p-5 shadow sm:p-8">
+        <div className="mt-8 grid gap-6 lg:grid-cols-2">
+        <section
+          id="revenue-by-market"
+          className="scroll-mt-6 rounded-3xl bg-white p-5 shadow sm:p-8"
+        >
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
                 Market Intelligence
               </p>
-              <h2 className="mt-2 text-2xl font-bold">Revenue by Service</h2>
+              <h2 className="mt-2 text-2xl font-bold">Revenue by Market</h2>
               <p className="mt-2 text-sm font-semibold text-[#174734]">
                 {marketDateLabel}
               </p>
@@ -1457,201 +1265,541 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
               </p>
             </div>
 
-            {serviceCategoryRevenue.length === 0 ? (
-              <p className="mt-6 rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
-                No invoice revenue was found for this timeframe.
-              </p>
-            ) : (
-              <div className="mt-7 space-y-3">
-                {serviceCategoryRevenue.map((service, index) => {
-                  const averageTicket =
-                    service.invoiceCount > 0
-                      ? service.revenue / service.invoiceCount
-                      : 0;
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href={makeMarketHref(
+                  timeframe,
+                  marketMode,
+                  rankMetric,
+                  { market: "zip" },
+                  params.start,
+                  params.end,
+                )}
+                scroll={false}
+                className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
+                  marketMode === "zip"
+                    ? "bg-[#174734] text-white"
+                    : "border border-[#d8d3c6] bg-[#f7f6f1] text-[#174734]"
+                }`}
+              >
+                ZIP Codes
+              </Link>
+              <Link
+                href={makeMarketHref(
+                  timeframe,
+                  marketMode,
+                  rankMetric,
+                  { market: "city" },
+                  params.start,
+                  params.end,
+                )}
+                scroll={false}
+                className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
+                  marketMode === "city"
+                    ? "bg-[#174734] text-white"
+                    : "border border-[#d8d3c6] bg-[#f7f6f1] text-[#174734]"
+                }`}
+              >
+                Cities
+              </Link>
+            </div>
+          </div>
+
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-[#6b705c]">
+              Ranked by{" "}
+              <span className="font-bold text-[#174734]">
+                {
+                  rankOptions.find((option) => option.value === rankMetric)
+                    ?.label
+                }
+              </span>
+            </p>
+
+            <div className="flex flex-wrap gap-2">
+              {rankOptions.map((option) => (
+                <Link
+                  key={option.value}
+                  href={makeMarketHref(
+                    timeframe,
+                    marketMode,
+                    rankMetric,
+                    { rank: option.value },
+                    params.start,
+                    params.end,
+                  )}
+                  scroll={false}
+                  className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
+                    rankMetric === option.value
+                      ? "bg-[#174734] text-white"
+                      : "bg-[#f7f6f1] text-[#6b705c] hover:text-[#174734]"
+                  }`}
+                >
+                  {option.label}
+                </Link>
+              ))}
+            </div>
+          </div>
+
+          {topMarkets.length === 0 ? (
+            <p className="mt-6 rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+              No invoice revenue with customer location data was found for
+              this timeframe.
+            </p>
+          ) : (
+            <>
+              <div className="mt-7 space-y-4">
+                {topMarkets.map((market, index) => {
+                  const metricValue = marketMetricValue(market, rankMetric);
                   const revenueShare =
-                    totalServiceRevenue > 0
-                      ? service.revenue / totalServiceRevenue
+                    totalMarketRevenue > 0
+                      ? market.revenue / totalMarketRevenue
                       : 0;
-                  const previousService = previousServiceCategoryMap.get(
-                    service.category,
-                  );
-                  const revenueChange = calculatePercentChange(
-                    service.revenue,
-                    previousService?.revenue ?? 0,
+                  const marketKey =
+                    marketMode === "city"
+                      ? market.market.toUpperCase()
+                      : market.market;
+                  const previousMarket = previousMarketMap.get(marketKey);
+                  const previousMetricValue = previousMarket
+                    ? marketMetricValue(previousMarket, rankMetric)
+                    : 0;
+                  const metricChange = calculatePercentChange(
+                    metricValue,
+                    previousMetricValue,
                   );
 
                   return (
-                  <div
-                    key={service.category}
-                    className="rounded-2xl border border-[#e7e2d5] p-4"
-                  >
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f7f6f1] text-sm font-bold">
+                    <details
+                      key={market.market}
+                      className="group rounded-2xl border border-[#e7e2d5] px-5 py-3"
+                    >
+                      <summary className="flex cursor-pointer list-none items-center gap-4">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#f7f6f1] text-sm font-bold">
                           {index + 1}
                         </div>
-                        <div className="min-w-0">
-                          <p className="truncate font-bold">
-                            {service.category}
-                          </p>
-                          <p className="text-xs text-[#6b705c]">
-                            {formatNumber(service.invoiceCount)} invoice
-                            {service.invoiceCount === 1 ? "" : "s"}
-                          </p>
-                        </div>
-                      </div>
 
-                      <p className="shrink-0 text-xl font-bold text-[#9c7a20]">
-                        {formatCurrency(service.revenue)}
-                      </p>
-                    </div>
+                        <p className="min-w-0 flex-1 truncate font-bold">
+                          {market.market}
+                        </p>
 
-                    <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 border-t border-[#eee9dc] pt-3 text-xs text-[#6b705c]">
-                      <span>{formatCurrency(averageTicket)} avg ticket</span>
-                      <span>{formatPercent(revenueShare)} of revenue</span>
-                      <span className="flex items-center gap-1.5">
-                        <span
-                          className={`rounded-full px-2 py-0.5 font-bold ${comparisonClasses(
-                            revenueChange,
-                          )}`}
-                        >
-                          {formatComparison(revenueChange)}
+                        <p className="shrink-0 text-lg font-bold text-[#9c7a20]">
+                          {formatMarketMetric(metricValue, rankMetric)}
+                        </p>
+
+                        <span className="shrink-0 text-[#9c9887] transition group-open:rotate-90">
+                          ›
                         </span>
-                        vs previous period
-                      </span>
-                    </div>
+                      </summary>
 
-                    {service.customerIds.size > 0 && (
-                      <details className="mt-3">
-                        <summary className="cursor-pointer text-xs font-semibold text-[#9c7a20] hover:underline">
-                          Show {service.customerIds.size} customer
-                          {service.customerIds.size === 1 ? "" : "s"}
-                        </summary>
-
-                        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 border-t border-[#eee9dc] pt-2">
-                          {namesForCustomerIds(service.customerIds).map(
-                            (customer) => (
-                              <Link
-                                key={customer.id}
-                                href={`/customers/${encodeURIComponent(
-                                  customer.id,
-                                )}`}
-                                className="text-xs font-semibold text-[#9c7a20] hover:underline"
-                              >
-                                {customer.name}
-                              </Link>
-                            ),
-                          )}
+                      <div className="mt-4 border-t border-[#eee9dc] pt-4">
+                        <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-[#6b705c]">
+                          <span>
+                            {formatNumber(market.customerIds.size)} customer
+                            {market.customerIds.size === 1 ? "" : "s"}
+                          </span>
+                          <span>
+                            {formatCurrency(market.averageTicket)} avg
+                            ticket
+                          </span>
+                          <span>
+                            {formatPercent(revenueShare)} of located revenue
+                          </span>
+                          <span className="flex items-center gap-1.5">
+                            <span
+                              className={`rounded-full px-2 py-0.5 font-bold ${comparisonClasses(
+                                metricChange,
+                              )}`}
+                            >
+                              {formatComparison(metricChange)}
+                            </span>
+                            vs previous period
+                          </span>
                         </div>
-                      </details>
-                    )}
-                  </div>
+
+                        {market.customerIds.size > 0 && (
+                          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-[#eee9dc] pt-3">
+                            {namesForCustomerIds(market.customerIds).map(
+                              (customer) => (
+                                <Link
+                                  key={customer.id}
+                                  href={`/customers/${encodeURIComponent(
+                                    customer.id,
+                                  )}`}
+                                  className="text-xs font-semibold text-[#9c7a20] hover:underline"
+                                >
+                                  {customer.name}
+                                </Link>
+                              ),
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </details>
                   );
                 })}
               </div>
-            )}
-          </section>
+            </>
+          )}
+        </section>
+
+        <section className="rounded-3xl bg-white p-5 shadow sm:p-8">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
+              Market Intelligence
+            </p>
+            <h2 className="mt-2 text-2xl font-bold">Revenue by Service</h2>
+            <p className="mt-2 text-sm font-semibold text-[#174734]">
+              {marketDateLabel}
+            </p>
+            <p className="mt-1 text-xs text-[#6b705c]">
+              Compared with {previousMarketDateLabel}
+            </p>
           </div>
 
-          <section className="mt-8 rounded-3xl bg-white p-5 shadow sm:p-8">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <h2 className="text-2xl font-bold">
-                  Revenue Forecast — Next 12 Months
-                </h2>
+          {serviceCategoryRevenue.length === 0 ? (
+            <p className="mt-6 rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+              No invoice revenue was found for this timeframe.
+            </p>
+          ) : (
+            <div className="mt-7 space-y-3">
+              {serviceCategoryRevenue.map((service, index) => {
+                const averageTicket =
+                  service.invoiceCount > 0
+                    ? service.revenue / service.invoiceCount
+                    : 0;
+                const revenueShare =
+                  totalServiceRevenue > 0
+                    ? service.revenue / totalServiceRevenue
+                    : 0;
+                const previousService = previousServiceCategoryMap.get(
+                  service.category,
+                );
+                const revenueChange = calculatePercentChange(
+                  service.revenue,
+                  previousService?.revenue ?? 0,
+                );
 
-                <p className="mt-1 text-[#6b705c]">
-                  Recurring revenue projected from active customer schedules,
-                  plus seasonal one-off work estimated from last year&apos;s pattern.
-                </p>
-
-                <Link
-                  href="/recurring-services"
-                  className="mt-2 inline-block text-sm font-semibold text-[#9c7a20] hover:underline"
+                return (
+                <div
+                  key={service.category}
+                  className="rounded-2xl border border-[#e7e2d5] p-4"
                 >
-                  See who&apos;s actually scheduled for recurring service in the
-                  next 30 days →
-                </Link>
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f7f6f1] text-sm font-bold">
+                        {index + 1}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate font-bold">
+                          {service.category}
+                        </p>
+                        <p className="text-xs text-[#6b705c]">
+                          {formatNumber(service.invoiceCount)} invoice
+                          {service.invoiceCount === 1 ? "" : "s"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <p className="shrink-0 text-xl font-bold text-[#9c7a20]">
+                      {formatCurrency(service.revenue)}
+                    </p>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 border-t border-[#eee9dc] pt-3 text-xs text-[#6b705c]">
+                    <span>{formatCurrency(averageTicket)} avg ticket</span>
+                    <span>{formatPercent(revenueShare)} of revenue</span>
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        className={`rounded-full px-2 py-0.5 font-bold ${comparisonClasses(
+                          revenueChange,
+                        )}`}
+                      >
+                        {formatComparison(revenueChange)}
+                      </span>
+                      vs previous period
+                    </span>
+                  </div>
+
+                  {service.customerIds.size > 0 && (
+                    <details className="mt-3">
+                      <summary className="cursor-pointer text-xs font-semibold text-[#9c7a20] hover:underline">
+                        Show {service.customerIds.size} customer
+                        {service.customerIds.size === 1 ? "" : "s"}
+                      </summary>
+
+                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 border-t border-[#eee9dc] pt-2">
+                        {namesForCustomerIds(service.customerIds).map(
+                          (customer) => (
+                            <Link
+                              key={customer.id}
+                              href={`/customers/${encodeURIComponent(
+                                customer.id,
+                              )}`}
+                              className="text-xs font-semibold text-[#9c7a20] hover:underline"
+                            >
+                              {customer.name}
+                            </Link>
+                          ),
+                        )}
+                      </div>
+                    </details>
+                  )}
+                </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+        </div>
+
+        <section className="mt-8 rounded-3xl bg-white p-5 shadow sm:p-8">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-2xl font-bold">
+                Revenue Forecast — Next 12 Months
+              </h2>
+
+              <p className="mt-1 text-[#6b705c]">
+                Recurring revenue projected from active customer schedules,
+                plus seasonal one-off work estimated from last year&apos;s pattern.
+              </p>
+
+              <Link
+                href="/recurring-services"
+                className="mt-2 inline-block text-sm font-semibold text-[#9c7a20] hover:underline"
+              >
+                See who&apos;s actually scheduled for recurring service in the
+                next 30 days →
+              </Link>
+            </div>
+
+            <div className="text-right">
+              <p className="text-sm text-[#6b705c]">Projected 12-mo total</p>
+              <p className="text-3xl font-bold text-[#9c7a20]">
+                {formatCurrency(totalForecastRevenue)}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 grid gap-4 sm:grid-cols-2">
+            <div className="rounded-2xl bg-[#eef4ee] p-5">
+              <p className="text-sm text-[#174734]">
+                Locked-in recurring (12mo)
+              </p>
+              <p className="mt-2 text-2xl font-bold text-[#174734]">
+                {formatCurrency(totalForecastRecurring)}
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-[#faf4e3] p-5">
+              <p className="text-sm text-[#9c7a20]">
+                Seasonal / one-off estimate (12mo)
+              </p>
+              <p className="mt-2 text-2xl font-bold text-[#9c7a20]">
+                {formatCurrency(
+                  totalForecastRevenue - totalForecastRecurring,
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-8 space-y-6">
+            {forecastMonths.length === 0 ? (
+              <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+                No forecast data available yet.
+              </p>
+            ) : (
+              forecastMonths.map((month) => {
+                const recurring = toNumber(month.recurring_revenue_projected);
+                const oneOff = toNumber(month.seasonal_one_off_estimate);
+                const total = recurring + oneOff;
+
+                const recurringWidth = Math.max(
+                  1,
+                  (recurring / maxForecastValue) * 100,
+                );
+                const oneOffWidth = Math.max(
+                  oneOff > 0 ? 1 : 0,
+                  (oneOff / maxForecastValue) * 100,
+                );
+
+                return (
+                  <div
+                    key={month.month}
+                    className="grid gap-3 md:grid-cols-[110px_1fr_170px]"
+                  >
+                    <p className="font-bold">{formatMonth(month.month)}</p>
+
+                    <div className="space-y-2">
+                      <div className="h-4 overflow-hidden rounded-full bg-[#eeeae0]">
+                        <div className="flex h-full">
+                          <div
+                            className="h-full rounded-l-full bg-[#174734]"
+                            style={{ width: `${recurringWidth}%` }}
+                          />
+                          <div
+                            className="h-full rounded-r-full bg-[#d4af37]"
+                            style={{ width: `${oneOffWidth}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="text-sm">
+                      <p className="font-semibold">
+                        {formatCurrency(total)} total
+                      </p>
+                      <p className="text-[#6b705c]">
+                        {formatCurrency(recurring)} recurring
+                      </p>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          <div className="mt-7 flex flex-wrap gap-6 text-sm">
+            <div className="flex items-center gap-2">
+              <span className="h-3 w-3 rounded-full bg-[#174734]" />
+              <span>Recurring (locked-in)</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="h-3 w-3 rounded-full bg-[#d4af37]" />
+              <span>Seasonal / one-off (estimated)</span>
+            </div>
+          </div>
+        </section>
+
+        <section className="mt-8 grid gap-6 xl:grid-cols-2">
+          <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
+            <h2 className="text-2xl font-bold">Customer Value Depth</h2>
+
+            <p className="mt-1 text-[#6b705c]">
+              How many customers come back, and what they&apos;re worth.
+            </p>
+
+            <div className="mt-6 grid gap-4 sm:grid-cols-2">
+              <div className="rounded-2xl bg-green-50 p-6">
+                <p className="text-sm font-semibold uppercase tracking-[0.15em] text-green-800">
+                  Repeat Customers
+                </p>
+                <p className="mt-3 text-4xl font-bold text-green-900">
+                  {formatNumber(toNumber(customerValue?.repeat_customers))}
+                </p>
+                <p className="mt-1 text-sm text-green-800">
+                  {formatPercent(repeatCustomerRate)} of all customers
+                </p>
               </div>
 
-              <div className="text-right">
-                <p className="text-sm text-[#6b705c]">Projected 12-mo total</p>
-                <p className="text-3xl font-bold text-[#9c7a20]">
-                  {formatCurrency(totalForecastRevenue)}
+              <div className="rounded-2xl bg-amber-50 p-6">
+                <p className="text-sm font-semibold uppercase tracking-[0.15em] text-amber-800">
+                  One-Time Customers
+                </p>
+                <p className="mt-3 text-4xl font-bold text-amber-900">
+                  {formatNumber(toNumber(customerValue?.one_time_customers))}
                 </p>
               </div>
             </div>
 
             <div className="mt-6 grid gap-4 sm:grid-cols-2">
-              <div className="rounded-2xl bg-[#eef4ee] p-5">
-                <p className="text-sm text-[#174734]">
-                  Locked-in recurring (12mo)
+              <div className="rounded-2xl bg-[#f7f6f1] p-5">
+                <p className="text-sm text-[#6b705c]">
+                  Average Customer Value
                 </p>
-                <p className="mt-2 text-2xl font-bold text-[#174734]">
-                  {formatCurrency(totalForecastRecurring)}
+                <p className="mt-2 text-2xl font-bold">
+                  {formatCurrency(
+                    toNumber(customerValue?.avg_customer_value),
+                  )}
                 </p>
               </div>
 
-              <div className="rounded-2xl bg-[#faf4e3] p-5">
-                <p className="text-sm text-[#9c7a20]">
-                  Seasonal / one-off estimate (12mo)
+              <div className="rounded-2xl bg-[#f7f6f1] p-5">
+                <p className="text-sm text-[#6b705c]">
+                  Avg Invoices / Customer
                 </p>
-                <p className="mt-2 text-2xl font-bold text-[#9c7a20]">
-                  {formatCurrency(
-                    totalForecastRevenue - totalForecastRecurring,
+                <p className="mt-2 text-2xl font-bold">
+                  {toNumber(customerValue?.avg_invoices_per_customer).toFixed(
+                    1,
                   )}
                 </p>
               </div>
             </div>
+          </article>
 
-            <div className="mt-8 space-y-6">
-              {forecastMonths.length === 0 ? (
+          <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
+            <h2 className="text-2xl font-bold">Jobs by Service Type</h2>
+
+            <p className="mt-1 text-[#6b705c]">
+              Recurring vs. one-time work, grouped by actual service.
+            </p>
+
+            <div className="mt-6 grid gap-4 sm:grid-cols-2">
+              <div className="rounded-2xl bg-[#eef4ee] p-6">
+                <p className="text-sm font-semibold uppercase tracking-[0.15em] text-[#174734]">
+                  Recurring
+                </p>
+                <p className="mt-3 text-4xl font-bold text-[#174734]">
+                  {formatNumber(totalRecurringJobs)}
+                </p>
+                <p className="mt-1 text-sm text-[#174734]">
+                  {totalCategorizedJobs > 0
+                    ? formatPercent(totalRecurringJobs / totalCategorizedJobs)
+                    : "—"}{" "}
+                  of jobs
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-[#faf4e3] p-6">
+                <p className="text-sm font-semibold uppercase tracking-[0.15em] text-[#9c7a20]">
+                  One-Time
+                </p>
+                <p className="mt-3 text-4xl font-bold text-[#9c7a20]">
+                  {formatNumber(totalOneOffJobs)}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 space-y-2">
+              {serviceCategories.length === 0 ? (
                 <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
-                  No forecast data available yet.
+                  No job data synced yet.
                 </p>
               ) : (
-                forecastMonths.map((month) => {
-                  const recurring = toNumber(month.recurring_revenue_projected);
-                  const oneOff = toNumber(month.seasonal_one_off_estimate);
-                  const total = recurring + oneOff;
-
-                  const recurringWidth = Math.max(
-                    1,
-                    (recurring / maxForecastValue) * 100,
-                  );
-                  const oneOffWidth = Math.max(
-                    oneOff > 0 ? 1 : 0,
-                    (oneOff / maxForecastValue) * 100,
-                  );
+                serviceCategories.map((category) => {
+                  const recurring = toNumber(category.recurring_count);
+                  const oneOff = toNumber(category.one_off_count);
+                  const isRecurring = recurring > oneOff;
 
                   return (
                     <div
-                      key={month.month}
-                      className="grid gap-3 md:grid-cols-[110px_1fr_170px]"
+                      key={category.service_category}
+                      className="flex items-center justify-between gap-4 rounded-xl border border-[#e7e2d5] px-4 py-3"
                     >
-                      <p className="font-bold">{formatMonth(month.month)}</p>
-
-                      <div className="space-y-2">
-                        <div className="h-4 overflow-hidden rounded-full bg-[#eeeae0]">
-                          <div className="flex h-full">
-                            <div
-                              className="h-full rounded-l-full bg-[#174734]"
-                              style={{ width: `${recurringWidth}%` }}
-                            />
-                            <div
-                              className="h-full rounded-r-full bg-[#d4af37]"
-                              style={{ width: `${oneOffWidth}%` }}
-                            />
-                          </div>
-                        </div>
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold">
+                          {category.service_category}
+                        </p>
+                        <p className="text-sm text-[#6b705c]">
+                          {formatNumber(toNumber(category.customer_count))}{" "}
+                          customers
+                        </p>
                       </div>
 
-                      <div className="text-sm">
-                        <p className="font-semibold">
-                          {formatCurrency(total)} total
-                        </p>
-                        <p className="text-[#6b705c]">
-                          {formatCurrency(recurring)} recurring
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-bold ${
+                            isRecurring
+                              ? "bg-[#eef4ee] text-[#174734]"
+                              : "bg-[#faf4e3] text-[#9c7a20]"
+                          }`}
+                        >
+                          {isRecurring ? "Recurring" : "One-Time"}
+                        </span>
+
+                        <p className="font-bold">
+                          {formatNumber(toNumber(category.job_count))}
                         </p>
                       </div>
                     </div>
@@ -1659,322 +1807,133 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
                 })
               )}
             </div>
+          </article>
+        </section>
 
-            <div className="mt-7 flex flex-wrap gap-6 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="h-3 w-3 rounded-full bg-[#174734]" />
-                <span>Recurring (locked-in)</span>
-              </div>
+        <section className="mt-8 grid gap-6 xl:grid-cols-2">
+          <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-bold">Top Customers</h2>
 
-              <div className="flex items-center gap-2">
-                <span className="h-3 w-3 rounded-full bg-[#d4af37]" />
-                <span>Seasonal / one-off (estimated)</span>
+                <p className="mt-1 text-[#6b705c]">
+                  Ranked by lifetime cash collected.
+                </p>
               </div>
             </div>
-          </section>
 
-          <section className="mt-8 grid gap-6 xl:grid-cols-2">
-            <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
-              <h2 className="text-2xl font-bold">Customer Value Depth</h2>
-
-              <p className="mt-1 text-[#6b705c]">
-                How many customers come back, and what they&apos;re worth.
-              </p>
-
-              <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                <div className="rounded-2xl bg-green-50 p-6">
-                  <p className="text-sm font-semibold uppercase tracking-[0.15em] text-green-800">
-                    Repeat Customers
-                  </p>
-                  <p className="mt-3 text-4xl font-bold text-green-900">
-                    {formatNumber(toNumber(customerValue?.repeat_customers))}
-                  </p>
-                  <p className="mt-1 text-sm text-green-800">
-                    {formatPercent(repeatCustomerRate)} of all customers
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-amber-50 p-6">
-                  <p className="text-sm font-semibold uppercase tracking-[0.15em] text-amber-800">
-                    One-Time Customers
-                  </p>
-                  <p className="mt-3 text-4xl font-bold text-amber-900">
-                    {formatNumber(toNumber(customerValue?.one_time_customers))}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                <div className="rounded-2xl bg-[#f7f6f1] p-5">
-                  <p className="text-sm text-[#6b705c]">
-                    Average Customer Value
-                  </p>
-                  <p className="mt-2 text-2xl font-bold">
-                    {formatCurrency(
-                      toNumber(customerValue?.avg_customer_value),
-                    )}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-[#f7f6f1] p-5">
-                  <p className="text-sm text-[#6b705c]">
-                    Avg Invoices / Customer
-                  </p>
-                  <p className="mt-2 text-2xl font-bold">
-                    {toNumber(customerValue?.avg_invoices_per_customer).toFixed(
-                      1,
-                    )}
-                  </p>
-                </div>
-              </div>
-            </article>
-
-            <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
-              <h2 className="text-2xl font-bold">Jobs by Service Type</h2>
-
-              <p className="mt-1 text-[#6b705c]">
-                Recurring vs. one-time work, grouped by actual service.
-              </p>
-
-              <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                <div className="rounded-2xl bg-[#eef4ee] p-6">
-                  <p className="text-sm font-semibold uppercase tracking-[0.15em] text-[#174734]">
-                    Recurring
-                  </p>
-                  <p className="mt-3 text-4xl font-bold text-[#174734]">
-                    {formatNumber(totalRecurringJobs)}
-                  </p>
-                  <p className="mt-1 text-sm text-[#174734]">
-                    {totalCategorizedJobs > 0
-                      ? formatPercent(totalRecurringJobs / totalCategorizedJobs)
-                      : "—"}{" "}
-                    of jobs
-                  </p>
-                </div>
-
-                <div className="rounded-2xl bg-[#faf4e3] p-6">
-                  <p className="text-sm font-semibold uppercase tracking-[0.15em] text-[#9c7a20]">
-                    One-Time
-                  </p>
-                  <p className="mt-3 text-4xl font-bold text-[#9c7a20]">
-                    {formatNumber(totalOneOffJobs)}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-6 space-y-2">
-                {serviceCategories.length === 0 ? (
-                  <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
-                    No job data synced yet.
-                  </p>
-                ) : (
-                  serviceCategories.map((category) => {
-                    const recurring = toNumber(category.recurring_count);
-                    const oneOff = toNumber(category.one_off_count);
-                    const isRecurring = recurring > oneOff;
-
-                    return (
-                      <div
-                        key={category.service_category}
-                        className="flex items-center justify-between gap-4 rounded-xl border border-[#e7e2d5] px-4 py-3"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate font-semibold">
-                            {category.service_category}
-                          </p>
-                          <p className="text-sm text-[#6b705c]">
-                            {formatNumber(toNumber(category.customer_count))}{" "}
-                            customers
-                          </p>
-                        </div>
-
-                        <div className="flex items-center gap-3">
-                          <span
-                            className={`rounded-full px-3 py-1 text-xs font-bold ${
-                              isRecurring
-                                ? "bg-[#eef4ee] text-[#174734]"
-                                : "bg-[#faf4e3] text-[#9c7a20]"
-                            }`}
-                          >
-                            {isRecurring ? "Recurring" : "One-Time"}
-                          </span>
-
-                          <p className="font-bold">
-                            {formatNumber(toNumber(category.job_count))}
-                          </p>
-                        </div>
+            <div className="mt-6 space-y-3">
+              {topCustomers.length === 0 ? (
+                <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+                  No customer financial data found.
+                </p>
+              ) : (
+                topCustomers.map((customer, index) => (
+                  <Link
+                    key={customer.jobber_client_id}
+                    href={`/customers/${encodeURIComponent(
+                      customer.jobber_client_id,
+                    )}`}
+                    className="flex items-center justify-between gap-4 rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
+                  >
+                    <div className="flex min-w-0 items-center gap-4">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#f7f6f1] font-bold">
+                        {index + 1}
                       </div>
-                    );
-                  })
-                )}
-              </div>
-            </article>
-          </section>
 
-          <section className="mt-8 grid gap-6 xl:grid-cols-2">
-            <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-2xl font-bold">Top Customers</h2>
+                      <div className="min-w-0">
+                        <p className="truncate font-bold">
+                          {customer.customer_name || "Unnamed Customer"}
+                        </p>
 
-                  <p className="mt-1 text-[#6b705c]">
-                    Ranked by lifetime cash collected.
-                  </p>
-                </div>
-              </div>
+                        <p className="mt-1 text-sm text-[#6b705c]">
+                          {formatNumber(toNumber(customer.invoice_count))}{" "}
+                          invoices
+                        </p>
+                      </div>
+                    </div>
 
-              <div className="mt-6 space-y-3">
-                {topCustomers.length === 0 ? (
-                  <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
-                    No customer financial data found.
-                  </p>
-                ) : (
-                  topCustomers.map((customer, index) => (
-                    <Link
-                      key={customer.jobber_client_id}
-                      href={`/customers/${encodeURIComponent(
-                        customer.jobber_client_id,
-                      )}`}
-                      className="flex items-center justify-between gap-4 rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
+                    <div className="text-right">
+                      <p className="font-bold">
+                        {formatCurrency(
+                          toNumber(customer.lifetime_collected),
+                        )}
+                      </p>
+
+                      <p className="mt-1 text-sm text-[#6b705c]">collected</p>
+                    </div>
+                  </Link>
+                ))
+              )}
+            </div>
+          </article>
+
+          <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
+            <div>
+              <h2 className="text-2xl font-bold">
+                Largest Outstanding Invoices
+              </h2>
+
+              <p className="mt-1 text-[#6b705c]">
+                Highest remaining invoice balances requiring attention.
+              </p>
+            </div>
+
+            <div className="mt-6 space-y-3">
+              {outstandingInvoices.length === 0 ? (
+                <p className="rounded-2xl bg-green-50 p-5 text-green-800">
+                  No outstanding invoices found.
+                </p>
+              ) : (
+                outstandingInvoices.map((invoice) => {
+                  const daysPastDue = toNumber(invoice.days_past_due);
+
+                  return (
+                    <div
+                      key={invoice.jobber_invoice_id}
+                      className="rounded-2xl border border-[#e7e2d5] p-5"
                     >
-                      <div className="flex min-w-0 items-center gap-4">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#f7f6f1] font-bold">
-                          {index + 1}
-                        </div>
-
-                        <div className="min-w-0">
-                          <p className="truncate font-bold">
-                            {customer.customer_name || "Unnamed Customer"}
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="font-bold">
+                            {invoice.customer_name || "Unnamed Customer"}
                           </p>
 
                           <p className="mt-1 text-sm text-[#6b705c]">
-                            {formatNumber(toNumber(customer.invoice_count))}{" "}
-                            invoices
+                            Invoice #{invoice.invoice_number || "—"}
                           </p>
                         </div>
-                      </div>
 
-                      <div className="text-right">
-                        <p className="font-bold">
+                        <p className="text-xl font-bold">
                           {formatCurrency(
-                            toNumber(customer.lifetime_collected),
+                            toNumber(invoice.outstanding_balance),
                           )}
                         </p>
-
-                        <p className="mt-1 text-sm text-[#6b705c]">collected</p>
                       </div>
-                    </Link>
-                  ))
-                )}
-              </div>
-            </article>
 
-            <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
-              <div>
-                <h2 className="text-2xl font-bold">
-                  Largest Outstanding Invoices
-                </h2>
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-sm text-[#6b705c]">
+                          Due {formatDate(invoice.due_date)}
+                        </p>
 
-                <p className="mt-1 text-[#6b705c]">
-                  Highest remaining invoice balances requiring attention.
-                </p>
-              </div>
-
-              <div className="mt-6 space-y-3">
-                {outstandingInvoices.length === 0 ? (
-                  <p className="rounded-2xl bg-green-50 p-5 text-green-800">
-                    No outstanding invoices found.
-                  </p>
-                ) : (
-                  outstandingInvoices.map((invoice) => {
-                    const daysPastDue = toNumber(invoice.days_past_due);
-
-                    return (
-                      <div
-                        key={invoice.jobber_invoice_id}
-                        className="rounded-2xl border border-[#e7e2d5] p-5"
-                      >
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div>
-                            <p className="font-bold">
-                              {invoice.customer_name || "Unnamed Customer"}
-                            </p>
-
-                            <p className="mt-1 text-sm text-[#6b705c]">
-                              Invoice #{invoice.invoice_number || "—"}
-                            </p>
-                          </div>
-
-                          <p className="text-xl font-bold">
-                            {formatCurrency(
-                              toNumber(invoice.outstanding_balance),
-                            )}
-                          </p>
-                        </div>
-
-                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                          <p className="text-sm text-[#6b705c]">
-                            Due {formatDate(invoice.due_date)}
-                          </p>
-
-                          <span
-                            className={`rounded-full px-3 py-1 text-xs font-bold ${statusClasses(
-                              daysPastDue,
-                            )}`}
-                          >
-                            {daysPastDue > 0
-                              ? `${formatNumber(daysPastDue)} days past due`
-                              : "Not past due"}
-                          </span>
-                        </div>
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-bold ${statusClasses(
+                            daysPastDue,
+                          )}`}
+                        >
+                          {daysPastDue > 0
+                            ? `${formatNumber(daysPastDue)} days past due`
+                            : "Not past due"}
+                        </span>
                       </div>
-                    );
-                  })
-                )}
-              </div>
-            </article>
-          </section>
-        </div>
-      </main>
-    );
-  } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "Financial metrics could not be loaded.";
-
-    return (
-      <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
-        <div className="mx-auto max-w-7xl">
-          <section className="rounded-3xl bg-white p-5 shadow sm:p-8">
-            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
-              Valley Turf Revival OS
-            </p>
-
-            <h1 className="mt-3 text-3xl font-bold">
-              Financial dashboard could not be loaded
-            </h1>
-
-            <p className="mt-4 text-[#6b705c]">{message}</p>
-
-            <div className="mt-6 flex flex-wrap gap-3">
-              <Link
-                href="/api/jobber/sync-invoices"
-                className="rounded-xl bg-[#d4af37] px-5 py-3 text-sm font-bold text-[#174734]"
-              >
-                Sync Invoices
-              </Link>
-
-              <Link
-                href="/api/jobber/sync-payments"
-                className="rounded-xl bg-[#174734] px-5 py-3 text-sm font-bold text-white"
-              >
-                Sync Payments
-              </Link>
+                    </div>
+                  );
+                })
+              )}
             </div>
-          </section>
-        </div>
-      </main>
-    );
-  }
+          </article>
+        </section>
+      </div>
+    </main>
+  );
 }
