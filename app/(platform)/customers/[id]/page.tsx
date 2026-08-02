@@ -1024,55 +1024,24 @@ export default async function CustomerDetailPage({
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
       <div className="mx-auto max-w-7xl">
-        <header className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
-              Customer Intelligence
+        <header className="mb-8">
+          <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
+            Customer Intelligence
+          </p>
+
+          <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
+            {client.name || "Unnamed Customer"}
+          </h1>
+
+          {client.companyName && (
+            <p className="mt-2 text-lg text-[#6b705c]">
+              {client.companyName}
             </p>
+          )}
 
-            <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
-              {client.name || "Unnamed Customer"}
-            </h1>
-
-            {client.companyName && (
-              <p className="mt-2 text-lg text-[#6b705c]">
-                {client.companyName}
-              </p>
-            )}
-
-            <p className="mt-2 text-sm text-[#6b705c]">
-              Jobber customer since {formatDate(client.createdAt)}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            {client.jobberWebUri && (
-              <a
-                href={client.jobberWebUri}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-xl bg-[#d4af37] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#e6c766]"
-              >
-                Open in Jobber
-              </a>
-            )}
-
-            {client.name && (
-              <Link
-                href={`/job-costs?q=${encodeURIComponent(client.name)}`}
-                className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold transition hover:bg-white"
-              >
-                Log Material Usage
-              </Link>
-            )}
-
-            <Link
-              href="/customers"
-              className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
-            >
-              Back to Customers
-            </Link>
-          </div>
+          <p className="mt-2 text-sm text-[#6b705c]">
+            Jobber customer since {formatDate(client.createdAt)}
+          </p>
         </header>
 
         <div className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
