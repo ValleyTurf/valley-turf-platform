@@ -5,10 +5,11 @@ import Link from "next/link";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
 import { normalizeEmail, normalizePhone } from "@/lib/matching";
-import { updateCustomerProfile, updateGeneralNotes, addVisitNote } from "./actions";
+import { updateCustomerProfile, updateGeneralNotes } from "./actions";
 import { saveVisitCosts } from "../../materials/actions";
 import { getVisitNotesForClient, type VisitNoteGroup } from "@/lib/visitNotes";
 import TurfSizeField from "./TurfSizeField";
+import AddVisitNoteForm from "./AddVisitNoteForm";
 import {
   toNumber,
   formatCurrency,
@@ -1391,56 +1392,11 @@ export default async function CustomerDetailPage({
                   Add Visit Note
                 </p>
 
-                {noteableVisits.length > 0 ? (
-                  <form
-                    action={addVisitNote.bind(null, decodedId)}
-                    encType="multipart/form-data"
-                    className="mt-2 space-y-2"
-                  >
-                    <select
-                      name="jobber_visit_id"
-                      required
-                      defaultValue={noteableVisits[0]?.jobber_visit_id}
-                      className="w-full rounded-lg border border-[#d9d4c6] bg-white px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-                    >
-                      {noteableVisits.map((visit) => (
-                        <option
-                          key={visit.jobber_visit_id}
-                          value={visit.jobber_visit_id}
-                        >
-                          {formatVisitDateTime(visit.start_at)}
-                          {visit.title ? ` — ${visit.title}` : ""}
-                        </option>
-                      ))}
-                    </select>
-
-                    <textarea
-                      name="note"
-                      rows={2}
-                      placeholder="What did you notice? (brown patches, sprinkler issue, dog got out, etc.)"
-                      className="w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-                    />
-
-                    <input
-                      type="file"
-                      name="photos"
-                      accept="image/*"
-                      multiple
-                      className="w-full text-xs text-[#6b705c] file:mr-3 file:rounded-lg file:border-0 file:bg-[#174734] file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white"
-                    />
-
-                    <button
-                      type="submit"
-                      className="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246]"
-                    >
-                      Add Note
-                    </button>
-                  </form>
-                ) : (
-                  <p className="mt-2 rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
-                    No visits to attach a note to yet.
-                  </p>
-                )}
+                <AddVisitNoteForm
+                  jobberClientId={decodedId}
+                  noteableVisits={noteableVisits}
+                  formatVisitDateTime={formatVisitDateTime}
+                />
               </div>
 
               <div className="mt-5 max-h-[500px] space-y-4 overflow-y-auto border-t border-[#e7e2d5] pt-4 pr-1">

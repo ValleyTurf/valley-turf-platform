@@ -330,16 +330,20 @@ export async function saveVisitJobCostQuickEntry(
 // customer page. Requires jobber_client_id (not just the visit id)
 // since visit_notes denormalizes it for the customer page's per-client
 // query — passed through as a hidden field from the card, which already
-// has it from the jobber_visits row.
+// has it from the jobber_visits row. Called from VisitNoteForm.tsx (a
+// client component), not a plain <form action>, specifically so the
+// {error} return value has somewhere to display — a plain form here
+// swallowed failures into a server-only console.error, which from the
+// field looked exactly like the Save button doing nothing.
 export async function addVisitNoteFromMyDay(
   visitId: string,
   clientId: string,
   formData: FormData
-): Promise<void> {
+): Promise<{ error: string | null }> {
   const actor = await getCurrentUser();
 
   if (!actor || !visitId || !clientId) {
-    return;
+    return { error: "You must be signed in." };
   }
 
   const rawNote = formData.get("note");
@@ -351,6 +355,13 @@ export async function addVisitNoteFromMyDay(
 
   const photoPaths = await uploadVisitNotePhotos(visitId, photoFiles);
 
+  if (photoFiles.length > 0 && photoPaths.length === 0) {
+    return {
+      error:
+        "Photo upload failed — the note wasn't saved. Try again, or save with just text for now.",
+    };
+  }
+
   const result = await insertVisitNote({
     jobberVisitId: visitId,
     jobberClientId: clientId,
@@ -360,8 +371,7 @@ export async function addVisitNoteFromMyDay(
   });
 
   if (result.error) {
-    console.error(`addVisitNoteFromMyDay failed for ${visitId}:`, result.error);
-    return;
+    return { error: result.error };
   }
 
   await recordAuditLog({
@@ -375,4 +385,6 @@ export async function addVisitNoteFromMyDay(
 
   revalidatePath("/my-day");
   revalidatePath(`/customers/${encodeURIComponent(clientId)}`);
+
+  return { error: null };
 }

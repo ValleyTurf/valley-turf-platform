@@ -17,12 +17,9 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { haversineMiles } from "@/lib/geoDistance";
 import { computeRouteLegs, HOME_BASE_ADDRESS } from "@/lib/googleRoutes";
-import {
-  completeVisit,
-  saveVisitJobCostQuickEntry,
-  addVisitNoteFromMyDay,
-} from "./actions";
+import { completeVisit, saveVisitJobCostQuickEntry } from "./actions";
 import VisitTimer from "./VisitTimer";
+import VisitNoteForm from "./VisitNoteForm";
 
 // Fixed, curated subset of materials/equipment shown right on the crew
 // card — not the full Materials & Costs list (that stays on the
@@ -919,38 +916,10 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                         Note / Photo
                       </summary>
 
-                      <form
-                        action={addVisitNoteFromMyDay.bind(
-                          null,
-                          visit.jobber_visit_id,
-                          visit.jobber_client_id
-                        )}
-                        encType="multipart/form-data"
-                        className="mt-2 space-y-2"
-                      >
-                        <textarea
-                          name="note"
-                          rows={2}
-                          placeholder="Brown patches, sprinkler issue, gate was locked, etc."
-                          className="w-full rounded-lg border border-[#174734]/20 px-2 py-1.5 text-sm"
-                        />
-
-                        <input
-                          type="file"
-                          name="photos"
-                          accept="image/*"
-                          capture="environment"
-                          multiple
-                          className="w-full text-xs text-[#174734] file:mr-2 file:rounded-lg file:border-0 file:bg-[#174734] file:px-2 file:py-1 file:text-xs file:font-bold file:text-white"
-                        />
-
-                        <button
-                          type="submit"
-                          className="w-full rounded-lg border border-[#174734] px-3 py-1.5 text-xs font-bold text-[#174734] transition hover:bg-white"
-                        >
-                          Save Note
-                        </button>
-                      </form>
+                      <VisitNoteForm
+                        visitId={visit.jobber_visit_id}
+                        clientId={visit.jobber_client_id}
+                      />
                     </details>
                   )}
 

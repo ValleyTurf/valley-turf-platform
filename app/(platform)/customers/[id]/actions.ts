@@ -126,14 +126,16 @@ export async function updateGeneralNotes(
 // picking which past visit this is about) — see my-day/actions.ts's
 // addVisitNoteFromMyDay for the field-capture counterpart, which skips
 // the visit picker since My Day already knows which visit the card is
-// for. Both call the same lib/visitNotes.ts helpers. A plain <form
-// action> like every other write on this page — failures are logged
-// server-side rather than surfaced inline (same "best effort, no error
-// banner slot" tradeoff already made for My Day's completeVisit).
+// for. Both call the same lib/visitNotes.ts helpers. Called from
+// AddVisitNoteForm.tsx (a client component, not a plain <form action>)
+// specifically so the {error} return value has somewhere to go — an
+// earlier plain-form version of this swallowed failures into a
+// server-only console.error, which looked from the field like the
+// button just did nothing.
 export async function addVisitNote(
   jobberClientId: string,
   formData: FormData
-): Promise<void> {
+): Promise<{ error: string | null }> {
   const actor = await getCurrentUser();
   const jobberVisitId = cleanText(formData.get("jobber_visit_id"));
   const note = cleanText(formData.get("note"));
@@ -142,11 +144,17 @@ export async function addVisitNote(
     .filter((entry): entry is File => entry instanceof File);
 
   if (!jobberVisitId) {
-    console.error("addVisitNote: no visit selected.");
-    return;
+    return { error: "Choose which visit this note is about." };
   }
 
   const photoPaths = await uploadVisitNotePhotos(jobberVisitId, photoFiles);
+
+  if (photoFiles.length > 0 && photoPaths.length === 0) {
+    return {
+      error:
+        "Photo upload failed — the note wasn't saved. Try again, or save with just text for now.",
+    };
+  }
 
   const result = await insertVisitNote({
     jobberVisitId,
@@ -157,8 +165,7 @@ export async function addVisitNote(
   });
 
   if (result.error) {
-    console.error(`addVisitNote failed for ${jobberVisitId}:`, result.error);
-    return;
+    return { error: result.error };
   }
 
   await recordAuditLog({
@@ -171,4 +178,6 @@ export async function addVisitNote(
   });
 
   revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+
+  return { error: null };
 }
