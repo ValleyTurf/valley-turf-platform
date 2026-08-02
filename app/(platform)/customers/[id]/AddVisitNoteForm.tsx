@@ -11,20 +11,22 @@
 import { useRef, useState, useTransition } from "react";
 import { addVisitNote } from "./actions";
 
+// label is pre-formatted server-side (page.tsx) rather than passed as a
+// raw date + a formatting function — a plain function can't cross the
+// Server-to-Client Component boundary (only data and Server Actions
+// can), so an earlier version of this that took a formatVisitDateTime
+// function prop threw on every render and broke the whole page.
 type NoteableVisit = {
   jobber_visit_id: string;
-  title: string | null;
-  start_at: string | null;
+  label: string;
 };
 
 export default function AddVisitNoteForm({
   jobberClientId,
   noteableVisits,
-  formatVisitDateTime,
 }: {
   jobberClientId: string;
   noteableVisits: NoteableVisit[];
-  formatVisitDateTime: (value: string | null) => string;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [isPending, startTransition] = useTransition();
@@ -69,8 +71,7 @@ export default function AddVisitNoteForm({
       >
         {noteableVisits.map((visit) => (
           <option key={visit.jobber_visit_id} value={visit.jobber_visit_id}>
-            {formatVisitDateTime(visit.start_at)}
-            {visit.title ? ` — ${visit.title}` : ""}
+            {visit.label}
           </option>
         ))}
       </select>

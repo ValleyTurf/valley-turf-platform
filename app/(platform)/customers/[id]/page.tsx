@@ -1011,11 +1011,18 @@ export default async function CustomerDetailPage({
 
   // Visit picker for the "Add Visit Note" form — most recent first, next
   // visit included (a crew member might jot a note before the visit even
-  // starts, e.g. "customer asked to skip the side gate this time").
-  const noteableVisits = [
-    ...(nextVisit ? [nextVisit] : []),
-    ...pastVisits,
-  ];
+  // starts, e.g. "customer asked to skip the side gate this time"). Label
+  // is formatted here (server-side) rather than handed to the client
+  // component as raw start_at + a formatter function — functions can't
+  // cross the Server-to-Client Component boundary.
+  const noteableVisits = [...(nextVisit ? [nextVisit] : []), ...pastVisits].map(
+    (visit) => ({
+      jobber_visit_id: visit.jobber_visit_id,
+      label: `${formatVisitDateTime(visit.start_at)}${
+        visit.title ? ` — ${visit.title}` : ""
+      }`,
+    })
+  );
 
   const lifetimeCollected = toNumber(financials?.lifetime_collected);
   const estimatedProfit = profitSummary
@@ -1395,7 +1402,6 @@ export default async function CustomerDetailPage({
                 <AddVisitNoteForm
                   jobberClientId={decodedId}
                   noteableVisits={noteableVisits}
-                  formatVisitDateTime={formatVisitDateTime}
                 />
               </div>
 
