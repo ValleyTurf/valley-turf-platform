@@ -1165,21 +1165,31 @@ export default async function CustomerDetailPage({
               <h2 className="text-lg font-bold">Next Visit</h2>
 
               {nextVisit ? (
-                <>
-                  <div className="mt-3 flex items-center justify-between gap-3">
-                    <p className="text-sm font-bold">
-                      {formatVisitDateTime(nextVisit.start_at)}
-                      {nextVisit.title ? ` — ${nextVisit.title}` : ""}
-                    </p>
+                <details className="mt-3 rounded-xl border border-[#e7e2d5] px-3 py-2">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold">
+                        {formatVisitDateTime(nextVisit.start_at)}
+                        {nextVisit.title ? ` — ${nextVisit.title}` : ""}
+                      </p>
+                    </div>
 
-                    <span
-                      className={`w-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${visitStatusBadge(
-                        nextVisit.visit_status
-                      )}`}
-                    >
-                      {nextVisit.visit_status || "Unknown"}
-                    </span>
-                  </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span
+                        className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${visitStatusBadge(
+                          nextVisit.visit_status
+                        )}`}
+                      >
+                        {nextVisit.visit_status || "Unknown"}
+                      </span>
+
+                      <p className="text-sm font-bold">
+                        {formatCurrencyPrecise(
+                          visitCostMap.get(nextVisit.jobber_visit_id) ?? 0
+                        )}
+                      </p>
+                    </div>
+                  </summary>
 
                   <div className="mt-4 border-t border-[#f0eee6] pt-4">
                     <VisitCostForm
@@ -1191,7 +1201,7 @@ export default async function CustomerDetailPage({
                       pageEquipmentIds={pageEquipmentIds}
                     />
                   </div>
-                </>
+                </details>
               ) : (
                 <p className="mt-3 rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
                   No upcoming visit scheduled.
