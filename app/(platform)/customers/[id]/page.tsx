@@ -5,8 +5,10 @@ import Link from "next/link";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
 import { normalizeEmail, normalizePhone } from "@/lib/matching";
-import { updateCustomerProfile } from "./actions";
+import { updateCustomerProfile, updateGeneralNotes, addVisitNote } from "./actions";
 import { saveVisitCosts } from "../../materials/actions";
+import { getVisitNotesForClient, type VisitNoteGroup } from "@/lib/visitNotes";
+import TurfSizeField from "./TurfSizeField";
 import {
   toNumber,
   formatCurrency,
@@ -306,6 +308,114 @@ async function getVisitUsageMaps(visitIds: string[]): Promise<{
   return { usageMap, equipmentUsageSet, costMap };
 }
 
+type JobberPayment = {
+  jobber_payment_id: string;
+  jobber_invoice_id: string;
+  amount: number | string;
+  payment_date: string | null;
+  payment_method: string | null;
+  tip_amount: number | string | null;
+  transaction_status: string | null;
+};
+
+// Actual money received (payment_date, method, tip) rather than what was
+// billed — a cleaner, more literal "Payment History" than the existing
+// Recent Invoices list below, which is about billing status (draft,
+// awaiting payment, etc.) and comes straight from Jobber. Local table,
+// synced by app/api/jobber/sync-payments — see that route and Revenue's
+// use of the same table for the tip/processing-fee reporting this was
+// originally built for.
+async function getCustomerPayments(
+  jobberClientId: string
+): Promise<JobberPayment[]> {
+  const { data, error } = await supabaseServer
+    .from("jobber_payments")
+    .select(
+      "jobber_payment_id, jobber_invoice_id, amount, payment_date, payment_method, tip_amount, transaction_status"
+    )
+    .eq("jobber_client_id", jobberClientId)
+    .order("payment_date", { ascending: false });
+
+  if (error) {
+    console.error("Customer payments query failed:", error.message);
+    return [];
+  }
+
+  return (data ?? []) as JobberPayment[];
+}
+
+type VisitTimeLogRow = {
+  jobber_visit_id: string;
+  started_at: string;
+  stopped_at: string | null;
+};
+
+// Wall-clock time on-site per visit (not summed labor-hours — two techs
+// working the same visit together shouldn't double it), for "how long
+// each visit actually took" so future scheduling can budget the right
+// amount of time per service type. Takes the earliest start and latest
+// stop across every completed visit_time_logs segment for a visit,
+// covering multi-person and paused/resumed visits alike. See
+// 019_add_visit_time_logs.sql and job-costs/page.tsx's timerMinutesMap
+// for the sibling calculation that sums (rather than spans) this same
+// table for labor-cost purposes.
+async function getVisitDurationMinutes(
+  visitIds: string[]
+): Promise<Map<string, number>> {
+  if (visitIds.length === 0) return new Map();
+
+  const { data, error } = await supabaseServer
+    .from("visit_time_logs")
+    .select("jobber_visit_id, started_at, stopped_at")
+    .in("jobber_visit_id", visitIds)
+    .not("stopped_at", "is", null);
+
+  if (error) {
+    console.error("Visit time logs query failed:", error.message);
+    return new Map();
+  }
+
+  const bounds = new Map<string, { min: number; max: number }>();
+
+  for (const row of (data ?? []) as VisitTimeLogRow[]) {
+    if (!row.stopped_at) continue;
+
+    const start = new Date(row.started_at).getTime();
+    const stop = new Date(row.stopped_at).getTime();
+
+    if (!Number.isFinite(start) || !Number.isFinite(stop) || stop <= start) {
+      continue;
+    }
+
+    const existing = bounds.get(row.jobber_visit_id);
+    if (!existing) {
+      bounds.set(row.jobber_visit_id, { min: start, max: stop });
+    } else {
+      existing.min = Math.min(existing.min, start);
+      existing.max = Math.max(existing.max, stop);
+    }
+  }
+
+  const minutesByVisit = new Map<string, number>();
+  for (const [visitId, { min, max }] of bounds) {
+    minutesByVisit.set(visitId, (max - min) / 60000);
+  }
+
+  return minutesByVisit;
+}
+
+function formatDurationMinutes(minutes: number | undefined): string | null {
+  if (!minutes || minutes <= 0) return null;
+
+  const totalMinutes = Math.round(minutes);
+  const hours = Math.floor(totalMinutes / 60);
+  const mins = totalMinutes % 60;
+
+  if (hours === 0) return `${mins}m`;
+  if (mins === 0) return `${hours}h`;
+  return `${hours}h ${mins}m`;
+}
+
 async function getAttributionLeads(
   email: string | null,
   phone: string | null
@@ -535,6 +645,7 @@ async function getInvoiceCostBreakdowns(
 
 type CustomerProfile = {
   turf_size_sqft: number | string | null;
+  turf_size_range: string | null;
   gate_code: string | null;
   pet_count: number | string | null;
   pet_names: string | null;
@@ -552,6 +663,7 @@ async function getCustomerProfile(
     .select(
       `
         turf_size_sqft,
+        turf_size_range,
         gate_code,
         pet_count,
         pet_names,
@@ -817,6 +929,8 @@ export default async function CustomerDetailPage({
     equipmentList,
     pastVisits,
     nextVisit,
+    visitNoteGroups,
+    payments,
   ] = await Promise.all([
     getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
@@ -827,6 +941,8 @@ export default async function CustomerDetailPage({
     getEquipmentList(),
     getPastVisits(decodedId),
     getNextVisit(decodedId),
+    getVisitNotesForClient(decodedId),
+    getCustomerPayments(decodedId),
   ]);
 
   if (!client) {
@@ -888,7 +1004,17 @@ export default async function CustomerDetailPage({
     costMap: visitCostMap,
   } = await getVisitUsageMaps(allVisitIds);
 
+  const visitDurationMap = await getVisitDurationMinutes(allVisitIds);
+
   const pageEquipmentIds = equipmentList.map((item) => item.id).join(",");
+
+  // Visit picker for the "Add Visit Note" form — most recent first, next
+  // visit included (a crew member might jot a note before the visit even
+  // starts, e.g. "customer asked to skip the side gate this time").
+  const noteableVisits = [
+    ...(nextVisit ? [nextVisit] : []),
+    ...pastVisits,
+  ];
 
   const lifetimeCollected = toNumber(financials?.lifetime_collected);
   const estimatedProfit = profitSummary
@@ -1118,23 +1244,10 @@ export default async function CustomerDetailPage({
                 className="mt-4 space-y-4"
               >
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label
-                      htmlFor="turf_size_sqft"
-                      className="text-xs font-bold text-[#9c7a20]"
-                    >
-                      Turf Size (sq ft)
-                    </label>
-
-                    <input
-                      id="turf_size_sqft"
-                      name="turf_size_sqft"
-                      type="number"
-                      min="0"
-                      defaultValue={profile?.turf_size_sqft ?? ""}
-                      className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-                    />
-                  </div>
+                  <TurfSizeField
+                    initialRange={profile?.turf_size_range ?? null}
+                    initialExact={profile?.turf_size_sqft ?? null}
+                  />
 
                   <div>
                     <label
@@ -1248,23 +1361,6 @@ export default async function CustomerDetailPage({
                   />
                 </div>
 
-                <div>
-                  <label
-                    htmlFor="notes"
-                    className="text-xs font-bold text-[#9c7a20]"
-                  >
-                    Internal Notes
-                  </label>
-
-                  <textarea
-                    id="notes"
-                    name="notes"
-                    rows={3}
-                    defaultValue={profile?.notes ?? ""}
-                    className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-                  />
-                </div>
-
                 <button
                   type="submit"
                   className="rounded-lg bg-[#174734] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#226246]"
@@ -1272,6 +1368,159 @@ export default async function CustomerDetailPage({
                   Save Profile
                 </button>
               </form>
+            </section>
+
+            <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">Notes</h2>
+
+              <p className="mt-1 text-xs text-[#6b705c]">
+                Photos and notes from each visit, plus general standing
+                notes about the property. Crew can add these from My Day
+                while on-site, or add them here afterward.
+              </p>
+
+              <form
+                action={updateGeneralNotes.bind(null, decodedId)}
+                className="mt-4"
+              >
+                <label
+                  htmlFor="notes"
+                  className="text-xs font-bold text-[#9c7a20]"
+                >
+                  General Notes
+                </label>
+
+                <textarea
+                  id="notes"
+                  name="notes"
+                  rows={2}
+                  defaultValue={profile?.notes ?? ""}
+                  placeholder="Standing notes not tied to a specific visit — e.g. prefers text over email"
+                  className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                />
+
+                <button
+                  type="submit"
+                  className="mt-2 rounded-lg border border-[#174734] px-3 py-1.5 text-xs font-bold text-[#174734] transition hover:bg-[#f7f6f1]"
+                >
+                  Save
+                </button>
+              </form>
+
+              <div className="mt-5 border-t border-[#e7e2d5] pt-4">
+                <p className="text-xs font-bold text-[#9c7a20]">
+                  Add Visit Note
+                </p>
+
+                {noteableVisits.length > 0 ? (
+                  <form
+                    action={addVisitNote.bind(null, decodedId)}
+                    encType="multipart/form-data"
+                    className="mt-2 space-y-2"
+                  >
+                    <select
+                      name="jobber_visit_id"
+                      required
+                      defaultValue={noteableVisits[0]?.jobber_visit_id}
+                      className="w-full rounded-lg border border-[#d9d4c6] bg-white px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                    >
+                      {noteableVisits.map((visit) => (
+                        <option
+                          key={visit.jobber_visit_id}
+                          value={visit.jobber_visit_id}
+                        >
+                          {formatVisitDateTime(visit.start_at)}
+                          {visit.title ? ` — ${visit.title}` : ""}
+                        </option>
+                      ))}
+                    </select>
+
+                    <textarea
+                      name="note"
+                      rows={2}
+                      placeholder="What did you notice? (brown patches, sprinkler issue, dog got out, etc.)"
+                      className="w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                    />
+
+                    <input
+                      type="file"
+                      name="photos"
+                      accept="image/*"
+                      multiple
+                      className="w-full text-xs text-[#6b705c] file:mr-3 file:rounded-lg file:border-0 file:bg-[#174734] file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white"
+                    />
+
+                    <button
+                      type="submit"
+                      className="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246]"
+                    >
+                      Add Note
+                    </button>
+                  </form>
+                ) : (
+                  <p className="mt-2 rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                    No visits to attach a note to yet.
+                  </p>
+                )}
+              </div>
+
+              <div className="mt-5 max-h-[500px] space-y-4 overflow-y-auto border-t border-[#e7e2d5] pt-4 pr-1">
+                {visitNoteGroups.length > 0 ? (
+                  visitNoteGroups.map((group: VisitNoteGroup) => (
+                    <div key={group.jobberVisitId}>
+                      <p className="text-xs font-bold text-[#174734]">
+                        {group.visitDateLabel}
+                        {group.visitTitle ? ` — ${group.visitTitle}` : ""}
+                      </p>
+
+                      <div className="mt-2 space-y-2">
+                        {group.notes.map((note) => (
+                          <div
+                            key={note.id}
+                            className="rounded-xl bg-[#f7f6f1] px-3 py-2"
+                          >
+                            {note.note && (
+                              <p className="text-sm text-[#174734]">
+                                {note.note}
+                              </p>
+                            )}
+
+                            {note.photoUrls.length > 0 && (
+                              <div className="mt-2 grid grid-cols-3 gap-2">
+                                {note.photoUrls.map((url) => (
+                                  <a
+                                    key={url}
+                                    href={url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="block overflow-hidden rounded-lg"
+                                  >
+                                    {/* eslint-disable-next-line @next/next/no-img-element -- turf photos live in Supabase Storage, not an optimizable local/remote asset Next's Image config knows about */}
+                                    <img
+                                      src={url}
+                                      alt="Turf photo"
+                                      className="h-20 w-full object-cover transition hover:opacity-90"
+                                    />
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+
+                            <p className="mt-1 text-[10px] text-[#9c7a20]">
+                              {note.authorName ?? "Unknown"} ·{" "}
+                              {formatVisitDateTime(note.createdAt)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                    No visit notes yet.
+                  </p>
+                )}
+              </div>
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">
@@ -1336,6 +1585,17 @@ export default async function CustomerDetailPage({
                             {formatVisitDateTime(visit.start_at)}
                             {visit.title ? ` — ${visit.title}` : ""}
                           </p>
+                          {formatDurationMinutes(
+                            visitDurationMap.get(visit.jobber_visit_id)
+                          ) && (
+                            <p className="text-xs text-[#6b705c]">
+                              ⏱{" "}
+                              {formatDurationMinutes(
+                                visitDurationMap.get(visit.jobber_visit_id)
+                              )}{" "}
+                              on site
+                            </p>
+                          )}
                         </div>
 
                         <div className="flex shrink-0 items-center gap-2">
@@ -1370,6 +1630,60 @@ export default async function CustomerDetailPage({
                 ) : (
                   <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
                     No past visits found.
+                  </p>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">Payment History</h2>
+
+              <p className="mt-1 text-xs text-[#6b705c]">
+                Actual money received, synced from Jobber — separate from
+                Recent Invoices below, which shows billing status.
+              </p>
+
+              <div className="mt-3 space-y-2">
+                {payments.length > 0 ? (
+                  payments.map((payment) => {
+                    const invoiceNumber = invoices.find(
+                      (invoice) => invoice.id === payment.jobber_invoice_id
+                    )?.invoiceNumber;
+                    const tip = toNumber(payment.tip_amount);
+
+                    return (
+                      <div
+                        key={payment.jobber_payment_id}
+                        className="flex items-center justify-between gap-3 rounded-xl bg-[#f7f6f1] px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold">
+                            {formatDate(payment.payment_date)}
+                            {invoiceNumber
+                              ? ` — Invoice #${invoiceNumber}`
+                              : ""}
+                          </p>
+
+                          <p className="text-xs text-[#6b705c]">
+                            {payment.payment_method || "Unknown method"}
+                            {tip > 0 && (
+                              <span className="text-green-700">
+                                {" "}
+                                · {formatCurrencyPrecise(tip)} tip
+                              </span>
+                            )}
+                          </p>
+                        </div>
+
+                        <p className="shrink-0 text-sm font-bold text-green-700">
+                          {formatCurrencyPrecise(payment.amount)}
+                        </p>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                    No payments recorded yet.
                   </p>
                 )}
               </div>

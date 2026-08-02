@@ -5,6 +5,7 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
 import { completeJobberVisit } from "@/lib/jobberVisit";
+import { insertVisitNote, uploadVisitNotePhotos } from "@/lib/visitNotes";
 
 // Kept as a private, file-local copy of the same list rendered on the My
 // Day page (QUICK_ENTRY_MATERIALS/QUICK_ENTRY_EQUIPMENT in page.tsx) —
@@ -319,4 +320,59 @@ export async function saveVisitJobCostQuickEntry(
 
   revalidatePath("/my-day");
   revalidatePath("/job-costs");
+}
+
+// Field capture counterpart to addVisitNote in
+// customers/[id]/actions.ts — no visit picker needed here since the
+// form is already scoped to one visit's card. Same shared
+// lib/visitNotes.ts helpers, so a note added from a phone in the field
+// shows up identically to one added later from the office on the
+// customer page. Requires jobber_client_id (not just the visit id)
+// since visit_notes denormalizes it for the customer page's per-client
+// query — passed through as a hidden field from the card, which already
+// has it from the jobber_visits row.
+export async function addVisitNoteFromMyDay(
+  visitId: string,
+  clientId: string,
+  formData: FormData
+): Promise<void> {
+  const actor = await getCurrentUser();
+
+  if (!actor || !visitId || !clientId) {
+    return;
+  }
+
+  const rawNote = formData.get("note");
+  const note =
+    typeof rawNote === "string" && rawNote.trim() ? rawNote.trim() : null;
+  const photoFiles = formData
+    .getAll("photos")
+    .filter((entry): entry is File => entry instanceof File);
+
+  const photoPaths = await uploadVisitNotePhotos(visitId, photoFiles);
+
+  const result = await insertVisitNote({
+    jobberVisitId: visitId,
+    jobberClientId: clientId,
+    authorUserId: actor.id,
+    note,
+    photoPaths,
+  });
+
+  if (result.error) {
+    console.error(`addVisitNoteFromMyDay failed for ${visitId}:`, result.error);
+    return;
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "create",
+    entityType: "visit_note",
+    entityId: visitId,
+    entityLabel: note ?? `${photoPaths.length} photo(s)`,
+    after: { note, photo_count: photoPaths.length },
+  });
+
+  revalidatePath("/my-day");
+  revalidatePath(`/customers/${encodeURIComponent(clientId)}`);
 }
