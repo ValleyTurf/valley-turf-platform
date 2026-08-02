@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
+import { validateAddress } from "@/lib/addressValidation";
 
 // Public endpoint: meant to be called by an external automation (e.g. a
 // Jobber automation or Zapier zap posting new client/request info) rather
@@ -45,6 +46,13 @@ export async function POST(request: Request) {
     const jobberRequestId =
       body.jobber_request_id ?? body.jobberRequestId ?? null;
 
+    // Fails soft: returns null if GOOGLE_ADDRESS_VALIDATION_API_KEY isn't
+    // configured, the address is blank, or the API call errors — a lead is
+    // always created either way, just without the validation fields below.
+    const validation = address
+      ? await validateAddress({ addressLine: address, city, state, zip })
+      : null;
+
     const { data, error } = await supabaseServer
       .from("leads")
       .insert({
@@ -61,6 +69,11 @@ export async function POST(request: Request) {
         jobber_client_id: jobberClientId,
         jobber_request_id: jobberRequestId,
         status: "New",
+        address_validation_status: validation?.status ?? null,
+        address_validated_at: validation ? new Date().toISOString() : null,
+        address_formatted: validation?.formattedAddress ?? null,
+        address_lat: validation?.latitude ?? null,
+        address_lng: validation?.longitude ?? null,
       })
       .select()
       .single();

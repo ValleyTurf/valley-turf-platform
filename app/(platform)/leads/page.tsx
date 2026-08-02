@@ -11,11 +11,17 @@ type Lead = {
   last_name: string | null;
   email: string | null;
   phone: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
   source: string | null;
   status: string | null;
   campaign_id: string | null;
   created_at: string;
   scan_count: number | null;
+  address_validation_status: string | null;
+  address_formatted: string | null;
 };
 
 type Campaign = {
@@ -64,11 +70,37 @@ function statusBadge(status: string | null) {
   return "bg-[#f0eee6] text-[#6b705c]";
 }
 
+// Maps lib/addressValidation.ts's AddressValidationStatus values to a
+// short label + color so a dispatcher can spot an address that needs a
+// follow-up call before a crew ever gets scheduled to it. Leads captured
+// before GOOGLE_ADDRESS_VALIDATION_API_KEY was configured (or where
+// validation failed/was skipped) have a null status and show no badge.
+function addressValidationBadge(
+  status: string | null
+): { label: string; className: string } | null {
+  if (status === "fix") {
+    return { label: "Needs Fix", className: "bg-red-100 text-red-700" };
+  }
+
+  if (status === "confirm" || status === "confirm_add_subpremises") {
+    return {
+      label: "Please Confirm",
+      className: "bg-[#d4af37]/20 text-[#9c7a20]",
+    };
+  }
+
+  if (status === "accept") {
+    return { label: "Verified", className: "bg-[#174734]/10 text-[#174734]" };
+  }
+
+  return null;
+}
+
 export default async function LeadsPage() {
   const { data: leadsData, error } = await supabaseServer
     .from("leads")
     .select(
-      "id, first_name, last_name, email, phone, source, status, campaign_id, created_at, scan_count"
+      "id, first_name, last_name, email, phone, address, city, state, zip, source, status, campaign_id, created_at, scan_count, address_validation_status, address_formatted"
     )
     .order("created_at", { ascending: false });
 
@@ -187,6 +219,7 @@ export default async function LeadsPage() {
                     <th className="pb-2 pr-4">Name</th>
                     <th className="pb-2 pr-4">Phone</th>
                     <th className="pb-2 pr-4">Email</th>
+                    <th className="pb-2 pr-4">Address</th>
                     <th className="pb-2 pr-4">Source</th>
                     <th className="pb-2 pr-4">Campaign</th>
                     <th className="pb-2 pr-4">Status</th>
@@ -201,6 +234,14 @@ export default async function LeadsPage() {
                       : null;
 
                     const customer = matchCustomer(lead);
+                    const badge = addressValidationBadge(
+                      lead.address_validation_status
+                    );
+                    const displayAddress =
+                      lead.address_formatted ||
+                      [lead.address, lead.city, lead.state, lead.zip]
+                        .filter(Boolean)
+                        .join(", ");
 
                     return (
                       <tr key={lead.id} className="border-b border-[#f0eee6]">
@@ -214,6 +255,22 @@ export default async function LeadsPage() {
                         </td>
                         <td className="py-2 pr-4">{lead.phone || "—"}</td>
                         <td className="py-2 pr-4">{lead.email || "—"}</td>
+                        <td className="py-2 pr-4">
+                          {displayAddress ? (
+                            <div className="flex flex-col gap-1">
+                              <span>{displayAddress}</span>
+                              {badge && (
+                                <span
+                                  className={`w-fit rounded-full px-2 py-0.5 text-xs font-bold ${badge.className}`}
+                                >
+                                  {badge.label}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
                         <td className="py-2 pr-4">{lead.source || "—"}</td>
                         <td className="py-2 pr-4">
                           {campaign ? (
