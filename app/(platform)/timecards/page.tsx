@@ -7,20 +7,48 @@ export const revalidate = 0;
 // daily clock in/out table from /timeclock — NOT visit_time_logs, which
 // is per-job timing for cost analytics, a deliberately separate concern
 // (see supabase/migrations/020_add_shift_time_logs.sql).
+//
+// Grid is a fixed semi-monthly pay period (1st–15th, 16th–end of month
+// — see lib/payPeriods.ts) instead of a Sun–Sat week, since that's how
+// paychecks actually get cut. Pay = hours × hourly_rate (wages only);
+// Tips is a separate column/section, sourced from lib/tips.ts's
+// invoice-tip → visit → assignee join, since tip income and wage pay
+// are conventionally reported separately.
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
-import { totalMinutes, formatHoursMinutes, type ShiftSegment } from "@/lib/shiftHours";
+import { totalMinutes, formatHoursMinutes, minutesToDecimalHours, type ShiftSegment } from "@/lib/shiftHours";
+import { getTipsByUserAndDay } from "@/lib/tips";
+import { formatCurrencyPrecise } from "@/lib/format";
+import {
+  getCurrentPayPeriod,
+  getPreviousPayPeriod,
+  getNextPayPeriod,
+  getPreviousPayPeriods,
+  parsePayPeriodParam,
+  isSamePayPeriod,
+  formatPayPeriodLabel,
+  payPeriodQueryRange,
+  payPeriodExclusiveEndDate,
+  type PayPeriod,
+} from "@/lib/payPeriods";
+import { toPhoenixDateString } from "@/lib/phoenixDate";
 import TimecardsInteractive, {
   type Employee,
   type Punch,
 } from "./TimecardsInteractive";
 
 type TimecardsPageProps = {
-  searchParams: Promise<{ week?: string }>;
+  searchParams: Promise<{ period?: string }>;
 };
 
-type UserRow = { id: string; name: string; role: string; active: boolean };
+type UserRow = {
+  id: string;
+  name: string;
+  role: string;
+  active: boolean;
+  hourly_rate: number | string | null;
+};
 
 type ShiftRow = {
   id: string;
@@ -31,72 +59,31 @@ type ShiftRow = {
   edited_by: string | null;
 };
 
-const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-function getPhoenixToday(): Date {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Phoenix",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-
-  const year = Number(parts.find((p) => p.type === "year")?.value ?? 0);
-  const month = Number(parts.find((p) => p.type === "month")?.value ?? 1);
-  const day = Number(parts.find((p) => p.type === "day")?.value ?? 1);
-
-  return new Date(Date.UTC(year, month - 1, day));
-}
-
-function addDays(date: Date, days: number): Date {
-  const result = new Date(date);
-  result.setUTCDate(result.getUTCDate() + days);
-  return result;
-}
-
-function formatDateInput(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-function startOfWeek(date: Date): Date {
-  return addDays(date, -date.getUTCDay());
-}
-
-function parseWeekStart(value: string | undefined): Date {
-  if (value) {
-    const parsed = new Date(`${value}T00:00:00Z`);
-    if (!Number.isNaN(parsed.getTime())) {
-      return startOfWeek(parsed);
-    }
-  }
-
-  return startOfWeek(getPhoenixToday());
-}
-
-function formatWeekHeading(start: Date, end: Date): string {
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "UTC",
-    month: "short",
-    day: "numeric",
-  });
-
-  return `${fmt.format(start)} – ${fmt.format(end)}`;
-}
+const PREVIOUS_PERIODS_SHOWN = 6;
 
 // Phoenix-local calendar day (YYYY-MM-DD) for a UTC timestamp.
 function phoenixDayKey(iso: string): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Phoenix",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date(iso));
+  return toPhoenixDateString(iso) ?? iso.slice(0, 10);
+}
 
-  const year = parts.find((p) => p.type === "year")?.value ?? "0000";
-  const month = parts.find((p) => p.type === "month")?.value ?? "01";
-  const day = parts.find((p) => p.type === "day")?.value ?? "01";
+// The list of Phoenix-local calendar days in a period, inclusive —
+// 15 or 16 entries depending on the half/month. Replaces the old fixed
+// 7-column Sun–Sat grid, since a pay period isn't a fixed length.
+function periodDayKeys(period: PayPeriod): string[] {
+  const [startYear, startMonth, startDay] = period.startDate.split("-").map(Number);
+  const [, , endDay] = period.endDate.split("-").map(Number);
 
-  return `${year}-${month}-${day}`;
+  const keys: string[] = [];
+  for (let day = startDay; day <= endDay; day++) {
+    keys.push(
+      `${startYear}-${String(startMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+    );
+  }
+  return keys;
+}
+
+function dayOfMonthLabel(dateKey: string): string {
+  return String(Number(dateKey.slice(8, 10)));
 }
 
 // 24-hour HH:MM in Phoenix time, the format <input type="time"> and
@@ -133,25 +120,21 @@ export default async function TimecardsPage({ searchParams }: TimecardsPageProps
   }
 
   const params = await searchParams;
-  const weekStart = parseWeekStart(params.week);
-  const weekEndExclusive = addDays(weekStart, 7);
-  const weekEndDisplay = addDays(weekStart, 6);
+  const currentPeriod = getCurrentPayPeriod();
+  const selectedPeriod = parsePayPeriodParam(params.period);
+  const isCurrentPeriod = isSamePayPeriod(selectedPeriod, currentPeriod);
 
-  const weekStartStr = formatDateInput(weekStart);
-  const weekEndExclusiveStr = formatDateInput(weekEndExclusive);
+  const { queryStart, queryEnd } = payPeriodQueryRange(selectedPeriod);
 
-  const queryStart = `${weekStartStr}T00:00:00-07:00`;
-  const queryEnd = `${weekEndExclusiveStr}T00:00:00-07:00`;
-
-  const [{ data: usersData }, { data: shiftsData }] = await Promise.all([
+  const [{ data: usersData }, { data: shiftsData }, tipsByUserAndDay] = await Promise.all([
     // No active filter here — a punch from someone who's since gone
     // inactive should still show their real name in "Punches this
-    // week" rather than falling back to "Unknown". The weekly grid
+    // pay period" rather than falling back to "Unknown". The grid
     // below filters this list down to active employees only, since
     // that's the "who should be punching in" view.
     supabaseServer
       .from("users")
-      .select("id, name, role, active")
+      .select("id, name, role, active, hourly_rate")
       .order("name", { ascending: true }),
     supabaseServer
       .from("shift_time_logs")
@@ -159,18 +142,25 @@ export default async function TimecardsPage({ searchParams }: TimecardsPageProps
       .gte("clocked_in_at", queryStart)
       .lt("clocked_in_at", queryEnd)
       .order("clocked_in_at", { ascending: true }),
+    getTipsByUserAndDay(selectedPeriod.startDate, selectedPeriod.endDate),
   ]);
 
   const users = (usersData ?? []) as UserRow[];
   const shifts = (shiftsData ?? []) as ShiftRow[];
 
   const userNameById = new Map<string, string>(users.map((u) => [u.id, u.name]));
+  const hourlyRateById = new Map<string, number | null>(
+    users.map((u) => [u.id, u.hourly_rate === null || u.hourly_rate === undefined ? null : Number(u.hourly_rate)])
+  );
   const activeUsers = users.filter((u) => u.active);
 
-  // Weekly grid: minutes per employee per day-of-week, plus a running
-  // total and an "still clocked in this week" flag per employee.
+  const dayKeys = periodDayKeys(selectedPeriod);
+  const dayIndexByKey = new Map(dayKeys.map((key, index) => [key, index]));
+
+  // Grid: minutes per employee per day-of-period, plus a running total
+  // and an "still clocked in" flag per employee.
   const dailyMinutes = new Map<string, number>(); // `${userId}:${dayIndex}`
-  const weeklyMinutesByUser = new Map<string, number>();
+  const periodMinutesByUser = new Map<string, number>();
   const hasOpenShiftByUser = new Set<string>();
 
   for (const shift of shifts) {
@@ -180,26 +170,45 @@ export default async function TimecardsPage({ searchParams }: TimecardsPageProps
     };
     const minutes = totalMinutes([segment]);
 
-    const dayKey = phoenixDayKey(shift.clocked_in_at);
-    const dayIndex = Math.round(
-      (new Date(`${dayKey}T00:00:00Z`).getTime() - weekStart.getTime()) /
-        (24 * 60 * 60 * 1000)
-    );
+    const dayIndex = dayIndexByKey.get(phoenixDayKey(shift.clocked_in_at));
 
-    if (dayIndex >= 0 && dayIndex < 7) {
+    if (dayIndex !== undefined) {
       const gridKey = `${shift.user_id}:${dayIndex}`;
       dailyMinutes.set(gridKey, (dailyMinutes.get(gridKey) ?? 0) + minutes);
     }
 
-    weeklyMinutesByUser.set(
+    periodMinutesByUser.set(
       shift.user_id,
-      (weeklyMinutesByUser.get(shift.user_id) ?? 0) + minutes
+      (periodMinutesByUser.get(shift.user_id) ?? 0) + minutes
     );
 
     if (!shift.clocked_out_at) {
       hasOpenShiftByUser.add(shift.user_id);
     }
   }
+
+  // Per-employee tip total for the period, plus a flat list (newest
+  // first) of every individual tip attribution for the "Tips this pay
+  // period" section below — who got what, for which job, on which day.
+  const tipTotalByUser = new Map<string, number>();
+  type TipListRow = { userId: string; userName: string; date: string; amount: number; jobNumbers: string[] };
+  const tipRows: TipListRow[] = [];
+
+  for (const [userId, dayMap] of tipsByUserAndDay) {
+    let userTotal = 0;
+    for (const [date, tip] of dayMap) {
+      userTotal += tip.amount;
+      tipRows.push({
+        userId,
+        userName: userNameById.get(userId) ?? "Unknown",
+        date,
+        amount: tip.amount,
+        jobNumbers: tip.jobs.map((j) => j.jobNumber ?? "job"),
+      });
+    }
+    tipTotalByUser.set(userId, userTotal);
+  }
+  tipRows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 
   const punches: Punch[] = shifts
     .slice()
@@ -223,11 +232,13 @@ export default async function TimecardsPage({ searchParams }: TimecardsPageProps
 
   const employees: Employee[] = activeUsers.map((u) => ({ id: u.id, name: u.name, role: u.role }));
 
-  const prevHref = `/timecards?week=${formatDateInput(addDays(weekStart, -7))}`;
-  const nextHref = `/timecards?week=${formatDateInput(addDays(weekStart, 7))}`;
-  const thisWeekHref = `/timecards?week=${formatDateInput(startOfWeek(getPhoenixToday()))}`;
-  const isCurrentWeek = weekStartStr === formatDateInput(startOfWeek(getPhoenixToday()));
-  const exportHref = `/api/timecards/export?start=${weekStartStr}&end=${weekEndExclusiveStr}`;
+  const prevHref = `/timecards?period=${getPreviousPayPeriod(selectedPeriod).startDate}`;
+  const nextHref = `/timecards?period=${getNextPayPeriod(selectedPeriod).startDate}`;
+  const currentHref = `/timecards?period=${currentPeriod.startDate}`;
+  const previousPeriods = getPreviousPayPeriods(currentPeriod, PREVIOUS_PERIODS_SHOWN);
+  const exportHref = `/api/timecards/export?start=${selectedPeriod.startDate}&end=${payPeriodExclusiveEndDate(
+    selectedPeriod
+  )}`;
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
@@ -276,13 +287,13 @@ export default async function TimecardsPage({ searchParams }: TimecardsPageProps
           </Link>
 
           <div className="text-center">
-            <p className="font-bold">{formatWeekHeading(weekStart, weekEndDisplay)}</p>
-            {!isCurrentWeek && (
+            <p className="font-bold">{formatPayPeriodLabel(selectedPeriod)}</p>
+            {!isCurrentPeriod && (
               <Link
-                href={thisWeekHref}
+                href={currentHref}
                 className="text-xs font-semibold text-[#9c7a20] hover:underline"
               >
-                Jump to this week
+                Jump to current period
               </Link>
             )}
           </div>
@@ -296,49 +307,106 @@ export default async function TimecardsPage({ searchParams }: TimecardsPageProps
         </div>
 
         <section className="mt-4 overflow-x-auto rounded-2xl bg-white p-4 shadow">
-          <table className="w-full min-w-[560px] text-sm">
+          <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className="text-left text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
                 <th className="pb-2 pr-2">Employee</th>
-                {DAY_LABELS.map((label) => (
-                  <th key={label} className="pb-2 px-1 text-center">
-                    {label}
+                {dayKeys.map((key) => (
+                  <th key={key} className="pb-2 px-1 text-center">
+                    {dayOfMonthLabel(key)}
                   </th>
                 ))}
-                <th className="pb-2 pl-2 text-right">Total</th>
+                <th className="pb-2 pl-2 text-right">Hours</th>
+                <th className="pb-2 pl-2 text-right">Pay</th>
+                <th className="pb-2 pl-2 text-right">Tips</th>
               </tr>
             </thead>
             <tbody>
-              {employees.map((employee) => (
-                <tr key={employee.id} className="border-t border-[#f0eee6]">
-                  <td className="py-2 pr-2 font-semibold">
-                    {employee.name}
-                    {hasOpenShiftByUser.has(employee.id) && (
-                      <span className="ml-1 rounded-full bg-[#eef4ee] px-1.5 py-0.5 text-[9px] font-bold text-[#174734]">
-                        on the clock
-                      </span>
-                    )}
-                  </td>
-                  {DAY_LABELS.map((_, dayIndex) => {
-                    const minutes = dailyMinutes.get(`${employee.id}:${dayIndex}`) ?? 0;
-                    return (
-                      <td key={dayIndex} className="px-1 py-2 text-center tabular-nums text-[#6b705c]">
-                        {minutes > 0 ? (minutes / 60).toFixed(1) : "–"}
-                      </td>
-                    );
-                  })}
-                  <td className="py-2 pl-2 text-right font-bold tabular-nums">
-                    {formatHoursMinutes(weeklyMinutesByUser.get(employee.id) ?? 0)}
-                  </td>
-                </tr>
-              ))}
+              {employees.map((employee) => {
+                const minutes = periodMinutesByUser.get(employee.id) ?? 0;
+                const hourlyRate = hourlyRateById.get(employee.id) ?? null;
+                const pay = hourlyRate !== null ? minutesToDecimalHours(minutes) * hourlyRate : null;
+                const tips = tipTotalByUser.get(employee.id) ?? 0;
+
+                return (
+                  <tr key={employee.id} className="border-t border-[#f0eee6]">
+                    <td className="py-2 pr-2 font-semibold">
+                      {employee.name}
+                      {hasOpenShiftByUser.has(employee.id) && (
+                        <span className="ml-1 rounded-full bg-[#eef4ee] px-1.5 py-0.5 text-[9px] font-bold text-[#174734]">
+                          on the clock
+                        </span>
+                      )}
+                    </td>
+                    {dayKeys.map((_, dayIndex) => {
+                      const dayMinutes = dailyMinutes.get(`${employee.id}:${dayIndex}`) ?? 0;
+                      return (
+                        <td key={dayIndex} className="px-1 py-2 text-center tabular-nums text-[#6b705c]">
+                          {dayMinutes > 0 ? (dayMinutes / 60).toFixed(1) : "–"}
+                        </td>
+                      );
+                    })}
+                    <td className="py-2 pl-2 text-right font-bold tabular-nums">
+                      {formatHoursMinutes(minutes)}
+                    </td>
+                    <td className="py-2 pl-2 text-right tabular-nums text-[#6b705c]">
+                      {pay !== null ? formatCurrencyPrecise(pay) : "–"}
+                    </td>
+                    <td className="py-2 pl-2 text-right tabular-nums text-[#9c7a20]">
+                      {tips > 0 ? formatCurrencyPrecise(tips) : "–"}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+        </section>
+
+        <section className="mt-4 rounded-2xl bg-white p-4 shadow">
+          <p className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
+            Tips this pay period
+          </p>
+
+          {tipRows.length === 0 ? (
+            <p className="mt-2 text-sm text-[#6b705c]">No tips recorded this pay period.</p>
+          ) : (
+            <div className="mt-2 divide-y divide-[#f0eee6]">
+              {tipRows.map((row, index) => (
+                <div key={`${row.userId}-${row.date}-${index}`} className="flex items-center justify-between gap-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold">{row.userName}</p>
+                    <p className="text-xs text-[#6b705c]">
+                      {row.date} · {row.jobNumbers.join(", ")}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-sm font-bold tabular-nums text-[#9c7a20]">
+                    {formatCurrencyPrecise(row.amount)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         <div className="mt-4">
           <TimecardsInteractive employees={employees} punches={punches} />
         </div>
+
+        <h2 className="mt-6 text-lg font-bold">Previous Pay Periods</h2>
+        <section className="mt-2 rounded-2xl bg-white p-2 shadow">
+          {previousPeriods.map((period) => (
+            <Link
+              key={period.startDate}
+              href={`/timecards?period=${period.startDate}`}
+              className={`flex items-center justify-between rounded-xl px-3 py-2.5 text-sm font-semibold transition hover:bg-[#f7f6f1] ${
+                isSamePayPeriod(period, selectedPeriod) ? "bg-[#fdf8ea] text-[#9c7a20]" : ""
+              }`}
+            >
+              <span>{formatPayPeriodLabel(period)}</span>
+              <span aria-hidden="true">→</span>
+            </Link>
+          ))}
+        </section>
       </div>
     </main>
   );
