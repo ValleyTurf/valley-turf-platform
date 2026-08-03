@@ -417,6 +417,54 @@ function formatDurationMinutes(minutes: number | undefined): string | null {
   return `${hours}h ${mins}m`;
 }
 
+type VisitAssignmentRow = {
+  jobber_visit_id: string;
+  assigned_user_id: string;
+};
+
+type UserNameRow = {
+  id: string;
+  name: string;
+};
+
+// Who was on-site for each visit, alongside formatDurationMinutes above
+// — seeing both together on Past Visits is what actually makes them
+// useful for scheduling ("Sarah takes about 45 min for this service, so
+// budget accordingly"). Deliberately doesn't filter to active users only
+// (unlike schedule/page.tsx's assignment lookup, which only offers
+// active users as assignment *targets*) — a past visit should still show
+// who did it even if that person isn't with the company anymore.
+async function getVisitAssignedNames(
+  visitIds: string[]
+): Promise<Map<string, string[]>> {
+  if (visitIds.length === 0) return new Map();
+
+  const [{ data: assignmentsData }, { data: usersData }] = await Promise.all([
+    supabaseServer
+      .from("visit_assignments")
+      .select("jobber_visit_id, assigned_user_id")
+      .in("jobber_visit_id", visitIds),
+    supabaseServer.from("users").select("id, name"),
+  ]);
+
+  const userNameById = new Map<string, string>(
+    ((usersData ?? []) as UserNameRow[]).map((u) => [u.id, u.name])
+  );
+
+  const namesByVisit = new Map<string, string[]>();
+
+  for (const row of (assignmentsData ?? []) as VisitAssignmentRow[]) {
+    const userName = userNameById.get(row.assigned_user_id);
+    if (!userName) continue;
+
+    const list = namesByVisit.get(row.jobber_visit_id) ?? [];
+    list.push(userName);
+    namesByVisit.set(row.jobber_visit_id, list);
+  }
+
+  return namesByVisit;
+}
+
 async function getAttributionLeads(
   email: string | null,
   phone: string | null
@@ -1006,6 +1054,7 @@ export default async function CustomerDetailPage({
   } = await getVisitUsageMaps(allVisitIds);
 
   const visitDurationMap = await getVisitDurationMinutes(allVisitIds);
+  const visitAssignedNamesMap = await getVisitAssignedNames(allVisitIds);
 
   const pageEquipmentIds = equipmentList.map((item) => item.id).join(",");
 
@@ -1526,15 +1575,35 @@ export default async function CustomerDetailPage({
                             {formatVisitDateTime(visit.start_at)}
                             {visit.title ? ` — ${visit.title}` : ""}
                           </p>
-                          {formatDurationMinutes(
+                          {(formatDurationMinutes(
                             visitDurationMap.get(visit.jobber_visit_id)
-                          ) && (
+                          ) ||
+                            (visitAssignedNamesMap.get(visit.jobber_visit_id)
+                              ?.length ?? 0) > 0) && (
                             <p className="text-xs text-[#6b705c]">
-                              ⏱{" "}
                               {formatDurationMinutes(
                                 visitDurationMap.get(visit.jobber_visit_id)
-                              )}{" "}
-                              on site
+                              ) && (
+                                <>
+                                  ⏱{" "}
+                                  {formatDurationMinutes(
+                                    visitDurationMap.get(visit.jobber_visit_id)
+                                  )}{" "}
+                                  on site
+                                </>
+                              )}
+                              {formatDurationMinutes(
+                                visitDurationMap.get(visit.jobber_visit_id)
+                              ) &&
+                              (visitAssignedNamesMap.get(visit.jobber_visit_id)
+                                ?.length ?? 0) > 0
+                                ? " · "
+                                : ""}
+                              {(visitAssignedNamesMap.get(visit.jobber_visit_id)
+                                ?.length ?? 0) > 0 &&
+                                visitAssignedNamesMap
+                                  .get(visit.jobber_visit_id)!
+                                  .join(", ")}
                             </p>
                           )}
                         </div>
