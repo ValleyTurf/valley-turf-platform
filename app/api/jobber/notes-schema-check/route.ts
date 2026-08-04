@@ -13,18 +13,23 @@
 // Round 2: walked `__schema.types` instead of guessing further.
 // Visit.notes AND Job.notes both resolve to `JobNoteUnionConnection`
 // — i.e. Jobber models these as notes on the JOB, not the visit.
-// Job.noteAttachments resolves to `JobNoteFileConnection`.
 //
-// Round 3: the open questions before writing the real backfill —
-// (a) what fields does a `JobNote`/`NoteInterface` actually expose
-// (body text, createdAt, author)? (b) same for `JobNoteFile`/
-// `NoteFileInterface` (a download URL is the whole point). (c) most
-// important: does a job-level note carry ANY reference back to which
-// visit it was logged during, or would a backfill have to guess by
-// matching timestamps to the nearest visit date? (d) what does
-// `Visit.notes` accept as arguments — maybe it already filters
-// job-level notes down to the ones relevant to that specific visit,
-// which would answer (c) for free.
+// Round 3: JobNote's own fields (createdAt/createdBy/message/
+// fileAttachments/linkedTo/pinned) have NO field pointing back to a
+// specific visit. JobNoteFile has the actual photo URLs
+// (url/downloadUrl/previewUrl/thumbnailUrl). Visit.notes DOES accept
+// a `filter: NoteFilterAttributes` arg, though — worth checking
+// whether that filter can narrow a job's notes down to one visit.
+//
+// Round 4: two things left before writing the real backfill —
+// (a) does NoteFilterAttributes (or NoteLink, the `linkedTo` field's
+// type) actually carry a visit reference we missed? (b) empirically,
+// for a handful of real visits, does `visit.notes` return the SAME
+// note IDs as `visit.job.notes`, or a genuinely narrower set? If
+// they're identical, Jobber has no real per-visit note association at
+// all, and the backfill will need to fall back to matching a note's
+// createdAt to the nearest visit date for that job (the same kind of
+// call already made for tip attribution in lib/tips.ts).
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 
@@ -39,54 +44,74 @@ const TYPE_FRAGMENT = `
     ofType {
       name
       kind
-      ofType {
+    }
+  }
+`;
+
+const INTROSPECTION_AND_SAMPLE_QUERY = `
+  query NotesSchemaCheckRound4($limit: Int!) {
+    filterInput: __type(name: "NoteFilterAttributes") {
+      inputFields {
         name
-        kind
+        type {
+          ${TYPE_FRAGMENT}
+        }
       }
     }
-  }
-`;
 
-const FIELD_FRAGMENT = `
-  fields {
-    name
-    type {
-      ${TYPE_FRAGMENT}
-    }
-  }
-`;
-
-const INTROSPECTION_QUERY = `
-  query NotesSchemaCheckRound3 {
-    jobNoteUnion: __type(name: "JobNoteUnion") {
-      possibleTypes { name }
-    }
-    jobNote: __type(name: "JobNote") {
-      interfaces { name }
-      ${FIELD_FRAGMENT}
-    }
-    noteInterface: __type(name: "NoteInterface") {
-      possibleTypes { name }
-      ${FIELD_FRAGMENT}
-    }
-    jobNoteFile: __type(name: "JobNoteFile") {
-      interfaces { name }
-      ${FIELD_FRAGMENT}
-    }
-    noteFileInterface: __type(name: "NoteFileInterface") {
-      possibleTypes { name }
-      ${FIELD_FRAGMENT}
-    }
-    noteCreatedByUnion: __type(name: "NoteCreatedByUnion") {
-      possibleTypes { name }
-    }
-    visitType: __type(name: "Visit") {
+    noteLinkType: __type(name: "NoteLink") {
+      kind
       fields {
         name
-        args {
-          name
-          type {
-            ${TYPE_FRAGMENT}
+        type {
+          ${TYPE_FRAGMENT}
+        }
+      }
+      possibleTypes {
+        name
+      }
+    }
+
+    visits(first: $limit) {
+      nodes {
+        id
+        startAt
+
+        job {
+          id
+          notes(first: 20) {
+            edges {
+              node {
+                ... on JobNote {
+                  id
+                  message
+                  createdAt
+                }
+              }
+            }
+          }
+        }
+
+        notes(first: 20) {
+          edges {
+            node {
+              ... on JobNote {
+                id
+                message
+                createdAt
+                fileAttachments(first: 3) {
+                  edges {
+                    node {
+                      id
+                      fileName
+                      contentType
+                      url
+                      downloadUrl
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -94,71 +119,89 @@ const INTROSPECTION_QUERY = `
   }
 `;
 
-type PossibleType = { name: string };
-type IntrospectedTypeRef = { name: string | null; kind: string; ofType: IntrospectedTypeRef | null };
-type IntrospectedField = { name: string; type: IntrospectedTypeRef };
-type ArgField = { name: string; args: { name: string; type: IntrospectedTypeRef }[] };
-
-type Round3Response = {
-  jobNoteUnion: { possibleTypes: PossibleType[] } | null;
-  jobNote: { interfaces: PossibleType[]; fields: IntrospectedField[] } | null;
-  noteInterface: { possibleTypes: PossibleType[]; fields: IntrospectedField[] } | null;
-  jobNoteFile: { interfaces: PossibleType[]; fields: IntrospectedField[] } | null;
-  noteFileInterface: { possibleTypes: PossibleType[]; fields: IntrospectedField[] } | null;
-  noteCreatedByUnion: { possibleTypes: PossibleType[] } | null;
-  visitType: { fields: ArgField[] } | null;
+type InputField = { name: string; type: { name: string | null; kind: string; ofType: unknown } };
+type FieldSummary = { name: string; type: { name: string | null; kind: string; ofType: unknown } };
+type NoteFileNode = {
+  id: string;
+  fileName: string | null;
+  contentType: string | null;
+  url: string | null;
+  downloadUrl: string | null;
+};
+type NoteNode = {
+  id: string;
+  message: string | null;
+  createdAt: string | null;
+  fileAttachments?: { edges: { node: NoteFileNode }[] };
+};
+type VisitSampleNode = {
+  id: string;
+  startAt: string | null;
+  job: { id: string; notes: { edges: { node: NoteNode }[] } } | null;
+  notes: { edges: { node: NoteNode }[] };
 };
 
-function resolveNamedType(type: IntrospectedTypeRef | null): string {
-  let current = type;
+type Round4Response = {
+  filterInput: { inputFields: InputField[] } | null;
+  noteLinkType: { kind: string; fields: FieldSummary[] | null; possibleTypes: { name: string }[] | null } | null;
+  visits: { nodes: VisitSampleNode[] } | null;
+};
+
+function resolveNamedType(type: { name: string | null; ofType: unknown } | null): string {
+  let current = type as { name: string | null; ofType: unknown } | null;
   while (current) {
     if (current.name) return current.name;
-    current = current.ofType;
+    current = current.ofType as { name: string | null; ofType: unknown } | null;
   }
   return "?";
 }
 
-function summarizeFields(fields: IntrospectedField[] | undefined | null): string[] {
-  return (fields ?? [])
-    .map((f) => `${f.name}: ${resolveNamedType(f.type)}`)
-    .sort();
-}
-
 export async function GET() {
   try {
-    const { data, errors } = await jobberGraphQL<Round3Response>(INTROSPECTION_QUERY);
+    const { data, errors } = await jobberGraphQL<Round4Response>(
+      INTROSPECTION_AND_SAMPLE_QUERY,
+      { limit: 5 }
+    );
 
     if (errors?.length) {
       return NextResponse.json({ success: false, errors }, { status: 400 });
     }
 
-    const visitNotesField = data?.visitType?.fields?.find((f) => f.name === "notes");
+    const visits = data?.visits?.nodes ?? [];
+
+    const comparison = visits.map((visit) => {
+      const visitNoteIds = visit.notes.edges.map((e) => e.node.id).sort();
+      const jobNoteIds = (visit.job?.notes.edges ?? []).map((e) => e.node.id).sort();
+
+      return {
+        visitId: visit.id,
+        visitStartAt: visit.startAt,
+        visitNoteCount: visitNoteIds.length,
+        jobNoteCount: jobNoteIds.length,
+        sameNoteIds: JSON.stringify(visitNoteIds) === JSON.stringify(jobNoteIds),
+        sampleNotes: visit.notes.edges.slice(0, 2).map((e) => ({
+          id: e.node.id,
+          createdAt: e.node.createdAt,
+          messagePreview: e.node.message?.slice(0, 60) ?? null,
+          fileCount: e.node.fileAttachments?.edges.length ?? 0,
+          sampleFile: e.node.fileAttachments?.edges[0]?.node ?? null,
+        })),
+      };
+    });
 
     return NextResponse.json({
       success: true,
-      jobNoteUnionMembers: (data?.jobNoteUnion?.possibleTypes ?? []).map((t) => t.name),
-      jobNote: {
-        implements: (data?.jobNote?.interfaces ?? []).map((t) => t.name),
-        fields: summarizeFields(data?.jobNote?.fields),
-      },
-      noteInterface: {
-        implementedBy: (data?.noteInterface?.possibleTypes ?? []).map((t) => t.name),
-        fields: summarizeFields(data?.noteInterface?.fields),
-      },
-      jobNoteFile: {
-        implements: (data?.jobNoteFile?.interfaces ?? []).map((t) => t.name),
-        fields: summarizeFields(data?.jobNoteFile?.fields),
-      },
-      noteFileInterface: {
-        implementedBy: (data?.noteFileInterface?.possibleTypes ?? []).map((t) => t.name),
-        fields: summarizeFields(data?.noteFileInterface?.fields),
-      },
-      noteCreatedByUnionMembers: (data?.noteCreatedByUnion?.possibleTypes ?? []).map((t) => t.name),
-      // Does Visit.notes take arguments that would filter job-level
-      // notes down to just the ones for that visit?
-      visitNotesFieldArgs: (visitNotesField?.args ?? []).map(
-        (a) => `${a.name}: ${resolveNamedType(a.type)}`
+      noteFilterAttributesFields: (data?.filterInput?.inputFields ?? []).map(
+        (f) => `${f.name}: ${resolveNamedType(f.type)}`
       ),
+      noteLinkType: {
+        kind: data?.noteLinkType?.kind ?? null,
+        possibleTypes: (data?.noteLinkType?.possibleTypes ?? []).map((t) => t.name),
+        fields: (data?.noteLinkType?.fields ?? []).map((f) => `${f.name}: ${resolveNamedType(f.type)}`),
+      },
+      // Per sampled visit: does visit.notes return the exact same note
+      // IDs as visit.job.notes, or a genuinely narrower set?
+      visitVsJobNoteComparison: comparison,
     });
   } catch (error) {
     console.error("Jobber notes schema check failed:", error);
