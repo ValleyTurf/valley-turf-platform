@@ -862,13 +862,13 @@ export default async function CustomerIntelligencePage({
               Customers at 18+ months are automatically left off the active list.
             </p>
 
-            <div className="mt-6 space-y-5">
+            <div className="mt-6 space-y-3">
               {reactivationBuckets.map((bucket) => (
-                <div
+                <details
                   key={bucket.title}
                   className="rounded-2xl border border-[#e7e2d5] p-5"
                 >
-                  <div className="flex items-start justify-between gap-4">
+                  <summary className="flex cursor-pointer list-none items-start justify-between gap-4">
                     <div>
                       <h3 className="text-lg font-bold">{bucket.title}</h3>
                       <p className="mt-1 text-sm text-[#6b705c]">
@@ -879,7 +879,7 @@ export default async function CustomerIntelligencePage({
                     <span className="rounded-full bg-[#f7f6f1] px-3 py-1 text-sm font-bold">
                       {formatNumber(bucket.customers.length)}
                     </span>
-                  </div>
+                  </summary>
 
                   <div className="mt-4 space-y-3">
                     {bucket.customers.length === 0 ? (
@@ -887,7 +887,7 @@ export default async function CustomerIntelligencePage({
                         No customers in this reactivation group.
                       </p>
                     ) : (
-                      bucket.customers.slice(0, 15).map((summary) => (
+                      bucket.customers.map((summary) => (
                         <div
                           key={summary.customer.jobber_client_id}
                           className="rounded-xl bg-[#f7f6f1] p-4"
@@ -956,7 +956,7 @@ export default async function CustomerIntelligencePage({
                       ))
                     )}
                   </div>
-                </div>
+                </details>
               ))}
             </div>
           </article>
