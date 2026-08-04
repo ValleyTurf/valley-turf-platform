@@ -8,6 +8,7 @@ import { normalizeEmail, normalizePhone } from "@/lib/matching";
 import { updateCustomerProfile, updateGeneralNotes } from "./actions";
 import { saveVisitCosts } from "../../materials/actions";
 import { getVisitNotesForClient, type VisitNoteGroup } from "@/lib/visitNotes";
+import { getJobberJobNotesForClient, type JobberJobNote } from "@/lib/jobberJobNotes";
 import TurfSizeField from "./TurfSizeField";
 import AddVisitNoteForm from "./AddVisitNoteForm";
 import {
@@ -15,6 +16,7 @@ import {
   formatCurrency,
   formatCurrencyPrecise,
   formatDateOnly as formatDate,
+  formatNumber,
 } from "@/lib/format";
 
 type CustomerDetailPageProps = {
@@ -979,6 +981,7 @@ export default async function CustomerDetailPage({
     pastVisits,
     nextVisit,
     visitNoteGroups,
+    jobberJobNotes,
     payments,
   ] = await Promise.all([
     getJobberClient(decodedId),
@@ -991,6 +994,7 @@ export default async function CustomerDetailPage({
     getPastVisits(decodedId),
     getNextVisit(decodedId),
     getVisitNotesForClient(decodedId),
+    getJobberJobNotesForClient(decodedId),
     getCustomerPayments(decodedId),
   ]);
 
@@ -1511,6 +1515,65 @@ export default async function CustomerDetailPage({
                   </p>
                 )}
               </div>
+
+              {jobberJobNotes.length > 0 && (
+                <details className="mt-5 border-t border-[#e7e2d5] pt-4">
+                  <summary className="cursor-pointer list-none text-xs font-bold text-[#9c7a20]">
+                    Imported from Jobber ({formatNumber(jobberJobNotes.length)}) ▾
+                  </summary>
+
+                  <p className="mt-2 text-xs text-[#6b705c]">
+                    Notes and photos logged directly in Jobber before this
+                    page existed. Jobber only tracks these at the job
+                    level, not per visit, so they&apos;re listed here by
+                    job rather than attached to a specific visit above.
+                  </p>
+
+                  <div className="mt-3 max-h-[500px] space-y-2 overflow-y-auto pr-1">
+                    {jobberJobNotes.map((note: JobberJobNote) => (
+                      <div
+                        key={note.id}
+                        className="rounded-xl bg-[#f7f6f1] px-3 py-2"
+                      >
+                        {note.message && (
+                          <p className="text-sm text-[#174734]">
+                            {note.message}
+                          </p>
+                        )}
+
+                        {note.photoUrls.length > 0 && (
+                          <div className="mt-2 grid grid-cols-3 gap-2">
+                            {note.photoUrls.map((url) => (
+                              <a
+                                key={url}
+                                href={url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block overflow-hidden rounded-lg"
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element -- turf photos live in Supabase Storage, not an optimizable local/remote asset Next's Image config knows about */}
+                                <img
+                                  src={url}
+                                  alt="Turf photo"
+                                  className="h-20 w-full object-cover transition hover:opacity-90"
+                                />
+                              </a>
+                            ))}
+                          </div>
+                        )}
+
+                        <p className="mt-1 text-[10px] text-[#9c7a20]">
+                          {note.jobNumber ? `Job #${note.jobNumber}` : "Job"}
+                          {" · "}
+                          {note.createdAt
+                            ? formatVisitDateTime(note.createdAt)
+                            : "Unknown date"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">
