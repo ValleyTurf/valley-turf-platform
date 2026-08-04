@@ -7,9 +7,13 @@
 // directly, so they keep working even if Jobber's URLs expire or the
 // Jobber connection is ever disconnected.
 //
-// Idempotent via upsert on jobber_note_id — safe to hit more than once
-// if it times out partway through a large history, or to pick up notes
-// added in Jobber after the first run.
+// Idempotent via upsert on jobber_note_id, AND resumable via
+// jobber_job_notes_sync_state (028_add_job_notes_sync_cursor.sql) — the
+// cost-based throttling this query runs into forced small enough batch
+// sizes that a full backfill routinely needs more than one hit to this
+// route to finish. Just keep hitting it until the response says
+// fullyCompleted: true; after that, ?restart=true starts over (e.g. to
+// pick up new Jobber notes added since the last full pass).
 //
 // Not wired into the Vercel Cron rotation like sync-visits/sync-jobs/
 // etc. — this is a deliberate one-time historical move-over, not an
@@ -33,15 +37,20 @@ export const maxDuration = 300;
 const SYNC_TYPE = "job_notes";
 const PHOTO_BUCKET = "visit-photos";
 
-// Each job's notes carry nested file attachments, so this query is
-// heavier than the plain jobs sync — smaller page size, longer pace
-// between pages, same reasoning as sync-payments.ts/sync-visits.ts.
-const JOB_BATCH_SIZE = 20;
-const NOTES_PER_JOB = 50;
-const FILES_PER_NOTE = 10;
-const PAGE_DELAY_MS = 1200;
-const THROTTLE_RETRY_DELAY_MS = 3500;
-const MAX_THROTTLE_RETRIES = 5;
+// Each job's notes carry TWO levels of nested connections (notes, then
+// each note's fileAttachments) — Jobber's query-cost throttling counts
+// the product of every `first` in the chain, so 20 jobs x 50 notes x
+// 10 files (the original values here) priced this query high enough to
+// get throttled on page 1 and stay throttled through every retry, not
+// just occasionally rate-limited. Cut aggressively on all three, well
+// below sync-payments.ts's already-cautious batch of 10 for its single
+// level of nesting.
+const JOB_BATCH_SIZE = 4;
+const NOTES_PER_JOB = 15;
+const FILES_PER_NOTE = 5;
+const PAGE_DELAY_MS = 2500;
+const THROTTLE_RETRY_DELAY_MS = 6000;
+const MAX_THROTTLE_RETRIES = 8;
 
 const JOB_NOTES_QUERY = `
   query GetJobNotesPage($limit: Int!, $cursor: String, $notesLimit: Int!, $filesLimit: Int!) {
@@ -219,6 +228,34 @@ async function downloadAndStoreAttachments(
   return paths;
 }
 
+type SyncState = { cursor: string | null; completed: boolean };
+
+// Single-row resumption state (028_add_job_notes_sync_cursor.sql) — see
+// that migration's comment for why this exists: at the batch sizes
+// Jobber's throttling forces here, a full backfill can easily span more
+// than one request's time limit, so each run needs to pick up where the
+// last one left off rather than restarting from page 1 every time.
+async function readSyncState(): Promise<SyncState> {
+  const { data } = await supabaseServer
+    .from("jobber_job_notes_sync_state")
+    .select("cursor, completed")
+    .eq("id", true)
+    .maybeSingle();
+
+  return { cursor: data?.cursor ?? null, completed: data?.completed ?? false };
+}
+
+async function writeSyncState(state: SyncState): Promise<void> {
+  const { error } = await supabaseServer.from("jobber_job_notes_sync_state").upsert(
+    { id: true, cursor: state.cursor, completed: state.completed, updated_at: new Date().toISOString() },
+    { onConflict: "id", ignoreDuplicates: false }
+  );
+
+  if (error) {
+    console.error("Could not save job-notes sync cursor:", error.message);
+  }
+}
+
 async function getJobNotesPage(
   cursor: string | null,
   pageNumber: number
@@ -235,10 +272,11 @@ async function getJobNotesPage(
   );
 }
 
-async function syncJobNotes() {
-  let cursor: string | null = null;
+async function syncJobNotes(startCursor: string | null) {
+  let cursor: string | null = startCursor;
   let hasNextPage = true;
   let pageNumber = 0;
+  let fullyCompleted = false;
 
   let jobsReceived = 0;
   let notesReceived = 0;
@@ -251,8 +289,13 @@ async function syncJobNotes() {
   while (hasNextPage) {
     pageNumber += 1;
 
-    if (pageNumber > 100) {
-      warnings.push("Sync stopped after 100 job pages for safety.");
+    // Per-invocation cap, not a total-history cap — this is deliberately
+    // small enough to comfortably finish within one request's time
+    // limit even in a worst case (every job's notes full of photos).
+    // The cursor is saved after every page below, so hitting this just
+    // means "come back and hit the route again"; nothing is lost.
+    if (pageNumber > 25) {
+      warnings.push("Stopped after 25 pages this run — hit the route again to continue.");
       break;
     }
 
@@ -320,6 +363,12 @@ async function syncJobNotes() {
       break;
     }
 
+    // Persisted after every page (not just at the end) so a timeout or
+    // crash mid-run only costs re-fetching the page in progress, not
+    // the whole backfill.
+    fullyCompleted = !hasNextPage;
+    await writeSyncState({ cursor, completed: fullyCompleted });
+
     if (hasNextPage) {
       await sleep(PAGE_DELAY_MS);
     }
@@ -333,13 +382,17 @@ async function syncJobNotes() {
     pagesProcessed: pageNumber,
     throttleRetries,
     warnings,
+    fullyCompleted,
+    nextCursor: cursor,
   };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   let syncRunId: string | null = null;
 
   try {
+    const restart = new URL(request.url).searchParams.get("restart") === "true";
+
     const alreadyRunning = await checkNotAlreadyRunning(SYNC_TYPE);
 
     if (alreadyRunning) {
@@ -354,9 +407,24 @@ export async function GET() {
       );
     }
 
+    if (restart) {
+      await writeSyncState({ cursor: null, completed: false });
+    }
+
+    const state = await readSyncState();
+
+    if (state.completed) {
+      return NextResponse.json({
+        success: true,
+        alreadyComplete: true,
+        message:
+          "The job-notes backfill already finished a full pass. Hit this route with ?restart=true to run it again (e.g. to pick up new Jobber notes).",
+      });
+    }
+
     syncRunId = await startSyncRun(SYNC_TYPE);
 
-    const syncResult = await syncJobNotes();
+    const syncResult = await syncJobNotes(state.cursor);
 
     await completeSyncRun(SYNC_TYPE, syncRunId, {
       recordsReceived: syncResult.notesReceived,
@@ -368,7 +436,9 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
-      message: "Jobber job notes synchronized successfully.",
+      message: syncResult.fullyCompleted
+        ? "Jobber job notes fully synchronized."
+        : "Made progress, but not finished yet — hit this route again to continue.",
       ...syncResult,
     });
   } catch (error) {
