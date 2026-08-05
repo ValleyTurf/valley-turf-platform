@@ -407,6 +407,45 @@ async function getVisitDurationMinutes(
   return minutesByVisit;
 }
 
+type JobberVisitLaborRow = {
+  jobber_visit_id: string;
+  duration_seconds: number;
+};
+
+// Historical fallback for getVisitDurationMinutes above: this app's own
+// on-site timer (visit_time_logs) only has data for visits that
+// happened after that feature shipped. For everything before that,
+// jobber_visit_labor (029_add_jobber_visit_labor.sql, filled in by
+// app/api/jobber/sync-visit-labor/route.ts) holds whatever labor
+// duration Jobber itself tracked. Callers should prefer
+// visitDurationMap and only fall back to this when it has nothing for
+// a given visit — see the "on site" vs "logged (Jobber)" rendering on
+// Past Visits below.
+async function getVisitLaborMinutes(
+  visitIds: string[]
+): Promise<Map<string, number>> {
+  if (visitIds.length === 0) return new Map();
+
+  const { data, error } = await supabaseServer
+    .from("jobber_visit_labor")
+    .select("jobber_visit_id, duration_seconds")
+    .in("jobber_visit_id", visitIds);
+
+  if (error) {
+    console.error("Jobber visit labor query failed:", error.message);
+    return new Map();
+  }
+
+  const minutesByVisit = new Map<string, number>();
+  for (const row of (data ?? []) as JobberVisitLaborRow[]) {
+    if (row.duration_seconds > 0) {
+      minutesByVisit.set(row.jobber_visit_id, row.duration_seconds / 60);
+    }
+  }
+
+  return minutesByVisit;
+}
+
 function formatDurationMinutes(minutes: number | undefined): string | null {
   if (!minutes || minutes <= 0) return null;
 
@@ -1058,7 +1097,31 @@ export default async function CustomerDetailPage({
   } = await getVisitUsageMaps(allVisitIds);
 
   const visitDurationMap = await getVisitDurationMinutes(allVisitIds);
+  const visitLaborMap = await getVisitLaborMinutes(allVisitIds);
   const visitAssignedNamesMap = await getVisitAssignedNames(allVisitIds);
+
+  // This app's own on-site timer (visitDurationMap) wins when it has
+  // data; jobber_visit_labor only fills in for visits from before that
+  // timer feature existed. Pre-computed here (rather than inline in
+  // JSX) so Past Visits below can render one label instead of
+  // duplicating this fallback logic in three places.
+  const visitDisplayDurationMap = new Map<
+    string,
+    { minutes: number; source: "own" | "jobber" }
+  >();
+
+  for (const visitId of allVisitIds) {
+    const ownMinutes = visitDurationMap.get(visitId);
+    if (ownMinutes) {
+      visitDisplayDurationMap.set(visitId, { minutes: ownMinutes, source: "own" });
+      continue;
+    }
+
+    const jobberMinutes = visitLaborMap.get(visitId);
+    if (jobberMinutes) {
+      visitDisplayDurationMap.set(visitId, { minutes: jobberMinutes, source: "jobber" });
+    }
+  }
 
   const pageEquipmentIds = equipmentList.map((item) => item.id).join(",");
 
@@ -1638,26 +1701,27 @@ export default async function CustomerDetailPage({
                             {formatVisitDateTime(visit.start_at)}
                             {visit.title ? ` — ${visit.title}` : ""}
                           </p>
-                          {(formatDurationMinutes(
-                            visitDurationMap.get(visit.jobber_visit_id)
-                          ) ||
+                          {(visitDisplayDurationMap.get(visit.jobber_visit_id) ||
                             (visitAssignedNamesMap.get(visit.jobber_visit_id)
                               ?.length ?? 0) > 0) && (
                             <p className="text-xs text-[#6b705c]">
-                              {formatDurationMinutes(
-                                visitDurationMap.get(visit.jobber_visit_id)
-                              ) && (
+                              {visitDisplayDurationMap.get(visit.jobber_visit_id) && (
                                 <>
-                                  ⏱{" "}
+                                  {visitDisplayDurationMap.get(visit.jobber_visit_id)!
+                                    .source === "own"
+                                    ? "⏱"
+                                    : "🛠"}{" "}
                                   {formatDurationMinutes(
-                                    visitDurationMap.get(visit.jobber_visit_id)
+                                    visitDisplayDurationMap.get(visit.jobber_visit_id)!
+                                      .minutes
                                   )}{" "}
-                                  on site
+                                  {visitDisplayDurationMap.get(visit.jobber_visit_id)!
+                                    .source === "own"
+                                    ? "on site"
+                                    : "logged (Jobber)"}
                                 </>
                               )}
-                              {formatDurationMinutes(
-                                visitDurationMap.get(visit.jobber_visit_id)
-                              ) &&
+                              {visitDisplayDurationMap.get(visit.jobber_visit_id) &&
                               (visitAssignedNamesMap.get(visit.jobber_visit_id)
                                 ?.length ?? 0) > 0
                                 ? " · "
