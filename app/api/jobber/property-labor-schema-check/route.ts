@@ -142,7 +142,12 @@ const SAMPLE_QUERY = `
             finalDuration
             label
             timeSheetCategory
-            user { name }
+            user { id }
+            targetItem {
+              __typename
+              ... on Visit { id }
+              ... on Job { id }
+            }
           }
         }
       }
@@ -164,7 +169,8 @@ type SampleJob = {
       finalDuration: number | null;
       label: string | null;
       timeSheetCategory: string | null;
-      user: { name: string | null } | null;
+      user: { id: string } | null;
+      targetItem: { __typename: string; id: string } | null;
     }[];
   };
 };
@@ -202,6 +208,8 @@ export async function GET() {
       "Property",
       "TimerTarget",
       "CustomFieldUnion",
+      "Name",
+      "User",
       ...relevantTypeNames.filter(
         (name) =>
           !name.startsWith("__") &&
