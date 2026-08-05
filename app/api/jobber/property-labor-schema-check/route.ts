@@ -269,10 +269,47 @@ export async function GET() {
   // lives on Property or Client), plus real timeSheetEntries next to
   // that job's visits so we can see how to match a labor entry to the
   // specific visit it belongs to.
+  //
+  // NOTE: this combined query is a single GraphQL operation, so if
+  // timeSheetEntries turns out to be permission-gated, GraphQL null
+  // propagation could wipe out the whole jobs list depending on
+  // nullability — always surface partial `data` alongside `errors`
+  // instead of discarding it, so a time-tracking permission problem
+  // doesn't also hide the custom-field results we actually need.
   const sampleResponse = await jobberGraphQL<SampleResult>(SAMPLE_QUERY);
-  results.sample = sampleResponse.errors?.length
-    ? { errors: sampleResponse.errors }
-    : sampleResponse.data?.jobs?.nodes ?? [];
+  results.sample = {
+    errors: sampleResponse.errors ?? null,
+    data: sampleResponse.data?.jobs?.nodes ?? null,
+  };
+
+  // Step 5: isolate timeSheetEntries in its OWN query, with nothing
+  // else that could get nulled out alongside it — if this alone comes
+  // back permission-denied, that confirms it's a scope problem with
+  // the Jobber app connection (likely needs a broader OAuth
+  // scope/reconnect) rather than something about how the query is
+  // shaped.
+  const TIME_SHEET_ONLY_QUERY = `
+    query TimeSheetOnly {
+      jobs(first: 3) {
+        nodes {
+          id
+          timeSheetEntries(first: 3) {
+            nodes {
+              id
+              finalDuration
+            }
+          }
+        }
+      }
+    }
+  `;
+  const timeSheetResponse = await jobberGraphQL<{ jobs: { nodes: { id: string; timeSheetEntries: unknown }[] } }>(
+    TIME_SHEET_ONLY_QUERY
+  );
+  results.timeSheetOnlyCheck = {
+    errors: timeSheetResponse.errors ?? null,
+    data: timeSheetResponse.data ?? null,
+  };
 
   return NextResponse.json(results);
 }
