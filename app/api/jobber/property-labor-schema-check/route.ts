@@ -79,6 +79,98 @@ function matchesKeyword(name: string): boolean {
   return KEYWORDS.some((keyword) => lower.includes(keyword));
 }
 
+const UNION_POSSIBLE_TYPES_QUERY = `
+  query UnionTypes($name: String!) {
+    __type(name: $name) {
+      name
+      kind
+      possibleTypes {
+        name
+      }
+    }
+  }
+`;
+
+type UnionTypesResult = {
+  __type: { name: string; kind: string; possibleTypes: { name: string }[] | null } | null;
+};
+
+// Round 2, live data: now that we know Property/Client/Job all expose
+// customFields, and Job exposes timeSheetEntries directly, pull a
+// small real sample so we can see actual label/value pairs (to find
+// which custom field is really "turf size") and how timeSheetEntries
+// relate to a specific visit (via targetItem) rather than just the
+// job as a whole.
+const SAMPLE_QUERY = `
+  query SampleData {
+    jobs(first: 5) {
+      nodes {
+        id
+        jobNumber
+        property {
+          id
+          customFields {
+            ... on CustomFieldText { label valueText }
+            ... on CustomFieldNumeric { label valueNumeric unit }
+            ... on CustomFieldTrueFalse { label valueTrueFalse }
+            ... on CustomFieldDropdown { label valueDropdown }
+            ... on CustomFieldArea { label unit valueArea { length width } }
+          }
+        }
+        client {
+          id
+          customFields {
+            ... on CustomFieldText { label valueText }
+            ... on CustomFieldNumeric { label valueNumeric unit }
+            ... on CustomFieldTrueFalse { label valueTrueFalse }
+            ... on CustomFieldDropdown { label valueDropdown }
+            ... on CustomFieldArea { label unit valueArea { length width } }
+          }
+        }
+        visits(first: 5) {
+          nodes {
+            id
+            startAt
+            endAt
+          }
+        }
+        timeSheetEntries(first: 10) {
+          nodes {
+            id
+            startAt
+            endAt
+            finalDuration
+            label
+            timeSheetCategory
+            user { name }
+          }
+        }
+      }
+    }
+  }
+`;
+
+type SampleJob = {
+  id: string;
+  jobNumber: number | null;
+  property: { id: string; customFields: Record<string, unknown>[] } | null;
+  client: { id: string; customFields: Record<string, unknown>[] } | null;
+  visits: { nodes: { id: string; startAt: string | null; endAt: string | null }[] };
+  timeSheetEntries: {
+    nodes: {
+      id: string;
+      startAt: string | null;
+      endAt: string | null;
+      finalDuration: number | null;
+      label: string | null;
+      timeSheetCategory: string | null;
+      user: { name: string | null } | null;
+    }[];
+  };
+};
+
+type SampleResult = { jobs: { nodes: SampleJob[] } };
+
 export async function GET() {
   const results: Record<string, unknown> = {};
 
@@ -108,6 +200,8 @@ export async function GET() {
       "Job",
       "ClientProperty",
       "Property",
+      "TimerTarget",
+      "CustomFieldUnion",
       ...relevantTypeNames.filter(
         (name) =>
           !name.startsWith("__") &&
@@ -149,6 +243,28 @@ export async function GET() {
   }
 
   results.typeDetails = typeDetails;
+
+  // Step 3: union possibleTypes for TimerTarget and CustomFieldUnion —
+  // tells us exactly what a timer can be attached to (Job vs Visit)
+  // and what custom field shapes exist.
+  const unionResults: Record<string, unknown> = {};
+  for (const name of ["TimerTarget", "CustomFieldUnion"]) {
+    const response = await jobberGraphQL<UnionTypesResult>(UNION_POSSIBLE_TYPES_QUERY, { name });
+    unionResults[name] = response.errors?.length
+      ? { errors: response.errors }
+      : response.data?.__type?.possibleTypes ?? null;
+  }
+  results.unionPossibleTypes = unionResults;
+
+  // Step 4: live sample of 5 real jobs — actual custom field
+  // labels/values (to find which one is "turf size" and whether it
+  // lives on Property or Client), plus real timeSheetEntries next to
+  // that job's visits so we can see how to match a labor entry to the
+  // specific visit it belongs to.
+  const sampleResponse = await jobberGraphQL<SampleResult>(SAMPLE_QUERY);
+  results.sample = sampleResponse.errors?.length
+    ? { errors: sampleResponse.errors }
+    : sampleResponse.data?.jobs?.nodes ?? [];
 
   return NextResponse.json(results);
 }
