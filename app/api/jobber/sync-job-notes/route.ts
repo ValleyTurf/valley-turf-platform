@@ -49,8 +49,15 @@ const JOB_BATCH_SIZE = 4;
 const NOTES_PER_JOB = 15;
 const FILES_PER_NOTE = 5;
 const PAGE_DELAY_MS = 2500;
-const THROTTLE_RETRY_DELAY_MS = 6000;
-const MAX_THROTTLE_RETRIES = 8;
+
+// Kept short enough that one page's worst-case retry time (sum of
+// 4+8+12+16+20 = 60s here) leaves real headroom under
+// SYNC_TIME_BUDGET_MS below for the fetch itself plus other pages —
+// the original 8-retry/6s version could burn its entire 216s just
+// retrying page 1, which is exactly how a run ended up stuck on
+// "running" for 5+ minutes with nothing to show for it.
+const THROTTLE_RETRY_DELAY_MS = 4000;
+const MAX_THROTTLE_RETRIES = 5;
 
 const JOB_NOTES_QUERY = `
   query GetJobNotesPage($limit: Int!, $cursor: String, $notesLimit: Int!, $filesLimit: Int!) {
@@ -387,6 +394,38 @@ async function syncJobNotes(startCursor: string | null) {
   };
 }
 
+// A run stuck in "running" past this age almost certainly didn't fail
+// gracefully — it got hard-killed by Vercel's function time limit
+// before its own catch block (and failSyncRun) ever ran, which is
+// exactly the failure mode SYNC_TIME_BUDGET_MS below is meant to
+// prevent going forward. This lets the route self-heal from any run
+// that got stuck before that fix, or from a genuinely wedged run,
+// instead of requiring a manual SQL reset every time.
+const STALE_RUN_THRESHOLD_MS = 6 * 60 * 1000;
+
+// Vercel's maxDuration below is a hard kill with no cleanup — if the
+// sync is still going this close to it, better to give up on our own
+// terms (mark the run failed with a clear reason, respond to the
+// request) than get silently killed and leave jobber_sync_status stuck
+// on "running" forever.
+const SYNC_TIME_BUDGET_MS = 250_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 export async function GET(request: Request) {
   let syncRunId: string | null = null;
 
@@ -396,14 +435,25 @@ export async function GET(request: Request) {
     const alreadyRunning = await checkNotAlreadyRunning(SYNC_TYPE);
 
     if (alreadyRunning) {
-      return NextResponse.json(
-        {
-          success: false,
-          alreadyRunning: true,
-          message: "A Jobber job-notes sync is already running.",
-          lastStartedAt: alreadyRunning.lastStartedAt,
-        },
-        { status: 409 }
+      const startedAtMs = alreadyRunning.lastStartedAt
+        ? new Date(alreadyRunning.lastStartedAt).getTime()
+        : null;
+      const isStale = startedAtMs !== null && Date.now() - startedAtMs > STALE_RUN_THRESHOLD_MS;
+
+      if (!isStale) {
+        return NextResponse.json(
+          {
+            success: false,
+            alreadyRunning: true,
+            message: "A Jobber job-notes sync is already running.",
+            lastStartedAt: alreadyRunning.lastStartedAt,
+          },
+          { status: 409 }
+        );
+      }
+
+      console.warn(
+        `Job-notes sync stuck on "running" since ${alreadyRunning.lastStartedAt} — treating as orphaned and starting a new run.`
       );
     }
 
@@ -424,7 +474,11 @@ export async function GET(request: Request) {
 
     syncRunId = await startSyncRun(SYNC_TYPE);
 
-    const syncResult = await syncJobNotes(state.cursor);
+    const syncResult = await withTimeout(
+      syncJobNotes(state.cursor),
+      SYNC_TIME_BUDGET_MS,
+      "Job notes sync exceeded its time budget for this run (likely stuck on a slow/throttled Jobber request). Progress through the last completed page was saved — hit the route again to resume."
+    );
 
     await completeSyncRun(SYNC_TYPE, syncRunId, {
       recordsReceived: syncResult.notesReceived,
