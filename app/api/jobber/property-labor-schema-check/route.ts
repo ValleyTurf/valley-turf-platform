@@ -134,22 +134,6 @@ const SAMPLE_QUERY = `
             endAt
           }
         }
-        timeSheetEntries(first: 10) {
-          nodes {
-            id
-            startAt
-            endAt
-            finalDuration
-            label
-            timeSheetCategory
-            user { id }
-            targetItem {
-              __typename
-              ... on Visit { id }
-              ... on Job { id }
-            }
-          }
-        }
       }
     }
   }
@@ -161,18 +145,6 @@ type SampleJob = {
   property: { id: string; customFields: Record<string, unknown>[] } | null;
   client: { id: string; customFields: Record<string, unknown>[] } | null;
   visits: { nodes: { id: string; startAt: string | null; endAt: string | null }[] };
-  timeSheetEntries: {
-    nodes: {
-      id: string;
-      startAt: string | null;
-      endAt: string | null;
-      finalDuration: number | null;
-      label: string | null;
-      timeSheetCategory: string | null;
-      user: { id: string } | null;
-      targetItem: { __typename: string; id: string } | null;
-    }[];
-  };
 };
 
 type SampleResult = { jobs: { nodes: SampleJob[] } };
