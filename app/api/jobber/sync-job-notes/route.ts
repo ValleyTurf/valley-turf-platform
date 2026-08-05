@@ -59,6 +59,13 @@ const PAGE_DELAY_MS = 2500;
 const THROTTLE_RETRY_DELAY_MS = 4000;
 const MAX_THROTTLE_RETRIES = 5;
 
+// How many notes within a single page process at once (each doing its
+// own bounded-concurrency attachment downloads on top of this). This
+// only affects Supabase Storage/DB traffic and the re-hosted download
+// URLs — it does not add any extra Jobber GraphQL calls, so it isn't
+// subject to Jobber's throttling the way JOB_BATCH_SIZE etc. are.
+const NOTE_PROCESSING_CONCURRENCY = 6;
+
 const JOB_NOTES_QUERY = `
   query GetJobNotesPage($limit: Int!, $cursor: String, $notesLimit: Int!, $filesLimit: Int!) {
     jobs(first: $limit, after: $cursor) {
@@ -159,6 +166,12 @@ function extensionFor(fileName: string | null, contentType: string | null): stri
   return "jpg";
 }
 
+// No single download is allowed to hang indefinitely and eat the
+// whole run's time budget — this is very likely why one page burned
+// all 250s (up to ~60 notes x up to 5 photos each, all downloaded
+// sequentially, with no bound on any individual request).
+const DOWNLOAD_TIMEOUT_MS = 20_000;
+
 // Jobber's file URLs might be pre-signed (usable as-is) or might expect
 // the same bearer token the GraphQL API uses — tried in that order
 // since a pre-signed URL is the more common vendor pattern and adding
@@ -170,10 +183,15 @@ async function downloadAttachment(
   url: string
 ): Promise<{ bytes: Buffer; contentType: string } | null> {
   async function tryFetch(headers?: Record<string, string>) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
+
     try {
-      return await fetch(url, headers ? { headers } : undefined);
+      return await fetch(url, { headers, signal: controller.signal });
     } catch {
       return null;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -195,44 +213,78 @@ async function downloadAttachment(
   return { bytes: Buffer.from(arrayBuffer), contentType };
 }
 
+// Bounded-concurrency map — plain Promise.all would fire every item at
+// once, which for the outer note loop below (up to 4 jobs x 15 notes =
+// 60 items per page, each already doing up to 5 parallel downloads
+// internally) could mean hundreds of simultaneous outbound requests.
+// A small pool keeps real parallelism (the actual fix for the
+// sequential-download bottleneck) without hammering Jobber/Supabase at
+// once and risking fresh throttling.
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function runNext(): Promise<void> {
+    const index = nextIndex;
+    nextIndex += 1;
+    if (index >= items.length) return;
+
+    results[index] = await worker(items[index]);
+    await runNext();
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => runNext());
+  await Promise.all(workers);
+
+  return results;
+}
+
+const ATTACHMENT_DOWNLOAD_CONCURRENCY = 5;
+
 async function downloadAndStoreAttachments(
   jobberJobId: string,
   attachments: JobberFileAttachment[],
   warnings: string[]
 ): Promise<string[]> {
-  const paths: string[] = [];
+  const results = await mapWithConcurrency(
+    attachments,
+    ATTACHMENT_DOWNLOAD_CONCURRENCY,
+    async (attachment): Promise<string | null> => {
+      const sourceUrl = attachment.downloadUrl ?? attachment.url;
+      if (!sourceUrl) return null;
 
-  for (const attachment of attachments) {
-    const sourceUrl = attachment.downloadUrl ?? attachment.url;
-    if (!sourceUrl) continue;
+      const downloaded = await downloadAttachment(sourceUrl);
+      if (!downloaded) {
+        warnings.push(`Could not download attachment ${attachment.id} on job ${jobberJobId}.`);
+        return null;
+      }
 
-    const downloaded = await downloadAttachment(sourceUrl);
-    if (!downloaded) {
-      warnings.push(`Could not download attachment ${attachment.id} on job ${jobberJobId}.`);
-      continue;
+      const ext = extensionFor(attachment.fileName, attachment.contentType ?? downloaded.contentType);
+      const path = `jobber-import/${jobberJobId}/${crypto.randomUUID()}.${ext}`;
+
+      const { error: uploadError } = await supabaseServer.storage
+        .from(PHOTO_BUCKET)
+        .upload(path, downloaded.bytes, {
+          contentType: downloaded.contentType,
+          upsert: true,
+        });
+
+      if (uploadError) {
+        warnings.push(
+          `Could not store attachment ${attachment.id} on job ${jobberJobId}: ${uploadError.message}`
+        );
+        return null;
+      }
+
+      return path;
     }
+  );
 
-    const ext = extensionFor(attachment.fileName, attachment.contentType ?? downloaded.contentType);
-    const path = `jobber-import/${jobberJobId}/${crypto.randomUUID()}.${ext}`;
-
-    const { error: uploadError } = await supabaseServer.storage
-      .from(PHOTO_BUCKET)
-      .upload(path, downloaded.bytes, {
-        contentType: downloaded.contentType,
-        upsert: true,
-      });
-
-    if (uploadError) {
-      warnings.push(
-        `Could not store attachment ${attachment.id} on job ${jobberJobId}: ${uploadError.message}`
-      );
-      continue;
-    }
-
-    paths.push(path);
-  }
-
-  return paths;
+  return results.filter((path): path is string => path !== null);
 }
 
 type SyncState = { cursor: string | null; completed: boolean };
@@ -320,6 +372,14 @@ async function syncJobNotes(startCursor: string | null) {
 
     jobsReceived += jobs.length;
 
+    // Flatten to one work item per note so the whole page's notes (up
+    // to JOB_BATCH_SIZE x NOTES_PER_JOB) process concurrently instead
+    // of one job, one note at a time — that sequential nesting was the
+    // real bottleneck (worse than the per-attachment loop alone), since
+    // a page with several photo-heavy notes serialized all of them one
+    // after another.
+    const noteWorkItems: { job: JobberJobNode; jobberClientId: string; note: JobberJobNoteNode }[] = [];
+
     for (const job of jobs) {
       const jobberClientId = job.client?.id ?? null;
       if (!jobberClientId) continue;
@@ -328,15 +388,26 @@ async function syncJobNotes(startCursor: string | null) {
       notesReceived += noteNodes.length;
 
       for (const note of noteNodes) {
+        noteWorkItems.push({ job, jobberClientId, note });
+      }
+    }
+
+    const noteResults = await mapWithConcurrency(
+      noteWorkItems,
+      NOTE_PROCESSING_CONCURRENCY,
+      async ({ job, jobberClientId, note }) => {
         const message = cleanText(note.message);
         const attachments = (note.fileAttachments?.edges ?? []).map((e) => e.node);
+        const localWarnings: string[] = [];
 
         const photoPaths =
           attachments.length > 0
-            ? await downloadAndStoreAttachments(job.id, attachments, warnings)
+            ? await downloadAndStoreAttachments(job.id, attachments, localWarnings)
             : [];
 
-        if (!message && photoPaths.length === 0) continue;
+        if (!message && photoPaths.length === 0) {
+          return { saved: false, photosStored: 0, warnings: localWarnings };
+        }
 
         const { error: upsertError } = await supabaseServer.from("jobber_job_notes").upsert(
           {
@@ -353,13 +424,18 @@ async function syncJobNotes(startCursor: string | null) {
         );
 
         if (upsertError) {
-          warnings.push(`Could not save note ${note.id} on job ${job.id}: ${upsertError.message}`);
-          continue;
+          localWarnings.push(`Could not save note ${note.id} on job ${job.id}: ${upsertError.message}`);
+          return { saved: false, photosStored: 0, warnings: localWarnings };
         }
 
-        notesSaved += 1;
-        photosStored += photoPaths.length;
+        return { saved: true, photosStored: photoPaths.length, warnings: localWarnings };
       }
+    );
+
+    for (const result of noteResults) {
+      if (result.saved) notesSaved += 1;
+      photosStored += result.photosStored;
+      warnings.push(...result.warnings);
     }
 
     hasNextPage = pageInfo?.hasNextPage ?? false;
