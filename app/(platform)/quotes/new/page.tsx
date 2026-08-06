@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import NewQuoteForm from "./NewQuoteForm";
 import type { PickerCustomer, PickerLead } from "../QuoteRecipientPicker";
+import type { ServicePriceRow } from "@/lib/servicePricing";
 
 type CustomerRow = {
   jobber_client_id: string;
@@ -18,6 +19,13 @@ type CustomerRow = {
   city: string | null;
   state: string | null;
   postal_code: string | null;
+  turf_size_range: string | null;
+};
+
+type ServicePricingRow = {
+  service_name: string;
+  turf_size_range: string;
+  price: number | string;
 };
 
 type LeadRow = {
@@ -59,11 +67,11 @@ function defaultExpiresAt(): string {
 }
 
 export default async function NewQuotePage() {
-  const [customersResult, leadsResult] = await Promise.all([
+  const [customersResult, leadsResult, servicePricingResult] = await Promise.all([
     supabaseServer
       .from("customers")
       .select(
-        "jobber_client_id, full_name, first_name, last_name, company_name, email, phone, address_line_1, city, state, postal_code"
+        "jobber_client_id, full_name, first_name, last_name, company_name, email, phone, address_line_1, city, state, postal_code, turf_size_range"
       )
       .order("full_name", { ascending: true })
       .limit(2000),
@@ -73,6 +81,10 @@ export default async function NewQuotePage() {
       .select("id, first_name, last_name, email, phone")
       .order("created_at", { ascending: false })
       .limit(500),
+
+    supabaseServer
+      .from("service_pricing")
+      .select("service_name, turf_size_range, price"),
   ]);
 
   const customers: PickerCustomer[] = ((customersResult.data ??
@@ -82,6 +94,14 @@ export default async function NewQuotePage() {
     email: row.email,
     phone: row.phone,
     address: customerAddress(row),
+    turfSizeRange: row.turf_size_range,
+  }));
+
+  const servicePrices: ServicePriceRow[] = ((servicePricingResult.data ??
+    []) as ServicePricingRow[]).map((row) => ({
+    serviceName: row.service_name,
+    turfSizeRange: row.turf_size_range,
+    price: Number(row.price),
   }));
 
   const leads: PickerLead[] = ((leadsResult.data ?? []) as LeadRow[]).map(
@@ -136,6 +156,7 @@ export default async function NewQuotePage() {
             customers={customers}
             leads={leads}
             defaultExpiresAt={defaultExpiresAt()}
+            servicePrices={servicePrices}
           />
         </section>
       </div>

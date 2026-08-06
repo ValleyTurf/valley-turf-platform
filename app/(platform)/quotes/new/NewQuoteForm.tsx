@@ -1,30 +1,83 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useMemo, useState } from "react";
 import { createQuote } from "../actions";
 import { initialActionState } from "../actionState";
 import QuoteRecipientPicker, {
   type PickerCustomer,
   type PickerLead,
 } from "../QuoteRecipientPicker";
+import {
+  TURF_SIZE_RANGES,
+  findPrice,
+  distinctServiceNames,
+  type ServicePriceRow,
+} from "@/lib/servicePricing";
 
 export default function NewQuoteForm({
   customers,
   leads,
   defaultExpiresAt,
+  servicePrices,
 }: {
   customers: PickerCustomer[];
   leads: PickerLead[];
   defaultExpiresAt: string;
+  servicePrices: ServicePriceRow[];
 }) {
   const [state, formAction, isPending] = useActionState(
     createQuote,
     initialActionState
   );
 
+  const [turfSizeRange, setTurfSizeRange] = useState("");
+  const [serviceCategory, setServiceCategory] = useState("");
+  const [priceTotal, setPriceTotal] = useState("");
+
+  const serviceNames = useMemo(
+    () => distinctServiceNames(servicePrices),
+    [servicePrices]
+  );
+
+  const suggestedPrice = useMemo(
+    () => findPrice(servicePrices, serviceCategory, turfSizeRange),
+    [servicePrices, serviceCategory, turfSizeRange]
+  );
+
   return (
     <form action={formAction} className="mt-4 space-y-6">
-      <QuoteRecipientPicker customers={customers} leads={leads} />
+      <QuoteRecipientPicker
+        customers={customers}
+        leads={leads}
+        onTurfSizeChange={(range) => setTurfSizeRange(range ?? "")}
+      />
+
+      <div>
+        <label
+          htmlFor="turf_size_range"
+          className="text-xs font-bold text-[#9c7a20]"
+        >
+          Turf Size
+        </label>
+        <select
+          id="turf_size_range"
+          value={turfSizeRange}
+          onChange={(event) => setTurfSizeRange(event.target.value)}
+          className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20 sm:w-64"
+        >
+          <option value="">Unknown / not applicable</option>
+          {TURF_SIZE_RANGES.map((range) => (
+            <option key={range} value={range}>
+              {range} sq ft
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-[#6b705c]">
+          Auto-filled from the selected customer&apos;s property profile when
+          known — change it anytime. Used only to suggest a price below, it
+          isn&apos;t saved on the quote.
+        </p>
+      </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
@@ -38,9 +91,17 @@ export default function NewQuoteForm({
             id="service_category"
             name="service_category"
             type="text"
+            list="service-name-options"
+            value={serviceCategory}
+            onChange={(event) => setServiceCategory(event.target.value)}
             placeholder="e.g. Turf Installation"
             className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
           />
+          <datalist id="service-name-options">
+            {serviceNames.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
         </div>
 
         <div>
@@ -54,9 +115,20 @@ export default function NewQuoteForm({
             min="0"
             step="0.01"
             required
+            value={priceTotal}
+            onChange={(event) => setPriceTotal(event.target.value)}
             placeholder="0.00"
             className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
           />
+          {suggestedPrice !== null && (
+            <button
+              type="button"
+              onClick={() => setPriceTotal(String(suggestedPrice))}
+              className="mt-1 text-xs font-bold text-[#174734] hover:underline"
+            >
+              Use suggested price — ${suggestedPrice.toFixed(2)}
+            </button>
+          )}
         </div>
       </div>
 

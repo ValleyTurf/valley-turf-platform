@@ -8,6 +8,7 @@ export type PickerCustomer = {
   email: string | null;
   phone: string | null;
   address: string | null;
+  turfSizeRange: string | null;
 };
 
 export type PickerLead = {
@@ -30,9 +31,11 @@ type Mode = "customer" | "lead" | "new";
 export default function QuoteRecipientPicker({
   customers,
   leads,
+  onTurfSizeChange,
 }: {
   customers: PickerCustomer[];
   leads: PickerLead[];
+  onTurfSizeChange?: (range: string | null) => void;
 }) {
   const [mode, setMode] = useState<Mode>("new");
   const [search, setSearch] = useState("");
@@ -73,6 +76,8 @@ export default function QuoteRecipientPicker({
       setPhone("");
       setAddress("");
     }
+
+    onTurfSizeChange?.(null);
   }
 
   function chooseCustomer(customer: PickerCustomer) {
@@ -81,6 +86,7 @@ export default function QuoteRecipientPicker({
     setEmail(customer.email ?? "");
     setPhone(customer.phone ?? "");
     setAddress(customer.address ?? "");
+    onTurfSizeChange?.(customer.turfSizeRange);
   }
 
   function chooseLead(lead: PickerLead) {
@@ -88,6 +94,7 @@ export default function QuoteRecipientPicker({
     setName(lead.name);
     setEmail(lead.email ?? "");
     setPhone(lead.phone ?? "");
+    onTurfSizeChange?.(null);
   }
 
   const tabClasses = (active: boolean) =>

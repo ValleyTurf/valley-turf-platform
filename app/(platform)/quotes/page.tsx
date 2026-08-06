@@ -104,12 +104,20 @@ export default async function QuotesPage({ searchParams }: QuotesPageProps) {
             </p>
           </div>
 
-          <Link
-            href="/quotes/new"
-            className="rounded-xl bg-[#d4af37] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#e6c766]"
-          >
-            + New Quote
-          </Link>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Link
+              href="/quotes/pricing"
+              className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold transition hover:bg-white"
+            >
+              Manage Pricing
+            </Link>
+            <Link
+              href="/quotes/new"
+              className="rounded-xl bg-[#d4af37] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#e6c766]"
+            >
+              + New Quote
+            </Link>
+          </div>
         </header>
 
         <section className="mt-6 rounded-2xl bg-white p-5 shadow">
