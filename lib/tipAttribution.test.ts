@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attributeTips } from "./tips";
+import { attributeTips } from "./tipAttribution";
 
 const PERIOD_START = "2026-08-01";
 const PERIOD_END = "2026-08-15";
