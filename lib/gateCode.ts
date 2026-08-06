@@ -14,7 +14,7 @@
 const GATE_CODE_PATTERNS: RegExp[] = [
   /gate\s*code\s*(?:is|are|was|=|:)?\s*([#*0-9A-Za-z]{2,10})/i,
   /(?:keypad|key\s*pad)\s*code\s*(?:is|are|was|=|:)?\s*([#*0-9A-Za-z]{2,10})/i,
-  /gate\s*combo(?:nation)?\s*(?:is|are|was|=|:)?\s*([#*0-9A-Za-z]{2,10})/i,
+  /gate\s*(?:combo|combination)\s*(?:is|are|was|=|:)?\s*([#*0-9A-Za-z]{2,10})/i,
   /code\s*(?:to|for)\s*(?:the\s*|get\s*(?:in|into)\s*(?:the\s*)?)?gate\s*(?:is|are|was|=|:)?\s*([#*0-9A-Za-z]{2,10})/i,
 ];
 
