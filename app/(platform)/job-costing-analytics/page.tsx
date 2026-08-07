@@ -49,6 +49,7 @@ type CategoryJobRow = {
   invoice_number: string | null;
   jobber_web_uri: string | null;
   issue_date: string | null;
+  client_id: string | null;
   client_name: string;
   revenue: number;
   direct_cost: number;
@@ -254,6 +255,7 @@ function buildCategoryJobRows(
       invoice_number: meta?.invoice_number ?? null,
       jobber_web_uri: meta?.jobber_web_uri ?? null,
       issue_date: row.issue_date,
+      client_id: row.jobber_client_id,
       client_name: row.jobber_client_id
         ? customerNames.get(row.jobber_client_id) ?? "Unknown Customer"
         : "Unknown Customer",
@@ -1202,7 +1204,16 @@ export default async function JobCostingAnalyticsPage({
                                 {jobRows.map((job) => (
                                   <tr key={job.jobber_invoice_id}>
                                     <td className="px-4 py-2 font-medium">
-                                      {job.client_name}
+                                      {job.client_id ? (
+                                        <Link
+                                          href={`/customers/${encodeURIComponent(job.client_id)}`}
+                                          className="text-[#174734] underline hover:text-[#9c7a20]"
+                                        >
+                                          {job.client_name}
+                                        </Link>
+                                      ) : (
+                                        job.client_name
+                                      )}
                                     </td>
                                     <td className="px-4 py-2">
                                       {job.jobber_web_uri ? (
