@@ -54,6 +54,15 @@ type CategoryJobRow = {
   overhead_allocated: number;
   estimated_profit: number;
   profit_margin_pct: number | null;
+  // Recomputed from the same source tables /job-costs logs against
+  // (visit_material_usage, keyed off each material's point-in-time
+  // unit_cost_at_time) rather than read off the view — direct_cost on
+  // invoice_cost_breakdown is only a single combined figure. laborCost +
+  // materialCost should track close to direct_cost but isn't guaranteed
+  // to match it to the penny; Total Cost in the UI stays sourced from
+  // direct_cost + overhead_allocated so it's always authoritative.
+  laborCost: number;
+  materialCost: number;
 };
 
 type CategorySummary = {
@@ -219,7 +228,8 @@ function buildCategoryJobRows(
   invoiceMeta: Map<
     string,
     { invoice_number: string | null; jobber_web_uri: string | null }
-  >
+  >,
+  costBreakdowns: Map<string, CostBreakdown>
 ): Map<string, CategoryJobRow[]> {
   const map = new Map<string, CategoryJobRow[]>();
 
@@ -230,6 +240,7 @@ function buildCategoryJobRows(
     const overhead = toNumber(row.overhead_allocated);
     const profit = toNumber(row.estimated_profit);
     const meta = invoiceMeta.get(row.jobber_invoice_id);
+    const breakdown = costBreakdowns.get(row.jobber_invoice_id);
 
     const jobRow: CategoryJobRow = {
       jobber_invoice_id: row.jobber_invoice_id,
@@ -244,6 +255,8 @@ function buildCategoryJobRows(
       overhead_allocated: overhead,
       estimated_profit: profit,
       profit_margin_pct: revenue > 0 ? (profit / revenue) * 100 : null,
+      laborCost: breakdown?.labor ?? 0,
+      materialCost: breakdown?.materials ?? 0,
     };
 
     const list = map.get(category) ?? [];
@@ -319,6 +332,106 @@ async function fetchInvoiceMetaByIds(
   }
 
   return map;
+}
+
+type CostBreakdown = { labor: number; materials: number };
+
+// Recomputes a labor-vs-materials split per invoice by walking the same
+// source tables /job-costs logs against: each invoice's visits, each
+// visit's logged material usage (visit_material_usage, priced at
+// unit_cost_at_time — the point-in-time rate, not materials.unit_cost
+// today), split by whether the material is a real material or one of the
+// synthetic "Labor - {employee name}" rate rows addEmployee() creates
+// (see job-costs/page.tsx's identical convention). Equipment usage
+// (visit_equipment_usage) has no dollar rate of its own in this schema,
+// so it isn't part of either bucket.
+async function fetchCostBreakdownByInvoice(
+  invoiceIds: string[]
+): Promise<Map<string, CostBreakdown>> {
+  const result = new Map<string, CostBreakdown>();
+  if (invoiceIds.length === 0) return result;
+
+  const visitToInvoice = new Map<string, string>();
+  for (let i = 0; i < invoiceIds.length; i += DRILLDOWN_BATCH_SIZE) {
+    const batchIds = invoiceIds.slice(i, i + DRILLDOWN_BATCH_SIZE);
+    const { data, error } = await supabaseServer
+      .from("jobber_visits")
+      .select("jobber_visit_id, jobber_invoice_id")
+      .in("jobber_invoice_id", batchIds);
+
+    if (error) throw error;
+
+    for (const row of (data ?? []) as {
+      jobber_visit_id: string;
+      jobber_invoice_id: string | null;
+    }[]) {
+      if (row.jobber_invoice_id) {
+        visitToInvoice.set(row.jobber_visit_id, row.jobber_invoice_id);
+      }
+    }
+  }
+
+  const visitIds = Array.from(visitToInvoice.keys());
+  if (visitIds.length === 0) return result;
+
+  const usageRows: {
+    jobber_visit_id: string;
+    material_id: string;
+    quantity_used: number | string;
+    unit_cost_at_time: number | string;
+  }[] = [];
+  for (let i = 0; i < visitIds.length; i += DRILLDOWN_BATCH_SIZE) {
+    const batchIds = visitIds.slice(i, i + DRILLDOWN_BATCH_SIZE);
+    const { data, error } = await supabaseServer
+      .from("visit_material_usage")
+      .select("jobber_visit_id, material_id, quantity_used, unit_cost_at_time")
+      .in("jobber_visit_id", batchIds);
+
+    if (error) throw error;
+
+    usageRows.push(
+      ...((data ?? []) as typeof usageRows)
+    );
+  }
+  if (usageRows.length === 0) return result;
+
+  // Unfiltered on purpose — old invoices can reference a material/labor
+  // rate that's since been end-dated, and its name is still needed here.
+  const materialIds = Array.from(
+    new Set(usageRows.map((row) => row.material_id))
+  );
+  const materialNameMap = new Map<string, string>();
+  for (let i = 0; i < materialIds.length; i += DRILLDOWN_BATCH_SIZE) {
+    const batchIds = materialIds.slice(i, i + DRILLDOWN_BATCH_SIZE);
+    const { data, error } = await supabaseServer
+      .from("materials")
+      .select("id, name")
+      .in("id", batchIds);
+
+    if (error) throw error;
+
+    for (const row of (data ?? []) as { id: string; name: string | null }[]) {
+      materialNameMap.set(row.id, row.name ?? "");
+    }
+  }
+
+  for (const row of usageRows) {
+    const invoiceId = visitToInvoice.get(row.jobber_visit_id);
+    if (!invoiceId) continue;
+
+    const cost = toNumber(row.quantity_used) * toNumber(row.unit_cost_at_time);
+    const isLabor = materialNameMap.get(row.material_id)?.startsWith("Labor - ") ?? false;
+
+    const existing = result.get(invoiceId) ?? { labor: 0, materials: 0 };
+    if (isLabor) {
+      existing.labor += cost;
+    } else {
+      existing.materials += cost;
+    }
+    result.set(invoiceId, existing);
+  }
+
+  return result;
 }
 
 // Fetches every row of the view once, unfiltered. The page then slices this
@@ -445,12 +558,18 @@ export default async function JobCostingAnalyticsPage({
       new Set(rows.map((row) => row.jobber_invoice_id))
     );
 
-    const [customerNames, invoiceMeta] = await Promise.all([
+    const [customerNames, invoiceMeta, costBreakdowns] = await Promise.all([
       fetchCustomerNamesByIds(clientIds),
       fetchInvoiceMetaByIds(invoiceIds),
+      fetchCostBreakdownByInvoice(invoiceIds),
     ]);
 
-    categoryJobRows = buildCategoryJobRows(rows, customerNames, invoiceMeta);
+    categoryJobRows = buildCategoryJobRows(
+      rows,
+      customerNames,
+      invoiceMeta,
+      costBreakdowns
+    );
   } catch (err) {
     console.error("Category drill-down lookup failed:", err);
   }
@@ -947,77 +1066,98 @@ export default async function JobCostingAnalyticsPage({
                       </div>
 
                       {jobRows.length > 0 && (
-                        <div className="mt-5 hidden overflow-x-auto rounded-xl border border-[#e7e2d5] group-open:block">
-                          <table className="w-full min-w-[640px] text-left text-sm">
-                            <thead className="bg-[#f7f6f1] text-xs font-semibold uppercase tracking-wide text-[#6b705c]">
-                              <tr>
-                                <th className="px-4 py-2">Customer</th>
-                                <th className="px-4 py-2">Invoice</th>
-                                <th className="px-4 py-2">Date</th>
-                                <th className="px-4 py-2 text-right">
-                                  Revenue
-                                </th>
-                                <th className="px-4 py-2 text-right">Cost</th>
-                                <th className="px-4 py-2 text-right">
-                                  Profit
-                                </th>
-                                <th className="px-4 py-2 text-right">
-                                  Margin
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-[#eeeae0]">
-                              {jobRows.map((job) => (
-                                <tr key={job.jobber_invoice_id}>
-                                  <td className="px-4 py-2 font-medium">
-                                    {job.client_name}
-                                  </td>
-                                  <td className="px-4 py-2">
-                                    {job.jobber_web_uri ? (
-                                      <a
-                                        href={job.jobber_web_uri}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="text-[#9c7a20] underline"
-                                      >
-                                        {job.invoice_number ??
-                                          job.jobber_invoice_id}
-                                      </a>
-                                    ) : (
-                                      (job.invoice_number ?? "—")
-                                    )}
-                                  </td>
-                                  <td className="px-4 py-2 text-[#6b705c]">
-                                    {job.issue_date
-                                      ? formatDateLabel(job.issue_date)
-                                      : "—"}
-                                  </td>
-                                  <td className="px-4 py-2 text-right">
-                                    {formatCurrency(job.revenue)}
-                                  </td>
-                                  <td className="px-4 py-2 text-right">
-                                    {formatCurrency(
-                                      job.direct_cost + job.overhead_allocated
-                                    )}
-                                  </td>
-                                  <td
-                                    className={`px-4 py-2 text-right font-semibold ${
-                                      job.estimated_profit < 0
-                                        ? "text-red-600"
-                                        : "text-green-700"
-                                    }`}
-                                  >
-                                    {formatCurrency(job.estimated_profit)}
-                                  </td>
-                                  <td className="px-4 py-2 text-right text-[#6b705c]">
-                                    {job.profit_margin_pct !== null
-                                      ? `${job.profit_margin_pct.toFixed(0)}%`
-                                      : "—"}
-                                  </td>
+                        <div className="mt-5 hidden group-open:block">
+                          <div className="overflow-x-auto rounded-xl border border-[#e7e2d5]">
+                            <table className="w-full min-w-[760px] text-left text-sm">
+                              <thead className="bg-[#f7f6f1] text-xs font-semibold uppercase tracking-wide text-[#6b705c]">
+                                <tr>
+                                  <th className="px-4 py-2">Customer</th>
+                                  <th className="px-4 py-2">Invoice</th>
+                                  <th className="px-4 py-2">Date</th>
+                                  <th className="px-4 py-2 text-right">
+                                    Revenue
+                                  </th>
+                                  <th className="px-4 py-2 text-right">
+                                    Labor
+                                  </th>
+                                  <th className="px-4 py-2 text-right">
+                                    Materials
+                                  </th>
+                                  <th className="px-4 py-2 text-right">
+                                    Total Cost
+                                  </th>
+                                  <th className="px-4 py-2 text-right">
+                                    Profit
+                                  </th>
+                                  <th className="px-4 py-2 text-right">
+                                    Margin
+                                  </th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                              </thead>
+                              <tbody className="divide-y divide-[#eeeae0]">
+                                {jobRows.map((job) => (
+                                  <tr key={job.jobber_invoice_id}>
+                                    <td className="px-4 py-2 font-medium">
+                                      {job.client_name}
+                                    </td>
+                                    <td className="px-4 py-2">
+                                      {job.jobber_web_uri ? (
+                                        <a
+                                          href={job.jobber_web_uri}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="text-[#9c7a20] underline"
+                                        >
+                                          {job.invoice_number ??
+                                            job.jobber_invoice_id}
+                                        </a>
+                                      ) : (
+                                        (job.invoice_number ?? "—")
+                                      )}
+                                    </td>
+                                    <td className="px-4 py-2 text-[#6b705c]">
+                                      {job.issue_date
+                                        ? formatDateLabel(job.issue_date)
+                                        : "—"}
+                                    </td>
+                                    <td className="px-4 py-2 text-right">
+                                      {formatCurrency(job.revenue)}
+                                    </td>
+                                    <td className="px-4 py-2 text-right text-[#6b705c]">
+                                      {formatCurrency(job.laborCost)}
+                                    </td>
+                                    <td className="px-4 py-2 text-right text-[#6b705c]">
+                                      {formatCurrency(job.materialCost)}
+                                    </td>
+                                    <td className="px-4 py-2 text-right">
+                                      {formatCurrency(
+                                        job.direct_cost +
+                                          job.overhead_allocated
+                                      )}
+                                    </td>
+                                    <td
+                                      className={`px-4 py-2 text-right font-semibold ${
+                                        job.estimated_profit < 0
+                                          ? "text-red-600"
+                                          : "text-green-700"
+                                      }`}
+                                    >
+                                      {formatCurrency(job.estimated_profit)}
+                                    </td>
+                                    <td className="px-4 py-2 text-right text-[#6b705c]">
+                                      {job.profit_margin_pct !== null
+                                        ? `${job.profit_margin_pct.toFixed(0)}%`
+                                        : "—"}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          <p className="mt-2 text-xs text-[#9c7a20]">
+                            Labor and Materials reflect logged usage; Total
+                            Cost also folds in allocated overhead.
+                          </p>
                         </div>
                       )}
                     </details>
