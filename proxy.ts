@@ -35,10 +35,6 @@ const PUBLIC_PATHS = [
   "/icons",
   "/sw.js",
   "/offline.html",
-  // TEMPORARY — job-costing-analytics Labor $0 investigation. Delete this
-  // line and app/api/diagnostics/labor-cost/route.ts together once
-  // resolved.
-  "/api/diagnostics/labor-cost",
 ];
 
 // Routes Vercel Cron calls on a schedule (see vercel.json) that have no

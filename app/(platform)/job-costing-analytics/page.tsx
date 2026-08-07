@@ -4,6 +4,7 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getAllCampaignRoi, type CampaignRoi } from "@/lib/campaignRoi";
+import { isLaborMaterialName, parseLaborEmployeeName } from "@/lib/laborMaterialName";
 import {
   toNumber,
   formatCurrency,
@@ -348,8 +349,11 @@ type CostBreakdown = { labor: number; materials: number; unloggedLabor: boolean 
 // visit's logged material usage (visit_material_usage, priced at
 // unit_cost_at_time — the point-in-time rate, not materials.unit_cost
 // today), split by whether the material is a real material or one of the
-// synthetic "Labor - {employee name}" rate rows addEmployee() creates
-// (see job-costs/page.tsx's identical convention).
+// synthetic "Labor - {employee name}" rate rows addEmployee() creates —
+// matched via lib/laborMaterialName.ts rather than a literal string
+// comparison, since real data has these saved with an em dash instead of
+// a hyphen for at least some employees (an earlier all-zero Labor column
+// traced back to exactly this: every match was on a literal " - ").
 //
 // Committing an hour of labor to visit_material_usage requires someone to
 // actually visit /job-costs (or the My Day quick-entry) and save it —
@@ -435,11 +439,23 @@ async function fetchCostBreakdownByInvoice(
     unit_cost: number | string | null;
   }[];
   const materialNameMap = new Map(allMaterials.map((m) => [m.id, m.name ?? ""]));
-  const laborMaterialByName = new Map(
-    allMaterials
-      .filter((m) => (m.name ?? "").startsWith("Labor - "))
-      .map((m) => [m.name as string, { id: m.id, unitCost: toNumber(m.unit_cost) }])
-  );
+  // Keyed by the parsed *employee name*, not the raw material name — the
+  // dash character between "Labor" and the name isn't consistent across
+  // rows (see lib/laborMaterialName.ts), so matching on employee name
+  // instead of the literal string is what makes this actually work.
+  const laborMaterialByEmployeeName = new Map<
+    string,
+    { id: string; unitCost: number }
+  >();
+  for (const m of allMaterials) {
+    const employeeName = parseLaborEmployeeName(m.name);
+    if (employeeName) {
+      laborMaterialByEmployeeName.set(employeeName, {
+        id: m.id,
+        unitCost: toNumber(m.unit_cost),
+      });
+    }
+  }
 
   const savedKeys = new Set<string>();
 
@@ -450,8 +466,7 @@ async function fetchCostBreakdownByInvoice(
     savedKeys.add(`${row.jobber_visit_id}:${row.material_id}`);
 
     const cost = toNumber(row.quantity_used) * toNumber(row.unit_cost_at_time);
-    const isLabor =
-      materialNameMap.get(row.material_id)?.startsWith("Labor - ") ?? false;
+    const isLabor = isLaborMaterialName(materialNameMap.get(row.material_id));
 
     const bucket = getBucket(invoiceId);
     if (isLabor) {
@@ -493,7 +508,7 @@ async function fetchCostBreakdownByInvoice(
       const userName = userNameMap.get(row.user_id);
       if (!userName) continue;
 
-      const labor = laborMaterialByName.get(`Labor - ${userName}`);
+      const labor = laborMaterialByEmployeeName.get(userName);
       if (!labor) continue;
 
       // Already committed via visit_material_usage for this employee on

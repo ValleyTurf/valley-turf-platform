@@ -4,6 +4,7 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { saveVisitCosts } from "../materials/actions";
+import { parseLaborEmployeeName } from "@/lib/laborMaterialName";
 import {
   toNumber,
   formatCurrencyPrecise as formatCurrency,
@@ -334,18 +335,23 @@ export default async function JobCostsPage({
 
   // Timer-derived labor hours, keyed the same way as usageMap so the
   // render loop below can prefer a manually-saved value and only fall
-  // back to the timer's total when nothing's been logged yet. Matched
-  // by name ("Labor - {employee name}" is how addEmployee names the rate
-  // row in materials) since that's the rate row job costing actually
-  // bills against — users.hourly_rate is a separate, unrelated field.
+  // back to the timer's total when nothing's been logged yet. Matched by
+  // employee name via lib/laborMaterialName.ts (not a literal
+  // "Labor - {name}" string — some existing rows are saved with an em
+  // dash instead of a hyphen, which silently matched nothing here before)
+  // since that's the rate row job costing actually bills against —
+  // users.hourly_rate is a separate, unrelated field.
   const userNameMap = new Map<string, string>();
   for (const row of (usersResult.data ?? []) as UserRow[]) {
     if (row.name) userNameMap.set(row.id, row.name);
   }
 
-  const laborMaterialIdByName = new Map<string, string>();
+  const laborMaterialIdByEmployeeName = new Map<string, string>();
   for (const material of materials) {
-    laborMaterialIdByName.set(material.name, material.id);
+    const employeeName = parseLaborEmployeeName(material.name);
+    if (employeeName) {
+      laborMaterialIdByEmployeeName.set(employeeName, material.id);
+    }
   }
 
   const timerMinutesMap = new Map<string, number>();
@@ -355,7 +361,7 @@ export default async function JobCostsPage({
     const userName = userNameMap.get(row.user_id);
     if (!userName) continue;
 
-    const materialId = laborMaterialIdByName.get(`Labor - ${userName}`);
+    const materialId = laborMaterialIdByEmployeeName.get(userName);
     if (!materialId) continue;
 
     const startedMs = new Date(row.started_at).getTime();
