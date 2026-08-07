@@ -339,7 +339,8 @@ export default async function VisitsPage({ searchParams }: VisitsPageProps) {
                 {formatCurrencyPrecise(group.total)}
               </p>
               <p className="mt-1 text-xs text-[#6b705c]">
-                {formatNumber(group.jobCount)} job{group.jobCount === 1 ? "" : "s"}
+                {formatNumber(group.jobCount)} job{group.jobCount === 1 ? "" : "s"} ·{" "}
+                {formatNumber(group.visitCount)} visit{group.visitCount === 1 ? "" : "s"}
               </p>
             </article>
           ))}

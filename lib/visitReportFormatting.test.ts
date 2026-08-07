@@ -102,7 +102,7 @@ describe("filterVisitRows", () => {
 });
 
 describe("summarizeVisitsByJobType", () => {
-  it("counts each job once even if it has multiple visits in range", () => {
+  it("sums revenue once PER VISIT (recurring jobs bill per occurrence), while counting distinct jobs separately", () => {
     const rows = [
       row({ id: "v1", jobId: "j1", jobType: "Recurring", jobTotal: 200 }),
       row({ id: "v2", jobId: "j1", jobType: "Recurring", jobTotal: 200 }), // same job, 2nd visit
@@ -111,15 +111,15 @@ describe("summarizeVisitsByJobType", () => {
 
     const summary = summarizeVisitsByJobType(rows);
     expect(summary).toEqual([
-      { jobType: "One Off", total: 500, jobCount: 1 },
-      { jobType: "Recurring", total: 200, jobCount: 1 },
+      { jobType: "One Off", total: 500, jobCount: 1, visitCount: 1 },
+      { jobType: "Recurring", total: 400, jobCount: 1, visitCount: 2 },
     ]);
   });
 
   it("falls back to visit id when a visit has no job", () => {
     const rows = [row({ id: "v1", jobId: null, jobType: "One Off", jobTotal: 75 })];
     expect(summarizeVisitsByJobType(rows)).toEqual([
-      { jobType: "One Off", total: 75, jobCount: 1 },
+      { jobType: "One Off", total: 75, jobCount: 1, visitCount: 1 },
     ]);
   });
 

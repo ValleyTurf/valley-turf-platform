@@ -105,31 +105,49 @@ export function filterVisitRows(
   return result;
 }
 
-// Totals by job type, each distinct job counted once (not once per
-// visit) — a recurring job with several visits in range shouldn't have
-// its total price multiplied by how many of its visits fall in the
-// window. Mirrors the "One-off job / Visit based" split Jobber's own
-// report shows, without assuming which literal jobType string maps to
-// which label.
+// Totals by job type, summing job.total once PER VISIT — not deduped to
+// once per job. This looked wrong at first (a recurring job's total
+// looks like it'd get double-counted across its visits) but it's
+// actually correct: Jobber's own jobType breakdown labels the recurring
+// bucket "Visit based" specifically because a recurring job's price is
+// per occurrence, not a one-time total — each visit genuinely represents
+// its own billable unit. An earlier version of this function deduped by
+// job here, which silently undercounted recurring revenue by roughly
+// (visits ÷ jobs) — caught because it produced a YTD total well under
+// what Revenue showed, and a jobCount that didn't explain the gap
+// between it and the visit count.
+//
+// jobCount/visitCount are still tracked (deduped vs. raw) purely as
+// informational context alongside the dollar total, not part of the
+// calculation itself.
 export function summarizeVisitsByJobType(
   rows: VisitRow[]
-): { jobType: string; total: number; jobCount: number }[] {
-  const seenJobs = new Set<string>();
-  const totalsByType = new Map<string, { total: number; jobCount: number }>();
+): { jobType: string; total: number; jobCount: number; visitCount: number }[] {
+  const jobIdsByType = new Map<string, Set<string>>();
+  const totalsByType = new Map<string, number>();
+  const visitCountByType = new Map<string, number>();
 
   for (const row of rows) {
     const jobKey = row.jobId ?? row.id; // fall back to visit id if a visit has no job
-    if (seenJobs.has(jobKey)) continue;
-    seenJobs.add(jobKey);
 
-    const existing = totalsByType.get(row.jobType) ?? { total: 0, jobCount: 0 };
-    existing.total += row.jobTotal ?? 0;
-    existing.jobCount += 1;
-    totalsByType.set(row.jobType, existing);
+    const jobIds = jobIdsByType.get(row.jobType) ?? new Set<string>();
+    jobIds.add(jobKey);
+    jobIdsByType.set(row.jobType, jobIds);
+
+    totalsByType.set(
+      row.jobType,
+      (totalsByType.get(row.jobType) ?? 0) + (row.jobTotal ?? 0)
+    );
+    visitCountByType.set(row.jobType, (visitCountByType.get(row.jobType) ?? 0) + 1);
   }
 
   return Array.from(totalsByType.entries())
-    .map(([jobType, values]) => ({ jobType, ...values }))
+    .map(([jobType, total]) => ({
+      jobType,
+      total,
+      jobCount: jobIdsByType.get(jobType)?.size ?? 0,
+      visitCount: visitCountByType.get(jobType) ?? 0,
+    }))
     .sort((a, b) => b.total - a.total);
 }
 
