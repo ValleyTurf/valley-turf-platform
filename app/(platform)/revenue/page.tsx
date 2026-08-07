@@ -1085,6 +1085,12 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
 
           <div className="flex flex-wrap gap-3">
             <Link
+              href="/transactions"
+              className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold transition hover:bg-white"
+            >
+              View Transactions
+            </Link>
+            <Link
               href="/materials"
               className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold transition hover:bg-white"
             >

@@ -90,6 +90,7 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
     icon: "💰",
     items: [
       { name: "Revenue", href: "/revenue", icon: "💰" },
+      { name: "Transactions", href: "/transactions", icon: "🧾" },
       { name: "Profitability Alerts", href: "/alerts", icon: "🚨" },
     ],
   },

@@ -40,7 +40,7 @@ export const SECTIONS: { id: PermissionSection; label: string; description: stri
   {
     id: "financials",
     label: "Financials",
-    description: "Revenue dashboard and Profitability Alerts.",
+    description: "Revenue dashboard, Profitability Alerts, and Transactions.",
   },
   {
     id: "marketing_analytics",
@@ -92,7 +92,7 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
     "/costs",
     "/invoices",
   ],
-  financials: ["/revenue", "/alerts"],
+  financials: ["/revenue", "/alerts", "/transactions"],
   marketing_analytics: ["/analytics"],
   customer_intelligence: ["/customers/intelligence"],
   settings_audit: ["/settings", "/audit"],
