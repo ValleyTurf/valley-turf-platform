@@ -7,6 +7,7 @@
 // Settings > Permissions, so this route re-checks that same toggle
 // directly rather than assuming a role tier.
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/currentUser";

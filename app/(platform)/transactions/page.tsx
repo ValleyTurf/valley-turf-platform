@@ -1,5 +1,9 @@
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+// YTD (and any other multi-hundred-row range) needs more headroom than
+// Vercel's default function timeout — same reasoning as the sync routes'
+// maxDuration bumps, just for a page render instead of a sync job.
+export const maxDuration = 60;
 
 import Link from "next/link";
 import { formatCurrencyPrecise, formatDateOnly, formatNumber } from "@/lib/format";
@@ -9,7 +13,7 @@ import {
   type TransactionSortField,
   type TransactionTimeframe,
 } from "@/lib/transactionFormatting";
-import { getTransactions } from "@/lib/transactions";
+import { getTransactions, type TransactionRow } from "@/lib/transactions";
 
 type TransactionsPageProps = {
   searchParams: Promise<{
@@ -21,8 +25,18 @@ type TransactionsPageProps = {
     q?: string;
     sort?: string;
     dir?: string;
+    page?: string;
   }>;
 };
+
+// Jobber's own report defaults to showing 50 at a time for the same
+// reason this does — a full year of transactions rendered as one giant
+// HTML table is slow to generate and slow for the browser to paint, and
+// on Vercel risks the page failing to load altogether on large ranges
+// (e.g. YTD) even with maxDuration raised. Summary cards above the table
+// still total the FULL filtered result set, not just the visible page —
+// only the table body itself is paginated.
+const ROWS_PER_PAGE = 50;
 
 const TIMEFRAME_OPTIONS: Array<{ value: TransactionTimeframe; label: string }> = [
   { value: "last-7-days", label: "Last 7 Days" },
@@ -53,6 +67,31 @@ function getPhoenixToday(): Date {
   return new Date(Date.UTC(year, month - 1, day));
 }
 
+function ErrorState({ message }: { message: string }) {
+  return (
+    <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
+      <div className="mx-auto max-w-3xl">
+        <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
+          Valley Turf Revival OS
+        </p>
+        <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Transactions</h1>
+
+        <section className="mt-6 rounded-3xl border border-red-200 bg-white p-6 shadow">
+          <p className="font-bold text-red-700">Couldn&apos;t load transactions</p>
+          <p className="mt-2 text-sm text-[#6b705c]">{message}</p>
+          <p className="mt-4 text-sm text-[#6b705c]">
+            Try a narrower date range, or{" "}
+            <Link href="/transactions" className="font-semibold text-[#9c7a20] hover:underline">
+              reset to the default view
+            </Link>
+            .
+          </p>
+        </section>
+      </div>
+    </main>
+  );
+}
+
 export default async function TransactionsPage({
   searchParams,
 }: TransactionsPageProps) {
@@ -75,15 +114,29 @@ export default async function TransactionsPage({
   const sortField: TransactionSortField = isSortField(params.sort) ? params.sort : "date";
   const sortDir: "asc" | "desc" = params.dir === "asc" ? "asc" : "desc";
 
-  const { rows, typeOptions, methodOptions } = await getTransactions({
-    startDate,
-    endDate,
-    type,
-    method,
-    search,
-    sortField,
-    sortDir,
-  });
+  let rows: TransactionRow[];
+  let typeOptions: string[];
+  let methodOptions: string[];
+
+  try {
+    const result = await getTransactions({
+      startDate,
+      endDate,
+      type,
+      method,
+      search,
+      sortField,
+      sortDir,
+    });
+    rows = result.rows;
+    typeOptions = result.typeOptions;
+    methodOptions = result.methodOptions;
+  } catch (error) {
+    console.error("Transactions page failed to load:", error);
+    const message =
+      error instanceof Error ? error.message : "An unknown error occurred.";
+    return <ErrorState message={message} />;
+  }
 
   const totals = rows.reduce(
     (acc, row) => {
@@ -95,6 +148,15 @@ export default async function TransactionsPage({
     { amount: 0, tip: 0, fee: 0 }
   );
 
+  const totalPages = Math.max(1, Math.ceil(rows.length / ROWS_PER_PAGE));
+  const requestedPage = Number(params.page ?? "1");
+  const currentPage =
+    Number.isFinite(requestedPage) && requestedPage >= 1
+      ? Math.min(Math.trunc(requestedPage), totalPages)
+      : 1;
+  const pageStart = (currentPage - 1) * ROWS_PER_PAGE;
+  const pageRows = rows.slice(pageStart, pageStart + ROWS_PER_PAGE);
+
   const exportParams = new URLSearchParams({
     start: startDate,
     end: endDate,
@@ -105,23 +167,34 @@ export default async function TransactionsPage({
     dir: sortDir,
   });
 
-  function sortHref(field: TransactionSortField): string {
-    const nextDir: "asc" | "desc" =
-      field === sortField && sortDir === "desc" ? "asc" : "desc";
-
-    const p = new URLSearchParams({
-      timeframe,
-      type,
-      method,
-    });
+  function baseParams(): URLSearchParams {
+    const p = new URLSearchParams({ timeframe, type, method });
     if (search) p.set("q", search);
     if (timeframe === "custom") {
       p.set("start", startDate);
       p.set("end", endDate);
     }
+    p.set("sort", sortField);
+    p.set("dir", sortDir);
+    return p;
+  }
+
+  function sortHref(field: TransactionSortField): string {
+    const nextDir: "asc" | "desc" =
+      field === sortField && sortDir === "desc" ? "asc" : "desc";
+
+    const p = baseParams();
     p.set("sort", field);
     p.set("dir", nextDir);
+    // Changing sort re-shuffles which rows land on which page, so always
+    // land back on page 1 rather than showing a now-meaningless page 3.
 
+    return `/transactions?${p.toString()}`;
+  }
+
+  function pageHref(pageNumber: number): string {
+    const p = baseParams();
+    p.set("page", String(pageNumber));
     return `/transactions?${p.toString()}`;
   }
 
@@ -307,108 +380,152 @@ export default async function TransactionsPage({
               No transactions match this filter.
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px] text-left text-sm">
-                <thead className="border-b border-[#eee9dc] bg-[#f7f6f1] text-xs font-bold uppercase tracking-[0.08em] text-[#6b705c]">
-                  <tr>
-                    <th className="px-5 py-3">
-                      <Link href={sortHref("client")} className="hover:text-[#174734]">
-                        Client{sortIndicator("client")}
-                      </Link>
-                    </th>
-                    <th className="px-5 py-3">
-                      <Link href={sortHref("date")} className="hover:text-[#174734]">
-                        Date{sortIndicator("date")}
-                      </Link>
-                    </th>
-                    <th className="px-5 py-3">Type</th>
-                    <th className="px-5 py-3">Paid With</th>
-                    <th className="px-5 py-3">Invoice #</th>
-                    <th className="px-5 py-3 text-right">
-                      <Link href={sortHref("amount")} className="hover:text-[#174734]">
-                        Total{sortIndicator("amount")}
-                      </Link>
-                    </th>
-                    <th className="px-5 py-3 text-right">
-                      <Link href={sortHref("tip")} className="hover:text-[#174734]">
-                        Tip{sortIndicator("tip")}
-                      </Link>
-                    </th>
-                    <th className="px-5 py-3 text-right">
-                      <Link href={sortHref("fee")} className="hover:text-[#174734]">
-                        Fee{sortIndicator("fee")}
-                      </Link>
-                    </th>
-                    <th className="px-5 py-3 text-center">Open</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row, index) => (
-                    <tr
-                      key={row.id}
-                      className={`border-b border-[#f0eee6] last:border-0 ${
-                        index % 2 === 1 ? "bg-[#fbfaf6]" : ""
-                      }`}
-                    >
-                      <td className="px-5 py-3 font-semibold">
-                        {row.clientId ? (
-                          <Link
-                            href={`/customers/${encodeURIComponent(row.clientId)}`}
-                            className="text-[#174734] hover:underline"
-                          >
-                            {row.clientName}
-                          </Link>
-                        ) : (
-                          row.clientName
-                        )}
-                      </td>
-                      <td className="px-5 py-3 text-[#6b705c]">
-                        {formatDateOnly(row.date)}
-                      </td>
-                      <td className="px-5 py-3">
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-xs font-bold ${
-                            row.type === "Payment"
-                              ? "bg-green-50 text-green-800"
-                              : "bg-amber-50 text-amber-800"
-                          }`}
-                        >
-                          {row.type}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 text-[#6b705c]">{row.method}</td>
-                      <td className="px-5 py-3 text-[#6b705c]">
-                        {row.invoiceNumber || "—"}
-                      </td>
-                      <td className="px-5 py-3 text-right font-bold">
-                        {formatCurrencyPrecise(row.amount)}
-                      </td>
-                      <td className="px-5 py-3 text-right text-green-700">
-                        {row.tip > 0 ? formatCurrencyPrecise(row.tip) : "—"}
-                      </td>
-                      <td className="px-5 py-3 text-right text-red-700">
-                        {row.fee > 0 ? formatCurrencyPrecise(row.fee) : "—"}
-                      </td>
-                      <td className="px-5 py-3 text-center">
-                        {row.jobberWebUri ? (
-                          <a
-                            href={row.jobberWebUri}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title="Open in Jobber"
-                            className="text-[#9c7a20] hover:underline"
-                          >
-                            ↗
-                          </a>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[860px] text-left text-sm">
+                  <thead className="border-b border-[#eee9dc] bg-[#f7f6f1] text-xs font-bold uppercase tracking-[0.08em] text-[#6b705c]">
+                    <tr>
+                      <th className="px-5 py-3">
+                        <Link href={sortHref("client")} className="hover:text-[#174734]">
+                          Client{sortIndicator("client")}
+                        </Link>
+                      </th>
+                      <th className="px-5 py-3">
+                        <Link href={sortHref("date")} className="hover:text-[#174734]">
+                          Date{sortIndicator("date")}
+                        </Link>
+                      </th>
+                      <th className="px-5 py-3">Type</th>
+                      <th className="px-5 py-3">Paid With</th>
+                      <th className="px-5 py-3">Invoice #</th>
+                      <th className="px-5 py-3 text-right">
+                        <Link href={sortHref("amount")} className="hover:text-[#174734]">
+                          Total{sortIndicator("amount")}
+                        </Link>
+                      </th>
+                      <th className="px-5 py-3 text-right">
+                        <Link href={sortHref("tip")} className="hover:text-[#174734]">
+                          Tip{sortIndicator("tip")}
+                        </Link>
+                      </th>
+                      <th className="px-5 py-3 text-right">
+                        <Link href={sortHref("fee")} className="hover:text-[#174734]">
+                          Fee{sortIndicator("fee")}
+                        </Link>
+                      </th>
+                      <th className="px-5 py-3 text-center">Open</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {pageRows.map((row, index) => (
+                      <tr
+                        key={row.id}
+                        className={`border-b border-[#f0eee6] last:border-0 ${
+                          index % 2 === 1 ? "bg-[#fbfaf6]" : ""
+                        }`}
+                      >
+                        <td className="px-5 py-3 font-semibold">
+                          {row.clientId ? (
+                            <Link
+                              href={`/customers/${encodeURIComponent(row.clientId)}`}
+                              className="text-[#174734] hover:underline"
+                            >
+                              {row.clientName}
+                            </Link>
+                          ) : (
+                            row.clientName
+                          )}
+                        </td>
+                        <td className="px-5 py-3 text-[#6b705c]">
+                          {formatDateOnly(row.date)}
+                        </td>
+                        <td className="px-5 py-3">
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-xs font-bold ${
+                              row.type === "Payment"
+                                ? "bg-green-50 text-green-800"
+                                : "bg-amber-50 text-amber-800"
+                            }`}
+                          >
+                            {row.type}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3 text-[#6b705c]">{row.method}</td>
+                        <td className="px-5 py-3 text-[#6b705c]">
+                          {row.invoiceNumber || "—"}
+                        </td>
+                        <td className="px-5 py-3 text-right font-bold">
+                          {formatCurrencyPrecise(row.amount)}
+                        </td>
+                        <td className="px-5 py-3 text-right text-green-700">
+                          {row.tip > 0 ? formatCurrencyPrecise(row.tip) : "—"}
+                        </td>
+                        <td className="px-5 py-3 text-right text-red-700">
+                          {row.fee > 0 ? formatCurrencyPrecise(row.fee) : "—"}
+                        </td>
+                        <td className="px-5 py-3 text-center">
+                          {row.jobberWebUri ? (
+                            <a
+                              href={row.jobberWebUri}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="Open in Jobber"
+                              className="text-[#9c7a20] hover:underline"
+                            >
+                              ↗
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {totalPages > 1 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#eee9dc] px-5 py-4">
+                  <p className="text-sm text-[#6b705c]">
+                    Showing {formatNumber(pageStart + 1)}–
+                    {formatNumber(Math.min(pageStart + ROWS_PER_PAGE, rows.length))} of{" "}
+                    {formatNumber(rows.length)}
+                  </p>
+
+                  <div className="flex items-center gap-2">
+                    {currentPage > 1 ? (
+                      <Link
+                        href={pageHref(currentPage - 1)}
+                        className="rounded-lg border border-[#d8d3c6] px-3 py-1.5 text-sm font-bold hover:border-[#d4af37]"
+                      >
+                        ← Prev
+                      </Link>
+                    ) : (
+                      <span className="rounded-lg border border-[#eee9dc] px-3 py-1.5 text-sm font-bold text-[#c7c2b3]">
+                        ← Prev
+                      </span>
+                    )}
+
+                    <span className="px-2 text-sm font-semibold text-[#6b705c]">
+                      Page {formatNumber(currentPage)} of {formatNumber(totalPages)}
+                    </span>
+
+                    {currentPage < totalPages ? (
+                      <Link
+                        href={pageHref(currentPage + 1)}
+                        className="rounded-lg border border-[#d8d3c6] px-3 py-1.5 text-sm font-bold hover:border-[#d4af37]"
+                      >
+                        Next →
+                      </Link>
+                    ) : (
+                      <span className="rounded-lg border border-[#eee9dc] px-3 py-1.5 text-sm font-bold text-[#c7c2b3]">
+                        Next →
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </section>
       </div>
