@@ -60,7 +60,7 @@ type CategoryJobRow = {
   // (visit_material_usage, keyed off each material's point-in-time
   // unit_cost_at_time), with a timer-derived fallback for labor that's
   // been clocked but never manually saved — see
-  // fetchCostBreakdownByInvoice. That fallback means laborCost +
+  // fetchCostBreakdownForInvoices. That fallback means laborCost +
   // materialCost can run a little ahead of direct_cost (which only knows
   // about saved amounts) as well as behind it; Total Cost in the UI stays
   // sourced from direct_cost + overhead_allocated so it's always
@@ -69,12 +69,11 @@ type CategoryJobRow = {
   materialCost: number;
   // True when laborCost is wholly or partly a timer-derived estimate
   // (visit_time_logs at today's rate) rather than a saved
-  // visit_material_usage amount — see fetchCostBreakdownByInvoice.
+  // visit_material_usage amount — see fetchCostBreakdownForInvoices.
   laborIsEstimated: boolean;
-  // The actual visits behind this invoice, which for a bill-in-arrears
-  // recurring job (invoice issued a few days into the month, covering
-  // last month's visits) can be a completely different date range than
-  // issue_date implies — this is what makes that visible in the UI.
+  // The actual visits matched to this invoice by calendar month (see
+  // fetchCostBreakdownForInvoices) — shown so it's clear exactly which
+  // visits a given dollar figure covers.
   visitCount: number;
   firstVisitDate: string | null;
   lastVisitDate: string | null;
@@ -388,13 +387,39 @@ type CostBreakdown = {
 // kind of estimate, so the UI can label it as such instead of implying
 // it's as firm as a saved amount.
 //
+// Which visits belong to which invoice is decided by calendar month, NOT
+// by Jobber's own jobber_visits.jobber_invoice_id link. That link turned
+// out to bundle a property's completed-but-previously-uninvoiced visits
+// into whatever invoice Jobber generated next, which doesn't match how
+// this business actually wants costs attributed — confirmed against
+// Lehi Cove/Hampton Villas, where the Aug 2 invoice was linked to 5/2
+// visits dated entirely in July. The explicit call was: "The August 2nd
+// payment is for the August visits, not July." So here, an invoice for
+// client X issued on any day of month M is matched against ALL of X's
+// visits whose start_at also falls in month M, invoice link ignored
+// entirely. This assumes one active recurring job per client in a given
+// month (the view doesn't expose a job id to disambiguate two concurrent
+// jobs for the same client) and that two invoices for the same client
+// don't land in the same month (if they do, both would pull the same
+// visits and double-count them) — both reasonable for this business's
+// actual billing pattern (one monthly invoice per property).
+//
 // Equipment usage (visit_equipment_usage) has no dollar rate of its own
 // in this schema, so it isn't part of either bucket.
-async function fetchCostBreakdownByInvoice(
-  invoiceIds: string[]
+function monthKeyOf(dateStr: string): string {
+  return dateStr.slice(0, 7); // "YYYY-MM"
+}
+
+async function fetchCostBreakdownForInvoices(
+  rows: InvoiceCostRow[]
 ): Promise<Map<string, CostBreakdown>> {
   const result = new Map<string, CostBreakdown>();
-  if (invoiceIds.length === 0) return result;
+
+  const eligibleRows = rows.filter(
+    (r): r is InvoiceCostRow & { jobber_client_id: string; issue_date: string } =>
+      Boolean(r.jobber_client_id) && Boolean(r.issue_date)
+  );
+  if (eligibleRows.length === 0) return result;
 
   const getBucket = (invoiceId: string): CostBreakdown => {
     const existing = result.get(invoiceId);
@@ -411,42 +436,69 @@ async function fetchCostBreakdownByInvoice(
     return fresh;
   };
 
-  // Recurring jobs here bill in arrears — an invoice issued a couple of
-  // days into a month typically covers the *previous* month's visits,
-  // not the visits happening in the month it lands in. Tracking each
-  // invoice's actual visit date span (not just summing costs) is what
-  // makes that visible in the UI instead of looking like an inflated,
-  // miscalculated total for "this one visit so far this month."
-  const visitToInvoice = new Map<string, string>();
-  for (let i = 0; i < invoiceIds.length; i += DRILLDOWN_BATCH_SIZE) {
-    const batchIds = invoiceIds.slice(i, i + DRILLDOWN_BATCH_SIZE);
+  const clientIds = Array.from(
+    new Set(eligibleRows.map((r) => r.jobber_client_id))
+  );
+
+  // Bound the visits query to the actual months in play rather than each
+  // client's entire history.
+  const monthKeys = eligibleRows.map((r) => monthKeyOf(r.issue_date));
+  const minMonth = monthKeys.reduce((a, b) => (a < b ? a : b));
+  const maxMonth = monthKeys.reduce((a, b) => (a > b ? a : b));
+  const rangeStart = `${minMonth}-01`;
+  const [maxYear, maxMonthNum] = maxMonth.split("-").map(Number);
+  const rangeEnd = new Date(Date.UTC(maxYear, maxMonthNum, 0))
+    .toISOString()
+    .slice(0, 10); // last day of maxMonth
+
+  const visitsByClientMonth = new Map<
+    string,
+    { jobber_visit_id: string; start_at: string }[]
+  >();
+
+  for (let i = 0; i < clientIds.length; i += DRILLDOWN_BATCH_SIZE) {
+    const batchIds = clientIds.slice(i, i + DRILLDOWN_BATCH_SIZE);
     const { data, error } = await supabaseServer
       .from("jobber_visits")
-      .select("jobber_visit_id, jobber_invoice_id, start_at")
-      .in("jobber_invoice_id", batchIds);
+      .select("jobber_visit_id, jobber_client_id, start_at")
+      .in("jobber_client_id", batchIds)
+      .gte("start_at", `${rangeStart}T00:00:00-07:00`)
+      .lte("start_at", `${rangeEnd}T23:59:59-07:00`);
 
     if (error) throw error;
 
     for (const row of (data ?? []) as {
       jobber_visit_id: string;
-      jobber_invoice_id: string | null;
+      jobber_client_id: string | null;
       start_at: string | null;
     }[]) {
-      if (!row.jobber_invoice_id) continue;
+      if (!row.jobber_client_id || !row.start_at) continue;
+      const key = `${row.jobber_client_id}:${monthKeyOf(row.start_at)}`;
+      const list = visitsByClientMonth.get(key) ?? [];
+      list.push({ jobber_visit_id: row.jobber_visit_id, start_at: row.start_at });
+      visitsByClientMonth.set(key, list);
+    }
+  }
 
-      visitToInvoice.set(row.jobber_visit_id, row.jobber_invoice_id);
+  const visitToInvoice = new Map<string, string>();
 
-      const bucket = getBucket(row.jobber_invoice_id);
-      bucket.visitCount += 1;
-      const visitDate = row.start_at ? row.start_at.slice(0, 10) : null;
-      if (visitDate) {
-        if (!bucket.firstVisitDate || visitDate < bucket.firstVisitDate) {
-          bucket.firstVisitDate = visitDate;
-        }
-        if (!bucket.lastVisitDate || visitDate > bucket.lastVisitDate) {
-          bucket.lastVisitDate = visitDate;
-        }
+  for (const row of eligibleRows) {
+    const key = `${row.jobber_client_id}:${monthKeyOf(row.issue_date)}`;
+    const visits = visitsByClientMonth.get(key) ?? [];
+    if (visits.length === 0) continue;
+
+    const bucket = getBucket(row.jobber_invoice_id);
+    bucket.visitCount = visits.length;
+
+    for (const visit of visits) {
+      const visitDate = visit.start_at.slice(0, 10);
+      if (!bucket.firstVisitDate || visitDate < bucket.firstVisitDate) {
+        bucket.firstVisitDate = visitDate;
       }
+      if (!bucket.lastVisitDate || visitDate > bucket.lastVisitDate) {
+        bucket.lastVisitDate = visitDate;
+      }
+      visitToInvoice.set(visit.jobber_visit_id, row.jobber_invoice_id);
     }
   }
 
@@ -707,7 +759,7 @@ export default async function JobCostingAnalyticsPage({
     const [customerNames, invoiceMeta, costBreakdowns] = await Promise.all([
       fetchCustomerNamesByIds(clientIds),
       fetchInvoiceMetaByIds(invoiceIds),
-      fetchCostBreakdownByInvoice(invoiceIds),
+      fetchCostBreakdownForInvoices(rows),
     ]);
 
     categoryJobRows = buildCategoryJobRows(
@@ -1359,12 +1411,12 @@ export default async function JobCostingAnalyticsPage({
                             yet, priced at today&apos;s rate rather than a
                             point-in-time one, so the three may not sum to
                             Total Cost exactly to the penny. The small line
-                            under each date is the actual visits behind that
-                            invoice — for a recurring job billed in arrears,
-                            an invoice issued early in a month usually covers
-                            the <em>previous</em> month&apos;s visits, so its
-                            costs won&apos;t match what happened so far in
-                            the month it&apos;s dated.
+                            under each date is which visits that dollar
+                            figure covers — matched to the invoice by
+                            calendar month (same month as the invoice date),
+                            not by Jobber&apos;s own visit-to-invoice link,
+                            which doesn&apos;t line up with how this
+                            business actually bills.
                           </p>
                         </div>
                       )}
