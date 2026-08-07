@@ -71,6 +71,13 @@ type CategoryJobRow = {
   // (visit_time_logs at today's rate) rather than a saved
   // visit_material_usage amount — see fetchCostBreakdownByInvoice.
   laborIsEstimated: boolean;
+  // The actual visits behind this invoice, which for a bill-in-arrears
+  // recurring job (invoice issued a few days into the month, covering
+  // last month's visits) can be a completely different date range than
+  // issue_date implies — this is what makes that visible in the UI.
+  visitCount: number;
+  firstVisitDate: string | null;
+  lastVisitDate: string | null;
 };
 
 type CategorySummary = {
@@ -267,6 +274,9 @@ function buildCategoryJobRows(
       laborCost: breakdown?.labor ?? 0,
       materialCost: breakdown?.materials ?? 0,
       laborIsEstimated: breakdown?.unloggedLabor ?? false,
+      visitCount: breakdown?.visitCount ?? 0,
+      firstVisitDate: breakdown?.firstVisitDate ?? null,
+      lastVisitDate: breakdown?.lastVisitDate ?? null,
     };
 
     const list = map.get(category) ?? [];
@@ -344,7 +354,14 @@ async function fetchInvoiceMetaByIds(
   return map;
 }
 
-type CostBreakdown = { labor: number; materials: number; unloggedLabor: boolean };
+type CostBreakdown = {
+  labor: number;
+  materials: number;
+  unloggedLabor: boolean;
+  visitCount: number;
+  firstVisitDate: string | null;
+  lastVisitDate: string | null;
+};
 
 // Recomputes a labor-vs-materials split per invoice by walking the same
 // source tables /job-costs logs against: each invoice's visits, each
@@ -379,12 +396,33 @@ async function fetchCostBreakdownByInvoice(
   const result = new Map<string, CostBreakdown>();
   if (invoiceIds.length === 0) return result;
 
+  const getBucket = (invoiceId: string): CostBreakdown => {
+    const existing = result.get(invoiceId);
+    if (existing) return existing;
+    const fresh: CostBreakdown = {
+      labor: 0,
+      materials: 0,
+      unloggedLabor: false,
+      visitCount: 0,
+      firstVisitDate: null,
+      lastVisitDate: null,
+    };
+    result.set(invoiceId, fresh);
+    return fresh;
+  };
+
+  // Recurring jobs here bill in arrears — an invoice issued a couple of
+  // days into a month typically covers the *previous* month's visits,
+  // not the visits happening in the month it lands in. Tracking each
+  // invoice's actual visit date span (not just summing costs) is what
+  // makes that visible in the UI instead of looking like an inflated,
+  // miscalculated total for "this one visit so far this month."
   const visitToInvoice = new Map<string, string>();
   for (let i = 0; i < invoiceIds.length; i += DRILLDOWN_BATCH_SIZE) {
     const batchIds = invoiceIds.slice(i, i + DRILLDOWN_BATCH_SIZE);
     const { data, error } = await supabaseServer
       .from("jobber_visits")
-      .select("jobber_visit_id, jobber_invoice_id")
+      .select("jobber_visit_id, jobber_invoice_id, start_at")
       .in("jobber_invoice_id", batchIds);
 
     if (error) throw error;
@@ -392,23 +430,28 @@ async function fetchCostBreakdownByInvoice(
     for (const row of (data ?? []) as {
       jobber_visit_id: string;
       jobber_invoice_id: string | null;
+      start_at: string | null;
     }[]) {
-      if (row.jobber_invoice_id) {
-        visitToInvoice.set(row.jobber_visit_id, row.jobber_invoice_id);
+      if (!row.jobber_invoice_id) continue;
+
+      visitToInvoice.set(row.jobber_visit_id, row.jobber_invoice_id);
+
+      const bucket = getBucket(row.jobber_invoice_id);
+      bucket.visitCount += 1;
+      const visitDate = row.start_at ? row.start_at.slice(0, 10) : null;
+      if (visitDate) {
+        if (!bucket.firstVisitDate || visitDate < bucket.firstVisitDate) {
+          bucket.firstVisitDate = visitDate;
+        }
+        if (!bucket.lastVisitDate || visitDate > bucket.lastVisitDate) {
+          bucket.lastVisitDate = visitDate;
+        }
       }
     }
   }
 
   const visitIds = Array.from(visitToInvoice.keys());
   if (visitIds.length === 0) return result;
-
-  const getBucket = (invoiceId: string): CostBreakdown => {
-    const existing = result.get(invoiceId);
-    if (existing) return existing;
-    const fresh: CostBreakdown = { labor: 0, materials: 0, unloggedLabor: false };
-    result.set(invoiceId, fresh);
-    return fresh;
-  };
 
   const usageRows: {
     jobber_visit_id: string;
@@ -1231,9 +1274,31 @@ export default async function JobCostingAnalyticsPage({
                                       )}
                                     </td>
                                     <td className="px-4 py-2 text-[#6b705c]">
-                                      {job.issue_date
-                                        ? formatDateLabel(job.issue_date)
-                                        : "—"}
+                                      <p>
+                                        {job.issue_date
+                                          ? formatDateLabel(job.issue_date)
+                                          : "—"}
+                                      </p>
+                                      {job.visitCount > 0 && (
+                                        <p className="mt-0.5 text-xs text-[#9c7a20]">
+                                          {job.visitCount} visit
+                                          {job.visitCount === 1 ? "" : "s"}
+                                          {job.firstVisitDate && (
+                                            <>
+                                              {" · "}
+                                              {formatDateLabel(job.firstVisitDate)}
+                                              {job.lastVisitDate &&
+                                                job.lastVisitDate !==
+                                                  job.firstVisitDate && (
+                                                  <>
+                                                    {" – "}
+                                                    {formatDateLabel(job.lastVisitDate)}
+                                                  </>
+                                                )}
+                                            </>
+                                          )}
+                                        </p>
+                                      )}
                                     </td>
                                     <td className="px-4 py-2 text-right">
                                       {formatCurrency(job.revenue)}
@@ -1293,7 +1358,13 @@ export default async function JobCostingAnalyticsPage({
                             </Link>{" "}
                             yet, priced at today&apos;s rate rather than a
                             point-in-time one, so the three may not sum to
-                            Total Cost exactly to the penny.
+                            Total Cost exactly to the penny. The small line
+                            under each date is the actual visits behind that
+                            invoice — for a recurring job billed in arrears,
+                            an invoice issued early in a month usually covers
+                            the <em>previous</em> month&apos;s visits, so its
+                            costs won&apos;t match what happened so far in
+                            the month it&apos;s dated.
                           </p>
                         </div>
                       )}

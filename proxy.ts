@@ -35,10 +35,6 @@ const PUBLIC_PATHS = [
   "/icons",
   "/sw.js",
   "/offline.html",
-  // TEMPORARY — recurring-customer Labor/Materials overcounting
-  // investigation. Delete this line and
-  // app/api/diagnostics/recurring-cost/route.ts together once resolved.
-  "/api/diagnostics/recurring-cost",
 ];
 
 // Routes Vercel Cron calls on a schedule (see vercel.json) that have no
