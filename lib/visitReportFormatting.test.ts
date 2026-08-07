@@ -102,17 +102,30 @@ describe("filterVisitRows", () => {
 });
 
 describe("summarizeVisitsByJobType", () => {
-  it("sums revenue once PER VISIT (recurring jobs bill per occurrence), while counting distinct jobs separately", () => {
+  it("counts each job's total exactly once, even with several visits in range (e.g. a $500/mo job serviced weekly)", () => {
     const rows = [
-      row({ id: "v1", jobId: "j1", jobType: "Recurring", jobTotal: 200 }),
-      row({ id: "v2", jobId: "j1", jobType: "Recurring", jobTotal: 200 }), // same job, 2nd visit
-      row({ id: "v3", jobId: "j2", jobType: "One Off", jobTotal: 500 }),
+      row({ id: "v1", jobId: "j1", jobType: "Recurring", jobTotal: 500 }),
+      row({ id: "v2", jobId: "j1", jobType: "Recurring", jobTotal: 500 }), // same job, 2nd visit
+      row({ id: "v3", jobId: "j1", jobType: "Recurring", jobTotal: 500 }), // same job, 3rd visit
+      row({ id: "v4", jobId: "j2", jobType: "One Off", jobTotal: 200 }),
     ];
 
     const summary = summarizeVisitsByJobType(rows);
     expect(summary).toEqual([
-      { jobType: "One Off", total: 500, jobCount: 1, visitCount: 1 },
-      { jobType: "Recurring", total: 400, jobCount: 1, visitCount: 2 },
+      { jobType: "Recurring", total: 500, jobCount: 1, visitCount: 3 },
+      { jobType: "One Off", total: 200, jobCount: 1, visitCount: 1 },
+    ]);
+  });
+
+  it("still sums multiple distinct jobs of the same type, not just deduping within one job", () => {
+    const rows = [
+      row({ id: "v1", jobId: "j1", jobType: "Recurring", jobTotal: 500 }),
+      row({ id: "v2", jobId: "j1", jobType: "Recurring", jobTotal: 500 }),
+      row({ id: "v3", jobId: "j3", jobType: "Recurring", jobTotal: 150 }),
+    ];
+
+    expect(summarizeVisitsByJobType(rows)).toEqual([
+      { jobType: "Recurring", total: 650, jobCount: 2, visitCount: 3 },
     ]);
   });
 
