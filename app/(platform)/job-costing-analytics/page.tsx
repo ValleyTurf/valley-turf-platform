@@ -30,12 +30,30 @@ type Timeframe =
 
 type InvoiceCostRow = {
   jobber_invoice_id: string;
+  jobber_client_id: string | null;
   issue_date: string | null;
   revenue: number | string;
   direct_cost: number | string;
   overhead_allocated: number | string;
   estimated_profit: number | string;
   service_category: string | null;
+};
+
+// One row per invoice within a category, for the click-to-expand
+// drill-down — lets the user compare individual recurring customers
+// against each other within a category (e.g. which Quarterly clients
+// are profitable vs. not) instead of only seeing the category total.
+type CategoryJobRow = {
+  jobber_invoice_id: string;
+  invoice_number: string | null;
+  jobber_web_uri: string | null;
+  issue_date: string | null;
+  client_name: string;
+  revenue: number;
+  direct_cost: number;
+  overhead_allocated: number;
+  estimated_profit: number;
+  profit_margin_pct: number | null;
 };
 
 type CategorySummary = {
@@ -188,6 +206,121 @@ function buildCategorySummaries(rows: InvoiceCostRow[]): CategorySummary[] {
     .sort((a, b) => b.total_estimated_profit - a.total_estimated_profit);
 }
 
+// Groups the (already timeframe-filtered) invoice rows by category into
+// per-job detail rows for the drill-down, joining in customer name and
+// invoice number/link the same batched-IN-query way lib/visitReport.ts
+// and lib/transactions.ts join their own tables. Sorted by estimated
+// profit, highest to lowest, within each category — matching the
+// category-level sort so "which Quarterlys are doing well" reads the
+// same way at both levels.
+function buildCategoryJobRows(
+  rows: InvoiceCostRow[],
+  customerNames: Map<string, string>,
+  invoiceMeta: Map<
+    string,
+    { invoice_number: string | null; jobber_web_uri: string | null }
+  >
+): Map<string, CategoryJobRow[]> {
+  const map = new Map<string, CategoryJobRow[]>();
+
+  for (const row of rows) {
+    const category = row.service_category || "Uncategorized";
+    const revenue = toNumber(row.revenue);
+    const directCost = toNumber(row.direct_cost);
+    const overhead = toNumber(row.overhead_allocated);
+    const profit = toNumber(row.estimated_profit);
+    const meta = invoiceMeta.get(row.jobber_invoice_id);
+
+    const jobRow: CategoryJobRow = {
+      jobber_invoice_id: row.jobber_invoice_id,
+      invoice_number: meta?.invoice_number ?? null,
+      jobber_web_uri: meta?.jobber_web_uri ?? null,
+      issue_date: row.issue_date,
+      client_name: row.jobber_client_id
+        ? customerNames.get(row.jobber_client_id) ?? "Unknown Customer"
+        : "Unknown Customer",
+      revenue,
+      direct_cost: directCost,
+      overhead_allocated: overhead,
+      estimated_profit: profit,
+      profit_margin_pct: revenue > 0 ? (profit / revenue) * 100 : null,
+    };
+
+    const list = map.get(category) ?? [];
+    list.push(jobRow);
+    map.set(category, list);
+  }
+
+  for (const list of map.values()) {
+    list.sort((a, b) => b.estimated_profit - a.estimated_profit);
+  }
+
+  return map;
+}
+
+const DRILLDOWN_BATCH_SIZE = 500;
+
+async function fetchCustomerNamesByIds(
+  ids: string[]
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (ids.length === 0) return map;
+
+  for (let i = 0; i < ids.length; i += DRILLDOWN_BATCH_SIZE) {
+    const batchIds = ids.slice(i, i + DRILLDOWN_BATCH_SIZE);
+    const { data, error } = await supabaseServer
+      .from("customers")
+      .select("jobber_client_id, full_name")
+      .in("jobber_client_id", batchIds);
+
+    if (error) throw error;
+
+    for (const row of (data ?? []) as {
+      jobber_client_id: string;
+      full_name: string | null;
+    }[]) {
+      map.set(row.jobber_client_id, row.full_name || "Unknown Customer");
+    }
+  }
+
+  return map;
+}
+
+async function fetchInvoiceMetaByIds(
+  ids: string[]
+): Promise<
+  Map<string, { invoice_number: string | null; jobber_web_uri: string | null }>
+> {
+  const map = new Map<
+    string,
+    { invoice_number: string | null; jobber_web_uri: string | null }
+  >();
+  if (ids.length === 0) return map;
+
+  for (let i = 0; i < ids.length; i += DRILLDOWN_BATCH_SIZE) {
+    const batchIds = ids.slice(i, i + DRILLDOWN_BATCH_SIZE);
+    const { data, error } = await supabaseServer
+      .from("jobber_invoices")
+      .select("jobber_invoice_id, invoice_number, jobber_web_uri")
+      .in("jobber_invoice_id", batchIds);
+
+    if (error) throw error;
+
+    for (const row of (data ?? []) as {
+      jobber_invoice_id: string;
+      invoice_number: string | null;
+      jobber_web_uri: string | null;
+    }[]) {
+      map.set(row.jobber_invoice_id, {
+        invoice_number: row.invoice_number,
+        jobber_web_uri: row.jobber_web_uri,
+      });
+    }
+  }
+
+  return map;
+}
+
 // Fetches every row of the view once, unfiltered. The page then slices this
 // same in-memory set by date range for the selected timeframe AND uses the
 // unfiltered whole for the all-time "True Net Profit" figure — avoiding a
@@ -201,7 +334,7 @@ async function fetchAllInvoiceCosts(): Promise<InvoiceCostRow[]> {
     const { data, error } = await supabaseServer
       .from("invoice_cost_breakdown")
       .select(
-        "jobber_invoice_id, issue_date, revenue, direct_cost, overhead_allocated, estimated_profit, service_category"
+        "jobber_invoice_id, jobber_client_id, issue_date, revenue, direct_cost, overhead_allocated, estimated_profit, service_category"
       )
       .range(from, from + pageSize - 1);
 
@@ -293,6 +426,34 @@ export default async function JobCostingAnalyticsPage({
 
   const rows = filterRowsByRange(allRows, startDate, endDate);
   const categories = buildCategorySummaries(rows);
+
+  // Per-job drill-down data for the currently selected timeframe only —
+  // scoped to `rows`, not `allRows`, so expanding a category shows the
+  // same jobs the category card's own totals are built from. Non-fatal
+  // on failure: the category summaries above are the core feature and
+  // still render fine without the expanded job list.
+  let categoryJobRows: Map<string, CategoryJobRow[]> = new Map();
+  try {
+    const clientIds = Array.from(
+      new Set(
+        rows
+          .map((row) => row.jobber_client_id)
+          .filter((id): id is string => Boolean(id))
+      )
+    );
+    const invoiceIds = Array.from(
+      new Set(rows.map((row) => row.jobber_invoice_id))
+    );
+
+    const [customerNames, invoiceMeta] = await Promise.all([
+      fetchCustomerNamesByIds(clientIds),
+      fetchInvoiceMetaByIds(invoiceIds),
+    ]);
+
+    categoryJobRows = buildCategoryJobRows(rows, customerNames, invoiceMeta);
+  } catch (err) {
+    console.error("Category drill-down lookup failed:", err);
+  }
 
   // Marketing spend has no date dimension in this app today — a campaign's
   // "spend" is a single lifetime total entered once, not logged per period,
@@ -673,7 +834,8 @@ export default async function JobCostingAnalyticsPage({
 
               <p className="mt-1 text-[#6b705c]">
                 Ranked by total estimated profit, highest to lowest, for{" "}
-                {label}.
+                {label}. Click a category to see the individual jobs behind
+                it.
               </p>
 
               <div className="mt-7 space-y-4">
@@ -689,15 +851,28 @@ export default async function JobCostingAnalyticsPage({
                       ? (category.unlogged_count / category.invoice_count) *
                         100
                       : 0;
+                  const jobRows =
+                    categoryJobRows.get(category.service_category) ?? [];
 
                   return (
-                    <div
+                    <details
                       key={category.service_category}
-                      className="rounded-2xl border border-[#e7e2d5] p-5"
+                      className="group rounded-2xl border border-[#e7e2d5] p-5"
                     >
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <summary className="flex cursor-pointer list-none flex-col gap-3 [&::-webkit-details-marker]:hidden sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0">
-                          <p className="font-bold">
+                          <p className="flex items-center gap-1.5 font-bold">
+                            <svg
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                              className="h-3.5 w-3.5 flex-shrink-0 text-[#9c7a20] transition-transform group-open:rotate-90"
+                            >
+                              <path
+                                fillRule="evenodd"
+                                d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z"
+                                clipRule="evenodd"
+                              />
+                            </svg>
                             {category.service_category}
                           </p>
                           <p className="mt-1 text-sm text-[#6b705c]">
@@ -707,6 +882,9 @@ export default async function JobCostingAnalyticsPage({
                                 {" "}
                                 · {unloggedPct.toFixed(0)}% unlogged
                               </span>
+                            )}
+                            {jobRows.length > 0 && (
+                              <span> · click to see jobs</span>
                             )}
                           </p>
                         </div>
@@ -725,7 +903,7 @@ export default async function JobCostingAnalyticsPage({
                               : "— margin"}
                           </p>
                         </div>
-                      </div>
+                      </summary>
 
                       <div className="mt-4 h-3 overflow-hidden rounded-full bg-[#eeeae0]">
                         <div
@@ -767,7 +945,82 @@ export default async function JobCostingAnalyticsPage({
                           </p>
                         </div>
                       </div>
-                    </div>
+
+                      {jobRows.length > 0 && (
+                        <div className="mt-5 hidden overflow-x-auto rounded-xl border border-[#e7e2d5] group-open:block">
+                          <table className="w-full min-w-[640px] text-left text-sm">
+                            <thead className="bg-[#f7f6f1] text-xs font-semibold uppercase tracking-wide text-[#6b705c]">
+                              <tr>
+                                <th className="px-4 py-2">Customer</th>
+                                <th className="px-4 py-2">Invoice</th>
+                                <th className="px-4 py-2">Date</th>
+                                <th className="px-4 py-2 text-right">
+                                  Revenue
+                                </th>
+                                <th className="px-4 py-2 text-right">Cost</th>
+                                <th className="px-4 py-2 text-right">
+                                  Profit
+                                </th>
+                                <th className="px-4 py-2 text-right">
+                                  Margin
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[#eeeae0]">
+                              {jobRows.map((job) => (
+                                <tr key={job.jobber_invoice_id}>
+                                  <td className="px-4 py-2 font-medium">
+                                    {job.client_name}
+                                  </td>
+                                  <td className="px-4 py-2">
+                                    {job.jobber_web_uri ? (
+                                      <a
+                                        href={job.jobber_web_uri}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-[#9c7a20] underline"
+                                      >
+                                        {job.invoice_number ??
+                                          job.jobber_invoice_id}
+                                      </a>
+                                    ) : (
+                                      (job.invoice_number ?? "—")
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-2 text-[#6b705c]">
+                                    {job.issue_date
+                                      ? formatDateLabel(job.issue_date)
+                                      : "—"}
+                                  </td>
+                                  <td className="px-4 py-2 text-right">
+                                    {formatCurrency(job.revenue)}
+                                  </td>
+                                  <td className="px-4 py-2 text-right">
+                                    {formatCurrency(
+                                      job.direct_cost + job.overhead_allocated
+                                    )}
+                                  </td>
+                                  <td
+                                    className={`px-4 py-2 text-right font-semibold ${
+                                      job.estimated_profit < 0
+                                        ? "text-red-600"
+                                        : "text-green-700"
+                                    }`}
+                                  >
+                                    {formatCurrency(job.estimated_profit)}
+                                  </td>
+                                  <td className="px-4 py-2 text-right text-[#6b705c]">
+                                    {job.profit_margin_pct !== null
+                                      ? `${job.profit_margin_pct.toFixed(0)}%`
+                                      : "—"}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </details>
                   );
                 })}
               </div>
