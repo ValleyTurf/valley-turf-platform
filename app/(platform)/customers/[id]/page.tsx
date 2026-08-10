@@ -11,6 +11,7 @@ import { getVisitNotesForClient, type VisitNoteGroup } from "@/lib/visitNotes";
 import { getJobberJobNotesForClient, type JobberJobNote } from "@/lib/jobberJobNotes";
 import TurfSizeField from "./TurfSizeField";
 import AddVisitNoteForm from "./AddVisitNoteForm";
+import PhotoGrid from "@/app/components/PhotoGrid";
 import {
   toNumber,
   formatCurrency,
@@ -1542,26 +1543,7 @@ export default async function CustomerDetailPage({
                               </p>
                             )}
 
-                            {note.photoUrls.length > 0 && (
-                              <div className="mt-2 grid grid-cols-3 gap-2">
-                                {note.photoUrls.map((url) => (
-                                  <a
-                                    key={url}
-                                    href={url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="block overflow-hidden rounded-lg"
-                                  >
-                                    {/* eslint-disable-next-line @next/next/no-img-element -- turf photos live in Supabase Storage, not an optimizable local/remote asset Next's Image config knows about */}
-                                    <img
-                                      src={url}
-                                      alt="Turf photo"
-                                      className="h-20 w-full object-cover transition hover:opacity-90"
-                                    />
-                                  </a>
-                                ))}
-                              </div>
-                            )}
+                            <PhotoGrid photos={note.photoUrls} />
 
                             <p className="mt-1 text-[10px] text-[#9c7a20]">
                               {note.authorName ?? "Unknown"} ·{" "}
@@ -1604,26 +1586,7 @@ export default async function CustomerDetailPage({
                           </p>
                         )}
 
-                        {note.photoUrls.length > 0 && (
-                          <div className="mt-2 grid grid-cols-3 gap-2">
-                            {note.photoUrls.map((url) => (
-                              <a
-                                key={url}
-                                href={url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="block overflow-hidden rounded-lg"
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element -- turf photos live in Supabase Storage, not an optimizable local/remote asset Next's Image config knows about */}
-                                <img
-                                  src={url}
-                                  alt="Turf photo"
-                                  className="h-20 w-full object-cover transition hover:opacity-90"
-                                />
-                              </a>
-                            ))}
-                          </div>
-                        )}
+                        <PhotoGrid photos={note.photoUrls} />
 
                         <p className="mt-1 text-[10px] text-[#9c7a20]">
                           {note.jobNumber ? `Job #${note.jobNumber}` : "Job"}
