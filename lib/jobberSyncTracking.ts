@@ -96,8 +96,24 @@ export type AlreadyRunningStatus = {
   lastStartedAt: string | null;
 };
 
-// Returns the "already running" info if a sync of this type is mid-run,
-// or null if it's safe to start a new one.
+// A run stuck on "running" past this age almost certainly didn't fail
+// gracefully — it got hard-killed by Vercel's function time limit before
+// its own catch block (and failSyncRun) ever ran, which permanently wedges
+// every future run behind a lock that's never released (confirmed live:
+// sync-payments got stuck "running" on Aug 4 and every cron-triggered
+// attempt since then silently no-op'd with "already running" for 6 days,
+// with no error ever recorded anywhere). This treats a sufficiently old
+// "running" row as orphaned and lets a new run start instead of requiring
+// a manual SQL reset every time. Originally added only to
+// sync-job-notes/route.ts; centralized here so every sync type that calls
+// this shared helper (customers, jobs, invoices, payments, visits,
+// job-notes) self-heals from this same failure mode, not just the one
+// route it happened to be written for first.
+const STALE_RUN_THRESHOLD_MS = 6 * 60 * 1000;
+
+// Returns the "already running" info if a sync of this type is mid-run
+// and that run isn't stale enough to be considered orphaned, or null if
+// it's safe to start a new one.
 export async function checkNotAlreadyRunning(
   syncType: string
 ): Promise<AlreadyRunningStatus | null> {
@@ -114,7 +130,19 @@ export async function checkNotAlreadyRunning(
   }
 
   if (currentStatus?.status === "running") {
-    return { lastStartedAt: currentStatus.last_started_at };
+    const startedAtMs = currentStatus.last_started_at
+      ? new Date(currentStatus.last_started_at).getTime()
+      : null;
+    const isStale =
+      startedAtMs !== null && Date.now() - startedAtMs > STALE_RUN_THRESHOLD_MS;
+
+    if (!isStale) {
+      return { lastStartedAt: currentStatus.last_started_at };
+    }
+
+    console.warn(
+      `${syncType} sync stuck on "running" since ${currentStatus.last_started_at} — treating as orphaned and starting a new run.`
+    );
   }
 
   return null;

@@ -15,6 +15,40 @@ export const maxDuration = 300;
 
 const SYNC_TYPE = "payments";
 
+// Vercel's maxDuration above is a hard kill with no cleanup — if it fires
+// mid-run, the catch block below (and failSyncRun) never gets to run, and
+// jobber_sync_status is left stuck on "running" forever. That's exactly
+// what happened live: this sync got hard-killed on Aug 4 and every
+// cron-triggered attempt since then silently no-op'd on "already running"
+// for 6 days with no error ever recorded, since lib/jobberSyncTracking.ts's
+// checkNotAlreadyRunning had no way to tell a genuinely active run from an
+// orphaned one. That helper now self-heals from a stuck run after enough
+// time has passed either way, but stopping on our own terms before the
+// hard kill (mark the run failed with a clear reason, respond to the
+// request) is better than relying on that safety net alone — same pattern
+// already used in sync-job-notes/route.ts.
+const SYNC_TIME_BUDGET_MS = 250_000;
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 type JobberClient = {
   id: string;
   name: string | null;
@@ -307,7 +341,11 @@ export async function GET() {
 
     syncRunId = await startSyncRun(SYNC_TYPE);
 
-    const syncResult = await syncPayments();
+    const syncResult = await withTimeout(
+      syncPayments(),
+      SYNC_TIME_BUDGET_MS,
+      "Payment sync exceeded its time budget for this run (likely stuck on a slow/throttled Jobber request or a growing payment history). Whatever pages completed before the cutoff were already saved — the next scheduled run picks up from where sync-payments always starts, so nothing is lost, just delayed."
+    );
 
     await completeSyncRun(SYNC_TYPE, syncRunId, {
       recordsReceived: syncResult.paymentsReceived,
