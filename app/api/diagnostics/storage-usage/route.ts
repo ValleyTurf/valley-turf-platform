@@ -12,27 +12,45 @@ export const maxDuration = 60;
 // in the app. No auth gate since this is short-lived and read-only.
 export async function GET() {
   try {
-    const pageSize = 1000;
-    const rows: {
+    type Row = {
       bucket_id: string | null;
       name: string;
       metadata: { size?: number } | null;
       created_at: string | null;
-    }[] = [];
+    };
 
-    for (let from = 0; ; from += pageSize) {
-      const { data, error } = await supabaseServer
-        .schema("storage")
-        .from("objects")
-        .select("bucket_id, name, metadata, created_at")
-        .range(from, from + pageSize - 1);
+    const pageSize = 1000;
 
-      if (error) throw error;
+    // Get the total count first so pages can be fetched in parallel
+    // instead of one-at-a-time — a prior diagnostic route in this app
+    // timed out doing sequential pagination against a large table.
+    const { count, error: countError } = await supabaseServer
+      .schema("storage")
+      .from("objects")
+      .select("*", { count: "exact", head: true });
 
-      rows.push(...((data ?? []) as typeof rows));
-      if (!data || data.length < pageSize) break;
-      if (from > 200000) break; // safety valve
+    if (countError) throw countError;
+
+    const totalCount = count ?? 0;
+    const pageStarts: number[] = [];
+    for (let from = 0; from < totalCount; from += pageSize) {
+      pageStarts.push(from);
     }
+
+    const pages = await Promise.all(
+      pageStarts.map(async (from) => {
+        const { data, error } = await supabaseServer
+          .schema("storage")
+          .from("objects")
+          .select("bucket_id, name, metadata, created_at")
+          .range(from, from + pageSize - 1);
+
+        if (error) throw error;
+        return (data ?? []) as Row[];
+      })
+    );
+
+    const rows: Row[] = pages.flat();
 
     let totalBytes = 0;
     const byBucket = new Map<string, { count: number; bytes: number }>();
