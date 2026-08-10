@@ -12,6 +12,12 @@ export const maxDuration = 60;
 // in the app. No auth gate since this is short-lived and read-only.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
+
+  if (searchParams.get("mode") === "ping") {
+    // Confirms routing/deployment alone, no Supabase call at all.
+    return NextResponse.json({ ok: true, ts: Date.now() });
+  }
+
   if (searchParams.get("mode") === "count-only") {
     // Minimal probe: isolate whether the storage.objects count query
     // itself is the slow/failing part, before trying full pagination.
