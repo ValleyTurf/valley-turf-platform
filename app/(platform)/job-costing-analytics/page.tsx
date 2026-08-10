@@ -690,28 +690,26 @@ function filterRowsByRange(
   });
 }
 
-// See buildCategorySummaries above for why directCost/profit are derived
-// from costBreakdowns (laborCost + materialCost) instead of the view's
-// own direct_cost/estimated_profit columns.
-function sumInvoiceRows(
-  rows: InvoiceCostRow[],
-  costBreakdowns: Map<string, CostBreakdown>
-) {
+// Deliberately still sourced from the view's own direct_cost/
+// estimated_profit, NOT costBreakdowns — this runs against allRows
+// (every invoice ever), and fetchCostBreakdownForInvoices's visits query
+// isn't bounded well enough to run over a multi-year range cheaply (see
+// the costBreakdowns comment below, where a first attempt at scoping it
+// to allRows broke the whole page — every row's Labor/Materials/visit
+// count silently went to zero because the query failed and got caught).
+// The all-time True Net Profit banner keeps the old, occasionally-
+// FK-mismatched direct_cost for now rather than risk that again;
+// everything actually visible per-invoice (the drill-down rows and
+// category cards, both scoped to the much smaller selected timeframe)
+// uses the fixed calendar-month numbers.
+function sumInvoiceRows(rows: InvoiceCostRow[]) {
   return rows.reduce(
-    (acc, row) => {
-      const revenue = toNumber(row.revenue);
-      const overhead = toNumber(row.overhead_allocated);
-      const breakdown = costBreakdowns.get(row.jobber_invoice_id);
-      const directCost = (breakdown?.labor ?? 0) + (breakdown?.materials ?? 0);
-      const profit = revenue - directCost - overhead;
-
-      return {
-        revenue: acc.revenue + revenue,
-        directCost: acc.directCost + directCost,
-        overhead: acc.overhead + overhead,
-        profit: acc.profit + profit,
-      };
-    },
+    (acc, row) => ({
+      revenue: acc.revenue + toNumber(row.revenue),
+      directCost: acc.directCost + toNumber(row.direct_cost),
+      overhead: acc.overhead + toNumber(row.overhead_allocated),
+      profit: acc.profit + toNumber(row.estimated_profit),
+    }),
     { revenue: 0, directCost: 0, overhead: 0, profit: 0 }
   );
 }
@@ -766,22 +764,24 @@ export default async function JobCostingAnalyticsPage({
     fetchError = err instanceof Error ? err.message : "Unknown error";
   }
 
-  // Computed once for every invoice ever (not just the selected
-  // timeframe) so the category cards, the all-time True Net Profit
-  // banner, AND the per-job drill-down all agree — previously each used
-  // a different direct-cost source (see buildCategorySummaries's comment)
-  // and could silently disagree with each other. Non-fatal on failure:
-  // everything below falls back to an empty map, which just means
-  // direct_cost/profit show as revenue-minus-overhead-only rather than
-  // crashing the page.
+  const rows = filterRowsByRange(allRows, startDate, endDate);
+
+  // Scoped to `rows` (the selected timeframe), not `allRows` — a first
+  // attempt at computing this once for every invoice ever, to also fix
+  // the all-time banner below, made fetchCostBreakdownForInvoices's
+  // visits query span years instead of one timeframe's worth of months,
+  // which failed outright (caught by the try/catch, silently leaving
+  // every row's Labor/Materials/visit-count at zero — a worse regression
+  // than the bug being fixed). Bounding it to `rows` keeps the query the
+  // same size it's always safely been. Shared between the category cards
+  // and the per-job drill-down below so both agree with each other.
   let costBreakdowns: Map<string, CostBreakdown> = new Map();
   try {
-    costBreakdowns = await fetchCostBreakdownForInvoices(allRows);
+    costBreakdowns = await fetchCostBreakdownForInvoices(rows);
   } catch (err) {
     console.error("Cost breakdown lookup failed:", err);
   }
 
-  const rows = filterRowsByRange(allRows, startDate, endDate);
   const categories = buildCategorySummaries(rows, costBreakdowns);
 
   // Per-job drill-down data for the currently selected timeframe only —
@@ -824,7 +824,7 @@ export default async function JobCostingAnalyticsPage({
   // honest way to fold marketing into a P&L is all-time: mixing a
   // period-scoped job revenue against a lifetime spend figure would produce
   // a misleading "true profit" for anything shorter than "all time".
-  const allTimeJobTotals = sumInvoiceRows(allRows, costBreakdowns);
+  const allTimeJobTotals = sumInvoiceRows(allRows);
   const marketingTotals = Array.from(campaignRoi.values()).reduce(
     (acc, roi) => ({
       spend: acc.spend + roi.spend,
