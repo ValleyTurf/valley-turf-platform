@@ -35,9 +35,6 @@ const PUBLIC_PATHS = [
   "/icons",
   "/sw.js",
   "/offline.html",
-  // TEMPORARY — Supabase storage-quota diagnostic, delete this entry and
-  // app/api/diagnostics/storage-usage once that investigation is resolved.
-  "/api/diagnostics/storage-usage",
 ];
 
 // Routes Vercel Cron calls on a schedule (see vercel.json) that have no
