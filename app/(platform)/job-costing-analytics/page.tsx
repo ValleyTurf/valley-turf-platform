@@ -52,19 +52,22 @@ type CategoryJobRow = {
   client_id: string | null;
   client_name: string;
   revenue: number;
+  // direct_cost here is laborCost + materialCost below, NOT the
+  // invoice_cost_breakdown view's own direct_cost column. The view's
+  // version comes from invoice_material_cost/invoice_equipment_cost,
+  // which (like the Labor/Materials columns before the calendar-month
+  // fix) still match visits to invoices via Jobber's unreliable
+  // jobber_invoice_id link — confirmed live: invoices for customers with
+  // no visit yet this month showed a large nonzero direct_cost pulled in
+  // from an unrelated past visit, while invoices with real, currently-
+  // uninvoiced material costs showed $0. Using laborCost + materialCost
+  // here instead means Total Cost is built from the same calendar-month-
+  // matched numbers already shown in the Labor/Materials columns, so the
+  // three always sum to Total Cost exactly — see fetchCostBreakdownForInvoices.
   direct_cost: number;
   overhead_allocated: number;
   estimated_profit: number;
   profit_margin_pct: number | null;
-  // Recomputed from the same source tables /job-costs logs against
-  // (visit_material_usage, keyed off each material's point-in-time
-  // unit_cost_at_time), with a timer-derived fallback for labor that's
-  // been clocked but never manually saved — see
-  // fetchCostBreakdownForInvoices. That fallback means laborCost +
-  // materialCost can run a little ahead of direct_cost (which only knows
-  // about saved amounts) as well as behind it; Total Cost in the UI stays
-  // sourced from direct_cost + overhead_allocated so it's always
-  // authoritative regardless.
   laborCost: number;
   materialCost: number;
   // True when laborCost is wholly or partly a timer-derived estimate
@@ -180,12 +183,24 @@ function getDateRange(
   return { startDate, endDate, label };
 }
 
-function buildCategorySummaries(rows: InvoiceCostRow[]): CategorySummary[] {
+// costBreakdowns supplies laborCost/materialCost per invoice (calendar-
+// month matched — see fetchCostBreakdownForInvoices) so category totals
+// are built from the same reliable numbers as the per-job drill-down,
+// instead of the view's own direct_cost/estimated_profit columns, which
+// still rely on Jobber's unreliable jobber_invoice_id visit link.
+function buildCategorySummaries(
+  rows: InvoiceCostRow[],
+  costBreakdowns: Map<string, CostBreakdown>
+): CategorySummary[] {
   const map = new Map<string, CategorySummary>();
 
   for (const row of rows) {
     const category = row.service_category || "Uncategorized";
-    const directCost = toNumber(row.direct_cost);
+    const revenue = toNumber(row.revenue);
+    const overhead = toNumber(row.overhead_allocated);
+    const breakdown = costBreakdowns.get(row.jobber_invoice_id);
+    const directCost = (breakdown?.labor ?? 0) + (breakdown?.materials ?? 0);
+    const profit = revenue - directCost - overhead;
 
     const existing = map.get(category) ?? {
       service_category: category,
@@ -202,10 +217,10 @@ function buildCategorySummaries(rows: InvoiceCostRow[]): CategorySummary[] {
 
     existing.invoice_count += 1;
     if (directCost === 0) existing.unlogged_count += 1;
-    existing.total_revenue += toNumber(row.revenue);
+    existing.total_revenue += revenue;
     existing.total_direct_cost += directCost;
-    existing.total_overhead_allocated += toNumber(row.overhead_allocated);
-    existing.total_estimated_profit += toNumber(row.estimated_profit);
+    existing.total_overhead_allocated += overhead;
+    existing.total_estimated_profit += profit;
 
     map.set(category, existing);
   }
@@ -250,11 +265,13 @@ function buildCategoryJobRows(
   for (const row of rows) {
     const category = row.service_category || "Uncategorized";
     const revenue = toNumber(row.revenue);
-    const directCost = toNumber(row.direct_cost);
     const overhead = toNumber(row.overhead_allocated);
-    const profit = toNumber(row.estimated_profit);
     const meta = invoiceMeta.get(row.jobber_invoice_id);
     const breakdown = costBreakdowns.get(row.jobber_invoice_id);
+    // See the CategoryJobRow type comment above: direct_cost is
+    // laborCost + materialCost, not the view's own (unreliable) column.
+    const directCost = (breakdown?.labor ?? 0) + (breakdown?.materials ?? 0);
+    const profit = revenue - directCost - overhead;
 
     const jobRow: CategoryJobRow = {
       jobber_invoice_id: row.jobber_invoice_id,
@@ -673,14 +690,28 @@ function filterRowsByRange(
   });
 }
 
-function sumInvoiceRows(rows: InvoiceCostRow[]) {
+// See buildCategorySummaries above for why directCost/profit are derived
+// from costBreakdowns (laborCost + materialCost) instead of the view's
+// own direct_cost/estimated_profit columns.
+function sumInvoiceRows(
+  rows: InvoiceCostRow[],
+  costBreakdowns: Map<string, CostBreakdown>
+) {
   return rows.reduce(
-    (acc, row) => ({
-      revenue: acc.revenue + toNumber(row.revenue),
-      directCost: acc.directCost + toNumber(row.direct_cost),
-      overhead: acc.overhead + toNumber(row.overhead_allocated),
-      profit: acc.profit + toNumber(row.estimated_profit),
-    }),
+    (acc, row) => {
+      const revenue = toNumber(row.revenue);
+      const overhead = toNumber(row.overhead_allocated);
+      const breakdown = costBreakdowns.get(row.jobber_invoice_id);
+      const directCost = (breakdown?.labor ?? 0) + (breakdown?.materials ?? 0);
+      const profit = revenue - directCost - overhead;
+
+      return {
+        revenue: acc.revenue + revenue,
+        directCost: acc.directCost + directCost,
+        overhead: acc.overhead + overhead,
+        profit: acc.profit + profit,
+      };
+    },
     { revenue: 0, directCost: 0, overhead: 0, profit: 0 }
   );
 }
@@ -735,8 +766,23 @@ export default async function JobCostingAnalyticsPage({
     fetchError = err instanceof Error ? err.message : "Unknown error";
   }
 
+  // Computed once for every invoice ever (not just the selected
+  // timeframe) so the category cards, the all-time True Net Profit
+  // banner, AND the per-job drill-down all agree — previously each used
+  // a different direct-cost source (see buildCategorySummaries's comment)
+  // and could silently disagree with each other. Non-fatal on failure:
+  // everything below falls back to an empty map, which just means
+  // direct_cost/profit show as revenue-minus-overhead-only rather than
+  // crashing the page.
+  let costBreakdowns: Map<string, CostBreakdown> = new Map();
+  try {
+    costBreakdowns = await fetchCostBreakdownForInvoices(allRows);
+  } catch (err) {
+    console.error("Cost breakdown lookup failed:", err);
+  }
+
   const rows = filterRowsByRange(allRows, startDate, endDate);
-  const categories = buildCategorySummaries(rows);
+  const categories = buildCategorySummaries(rows, costBreakdowns);
 
   // Per-job drill-down data for the currently selected timeframe only —
   // scoped to `rows`, not `allRows`, so expanding a category shows the
@@ -756,10 +802,9 @@ export default async function JobCostingAnalyticsPage({
       new Set(rows.map((row) => row.jobber_invoice_id))
     );
 
-    const [customerNames, invoiceMeta, costBreakdowns] = await Promise.all([
+    const [customerNames, invoiceMeta] = await Promise.all([
       fetchCustomerNamesByIds(clientIds),
       fetchInvoiceMetaByIds(invoiceIds),
-      fetchCostBreakdownForInvoices(rows),
     ]);
 
     categoryJobRows = buildCategoryJobRows(
@@ -779,7 +824,7 @@ export default async function JobCostingAnalyticsPage({
   // honest way to fold marketing into a P&L is all-time: mixing a
   // period-scoped job revenue against a lifetime spend figure would produce
   // a misleading "true profit" for anything shorter than "all time".
-  const allTimeJobTotals = sumInvoiceRows(allRows);
+  const allTimeJobTotals = sumInvoiceRows(allRows, costBreakdowns);
   const marketingTotals = Array.from(campaignRoi.values()).reduce(
     (acc, roi) => ({
       spend: acc.spend + roi.spend,
@@ -1399,8 +1444,8 @@ export default async function JobCostingAnalyticsPage({
                             </table>
                           </div>
                           <p className="mt-2 text-xs text-[#9c7a20]">
-                            Labor, Materials, and Overhead are the pieces
-                            behind Total Cost, broken out for comparison —
+                            Labor, Materials, and Overhead always sum to
+                            Total Cost exactly —
                             <span className="whitespace-nowrap"> *</span>{" "}
                             marks Labor that&apos;s estimated from clocked
                             time because it hasn&apos;t been manually saved
@@ -1409,14 +1454,13 @@ export default async function JobCostingAnalyticsPage({
                               /job-costs
                             </Link>{" "}
                             yet, priced at today&apos;s rate rather than a
-                            point-in-time one, so the three may not sum to
-                            Total Cost exactly to the penny. The small line
-                            under each date is which visits that dollar
-                            figure covers — matched to the invoice by
-                            calendar month (same month as the invoice date),
-                            not by Jobber&apos;s own visit-to-invoice link,
-                            which doesn&apos;t line up with how this
-                            business actually bills.
+                            point-in-time one. The small line under each
+                            date is which visits that dollar figure covers
+                            — matched to the invoice by calendar month
+                            (same month as the invoice date), not by
+                            Jobber&apos;s own visit-to-invoice link, which
+                            doesn&apos;t line up with how this business
+                            actually bills.
                           </p>
                         </div>
                       )}
