@@ -18,7 +18,12 @@
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
 
-const PHOTO_BUCKET = "visit-photos";
+// Exported so lib/jobberJobNotes.ts's removeJobberJobNotePhoto can delete
+// from the same bucket without hardcoding the name a second place — both
+// visit_notes and jobber_job_notes store their photos here (see
+// 026_add_visit_notes_and_turf_range.sql and the jobber-import backfill
+// in app/api/jobber/sync-job-notes/route.ts).
+export const PHOTO_BUCKET = "visit-photos";
 
 export type VisitNote = {
   id: string;
@@ -27,6 +32,11 @@ export type VisitNote = {
   authorName: string | null;
   note: string | null;
   photoUrls: string[];
+  // Raw storage paths, same order as photoUrls — needed alongside the
+  // public URLs so removeVisitNotePhoto below has something stable to
+  // delete by (the public URL is derived from the path, not the other
+  // way around).
+  photoPaths: string[];
   createdAt: string;
 };
 
@@ -90,6 +100,54 @@ export async function insertVisitNote(params: {
   });
 
   return { error: error?.message ?? null };
+}
+
+// Removes a single photo from a visit note — e.g. a crew member logged a
+// note/photo against the wrong customer's visit and office staff wants to
+// pull just that photo without deleting the whole note (note text, if
+// any, is left alone). Updates the note's photo_paths array first since
+// that's what actually controls whether the app shows the photo anywhere;
+// the storage delete is best-effort on top of that; a fixed pattern applies
+// here of only surfacing failures.
+export async function removeVisitNotePhoto(
+  noteId: string,
+  photoPath: string
+): Promise<{ error: string | null }> {
+  const { data: noteRow, error: fetchError } = await supabaseServer
+    .from("visit_notes")
+    .select("photo_paths")
+    .eq("id", noteId)
+    .maybeSingle();
+
+  if (fetchError) {
+    return { error: fetchError.message };
+  }
+
+  if (!noteRow) {
+    return { error: "Note not found." };
+  }
+
+  const remainingPaths = ((noteRow.photo_paths ?? []) as string[]).filter(
+    (p) => p !== photoPath
+  );
+
+  const { error: updateError } = await supabaseServer
+    .from("visit_notes")
+    .update({ photo_paths: remainingPaths })
+    .eq("id", noteId);
+
+  if (updateError) {
+    return { error: updateError.message };
+  }
+
+  // Best-effort: also remove the file from storage so it doesn't keep
+  // counting against the storage quota. If this fails (already gone,
+  // transient error), the photo is still gone from the app either way —
+  // the DB update above is what actually matters — so we don't turn a
+  // storage-only hiccup into a user-facing error.
+  await supabaseServer.storage.from(PHOTO_BUCKET).remove([photoPath]);
+
+  return { error: null };
 }
 
 type VisitNoteRow = {
@@ -197,6 +255,7 @@ export async function getVisitNotesForClient(
         : null,
       note: row.note,
       photoUrls: (row.photo_paths ?? []).map(visitNotePhotoUrl),
+      photoPaths: row.photo_paths ?? [],
       createdAt: row.created_at,
     });
   }

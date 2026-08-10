@@ -4,7 +4,12 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
-import { insertVisitNote, parsePhotoPathsField } from "@/lib/visitNotes";
+import {
+  insertVisitNote,
+  parsePhotoPathsField,
+  removeVisitNotePhoto,
+} from "@/lib/visitNotes";
+import { removeJobberJobNotePhoto } from "@/lib/jobberJobNotes";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
@@ -164,6 +169,65 @@ export async function addVisitNote(
     entityId: jobberVisitId,
     entityLabel: note ?? `${photoPaths.length} photo(s)`,
     after: { note, photo_count: photoPaths.length },
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+
+  return { error: null };
+}
+
+// Bound with (jobberClientId, noteId) via .bind() in the page before
+// being handed to PhotoGrid as its onRemove prop — PhotoGrid only ever
+// supplies the photoPath, the last argument. Lets office staff pull a
+// single photo that got logged against the wrong customer/visit without
+// touching the note's text or its other photos.
+export async function removeVisitPhoto(
+  jobberClientId: string,
+  noteId: string,
+  photoPath: string
+): Promise<{ error: string | null }> {
+  const actor = await getCurrentUser();
+  const result = await removeVisitNotePhoto(noteId, photoPath);
+
+  if (result.error) {
+    return result;
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "delete",
+    entityType: "visit_note_photo",
+    entityId: noteId,
+    entityLabel: photoPath,
+    before: { photo_path: photoPath },
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+
+  return { error: null };
+}
+
+// Same idea as removeVisitPhoto above, for a photo in the "Imported from
+// Jobber" block instead of a visit note.
+export async function removeImportedJobNotePhoto(
+  jobberClientId: string,
+  noteId: string,
+  photoPath: string
+): Promise<{ error: string | null }> {
+  const actor = await getCurrentUser();
+  const result = await removeJobberJobNotePhoto(noteId, photoPath);
+
+  if (result.error) {
+    return result;
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "delete",
+    entityType: "jobber_job_note_photo",
+    entityId: noteId,
+    entityLabel: photoPath,
+    before: { photo_path: photoPath },
   });
 
   revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);

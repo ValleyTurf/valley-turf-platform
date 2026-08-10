@@ -5,7 +5,7 @@
 // notes; these are job-level).
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
-import { visitNotePhotoUrl } from "@/lib/visitNotes";
+import { PHOTO_BUCKET, visitNotePhotoUrl } from "@/lib/visitNotes";
 
 export type JobberJobNote = {
   id: string;
@@ -13,6 +13,8 @@ export type JobberJobNote = {
   jobNumber: string | null;
   message: string | null;
   photoUrls: string[];
+  // Raw storage paths, same order as photoUrls — see removeJobberJobNotePhoto.
+  photoPaths: string[];
   createdAt: string | null;
 };
 
@@ -47,6 +49,47 @@ export async function getJobberJobNotesForClient(
     jobNumber: row.job_number,
     message: row.message,
     photoUrls: (row.photo_paths ?? []).map(visitNotePhotoUrl),
+    photoPaths: row.photo_paths ?? [],
     createdAt: row.jobber_created_at,
   }));
+}
+
+// The one write path into this otherwise-read-only table. Added so a
+// photo Jobber (or the one-time backfill) attached to the wrong job/
+// client can actually be removed instead of sitting there permanently —
+// same pattern as lib/visitNotes.ts's removeVisitNotePhoto.
+export async function removeJobberJobNotePhoto(
+  noteId: string,
+  photoPath: string
+): Promise<{ error: string | null }> {
+  const { data: noteRow, error: fetchError } = await supabaseServer
+    .from("jobber_job_notes")
+    .select("photo_paths")
+    .eq("id", noteId)
+    .maybeSingle();
+
+  if (fetchError) {
+    return { error: fetchError.message };
+  }
+
+  if (!noteRow) {
+    return { error: "Note not found." };
+  }
+
+  const remainingPaths = ((noteRow.photo_paths ?? []) as string[]).filter(
+    (p) => p !== photoPath
+  );
+
+  const { error: updateError } = await supabaseServer
+    .from("jobber_job_notes")
+    .update({ photo_paths: remainingPaths })
+    .eq("id", noteId);
+
+  if (updateError) {
+    return { error: updateError.message };
+  }
+
+  await supabaseServer.storage.from(PHOTO_BUCKET).remove([photoPath]);
+
+  return { error: null };
 }

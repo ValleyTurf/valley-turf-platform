@@ -5,7 +5,12 @@ import Link from "next/link";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
 import { normalizeEmail, normalizePhone } from "@/lib/matching";
-import { updateCustomerProfile, updateGeneralNotes } from "./actions";
+import {
+  updateCustomerProfile,
+  updateGeneralNotes,
+  removeVisitPhoto,
+  removeImportedJobNotePhoto,
+} from "./actions";
 import { saveVisitCosts } from "../../materials/actions";
 import { getVisitNotesForClient, type VisitNoteGroup } from "@/lib/visitNotes";
 import { getJobberJobNotesForClient, type JobberJobNote } from "@/lib/jobberJobNotes";
@@ -1543,7 +1548,17 @@ export default async function CustomerDetailPage({
                               </p>
                             )}
 
-                            <PhotoGrid photos={note.photoUrls} />
+                            <PhotoGrid
+                              photos={note.photoUrls.map((url, i) => ({
+                                url,
+                                path: note.photoPaths[i],
+                              }))}
+                              onRemove={removeVisitPhoto.bind(
+                                null,
+                                decodedId,
+                                note.id
+                              )}
+                            />
 
                             <p className="mt-1 text-[10px] text-[#9c7a20]">
                               {note.authorName ?? "Unknown"} ·{" "}
@@ -1586,7 +1601,17 @@ export default async function CustomerDetailPage({
                           </p>
                         )}
 
-                        <PhotoGrid photos={note.photoUrls} />
+                        <PhotoGrid
+                          photos={note.photoUrls.map((url, i) => ({
+                            url,
+                            path: note.photoPaths[i],
+                          }))}
+                          onRemove={removeImportedJobNotePhoto.bind(
+                            null,
+                            decodedId,
+                            note.id
+                          )}
+                        />
 
                         <p className="mt-1 text-[10px] text-[#9c7a20]">
                           {note.jobNumber ? `Job #${note.jobNumber}` : "Job"}
