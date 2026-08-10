@@ -10,7 +10,27 @@ export const maxDuration = 60;
 // counts only, grouped by bucket and top-level path prefix — no file
 // contents, no customer PII beyond a jobber id already visible elsewhere
 // in the app. No auth gate since this is short-lived and read-only.
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  if (searchParams.get("mode") === "count-only") {
+    // Minimal probe: isolate whether the storage.objects count query
+    // itself is the slow/failing part, before trying full pagination.
+    try {
+      const { count, error } = await supabaseServer
+        .schema("storage")
+        .from("objects")
+        .select("*", { count: "exact", head: true });
+
+      if (error) throw error;
+      return NextResponse.json({ count });
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        { status: 500 }
+      );
+    }
+  }
+
   try {
     type Row = {
       bucket_id: string | null;
