@@ -154,6 +154,13 @@ export function UpdateUserForm({
             <option value="manager">Manager</option>
             <option value="admin">Admin</option>
           </select>
+          {/* Disabled form fields aren't included in the submitted
+              FormData at all -- without this, saving your own row sent
+              role as empty (defaulting to "staff" server-side) and
+              tripped the "can't remove your own admin access" guard on
+              every self-edit, not just role changes. This carries the
+              real, unchangeable-for-self value through instead. */}
+          {isSelf && <input type="hidden" name="role" value={user.role} />}
         </div>
 
         <div>
@@ -191,6 +198,12 @@ export function UpdateUserForm({
         />
         Active (can log in)
       </label>
+      {/* Same reasoning as the hidden role input above -- a disabled
+          checkbox submits nothing, which read as "unchecked" server-side
+          and tripped the "can't deactivate your own account" guard on
+          every self-edit. Only rendered when true since an absent
+          "active" field is exactly what an unchecked box submits. */}
+      {isSelf && user.active && <input type="hidden" name="active" value="on" />}
 
       <ErrorText message={state.error} />
 
