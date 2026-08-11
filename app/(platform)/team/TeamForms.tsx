@@ -84,6 +84,9 @@ export function AddUserForm() {
             placeholder="e.g. 22.00"
             className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
           />
+          <p className="mt-1 text-[10px] text-[#6b705c]">
+            Feeds both Timecards pay and job costing.
+          </p>
         </div>
       </div>
 
@@ -168,6 +171,9 @@ export function UpdateUserForm({
             placeholder="Not set"
             className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
           />
+          <p className="mt-1 text-[10px] text-[#6b705c]">
+            Feeds both Timecards pay and job costing.
+          </p>
         </div>
       </div>
 

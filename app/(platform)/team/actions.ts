@@ -5,6 +5,7 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { hashPassword } from "@/lib/passwords";
 import { requireAdmin } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
+import { syncLaborRateForUser } from "@/lib/laborRates";
 import type { ActionState } from "./actionState";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
@@ -102,7 +103,16 @@ export async function addUser(
     after: { name, email: email.toLowerCase(), role, hourly_rate: hourlyRate },
   });
 
+  // Mirrors this rate into the point-in-time Labor Rate history that job
+  // costing reads from (see lib/laborRates.ts) -- Team is the one place
+  // staff enter a pay rate now, instead of also having to add it on
+  // Materials & Costs.
+  if (data?.id) {
+    await syncLaborRateForUser(data.id, name, hourlyRate);
+  }
+
   revalidatePath("/team");
+  revalidatePath("/materials");
 
   return { error: null };
 }
@@ -174,7 +184,14 @@ export async function updateUser(
     after: { name, role, active, hourly_rate: hourlyRate },
   });
 
+  // Mirrors this rate into the point-in-time Labor Rate history that job
+  // costing reads from (see lib/laborRates.ts) -- Team is the one place
+  // staff edit a pay rate now, instead of also having to update it on
+  // Materials & Costs.
+  await syncLaborRateForUser(id, name, hourlyRate);
+
   revalidatePath("/team");
+  revalidatePath("/materials");
 
   return { error: null };
 }

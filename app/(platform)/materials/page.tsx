@@ -203,6 +203,12 @@ export default async function MaterialsPage() {
 
           <section className="rounded-2xl bg-white p-5 shadow">
             <h2 className="text-lg font-bold">Current Labor Rates</h2>
+            <p className="mt-1 text-xs text-[#6b705c]">
+              Pay rate for an employee on Team is now the one place to set
+              this — saving it there adds the dated row here automatically.
+              Add/edit here directly only for a contractor without a Team
+              login, or to correct history.
+            </p>
 
             <div className="mt-4 space-y-3">
               {employees.length === 0 ? (
