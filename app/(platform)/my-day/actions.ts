@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
 import { completeJobberVisit } from "@/lib/jobberVisit";
 import { insertVisitNote, parsePhotoPathsField } from "@/lib/visitNotes";
+import { sendOnMyWaySms } from "@/lib/notifications";
 
 // Kept as a private, file-local copy of the same list rendered on the My
 // Day page (QUICK_ENTRY_MATERIALS/QUICK_ENTRY_EQUIPMENT in page.tsx) —
@@ -380,4 +381,79 @@ export async function addVisitNoteFromMyDay(
   revalidatePath(`/customers/${encodeURIComponent(clientId)}`);
 
   return { error: null };
+}
+
+// Texts the customer that the crew is on the way — the piece of Jobber's
+// CarPlay app (schedule + navigate + on-my-way text) that doesn't need a
+// native app at all, since the SMS send just needs a server call, not
+// anything CarPlay-specific. Reuses the same Twilio account already wired
+// up for internal lead alerts (lib/notifications.ts), just pointed at the
+// customer instead of staff. Returns {error} rather than a plain form
+// (same reasoning as addVisitNoteFromMyDay above) since a crew member
+// tapping this needs to know if the text actually went out — a missing
+// phone number or an unconfigured/failed Twilio send should look
+// different from a successful send, not silently do nothing.
+export async function sendOnWay(
+  visitId: string,
+  jobberClientId: string,
+  customerName: string | null
+): Promise<{ error: string | null; sentAt: string | null }> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    return { error: "You must be signed in.", sentAt: null };
+  }
+
+  if (!visitId || !jobberClientId) {
+    return { error: "Missing visit or customer.", sentAt: null };
+  }
+
+  const { data: customer, error: lookupError } = await supabaseServer
+    .from("customers")
+    .select("phone")
+    .eq("jobber_client_id", jobberClientId)
+    .maybeSingle();
+
+  if (lookupError) {
+    return { error: `Couldn't look up customer: ${lookupError.message}`, sentAt: null };
+  }
+
+  const phone = customer?.phone?.trim();
+
+  if (!phone) {
+    return { error: "No phone number on file for this customer.", sentAt: null };
+  }
+
+  const sent = await sendOnMyWaySms(phone, customerName);
+
+  if (!sent) {
+    return {
+      error: "Text couldn't be sent — Twilio may not be configured. Check with an admin.",
+      sentAt: null,
+    };
+  }
+
+  const sentAt = new Date().toISOString();
+
+  const { error: updateError } = await supabaseServer
+    .from("jobber_visits")
+    .update({ on_way_sent_at: sentAt })
+    .eq("jobber_visit_id", visitId);
+
+  if (updateError) {
+    console.error(`sendOnWay: text sent but failed to record for ${visitId}:`, updateError);
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "visit_on_way_sms",
+    entityId: visitId,
+    entityLabel: customerName ?? "Customer",
+    after: { phone, sent_at: sentAt },
+  });
+
+  revalidatePath("/my-day");
+
+  return { error: null, sentAt };
 }

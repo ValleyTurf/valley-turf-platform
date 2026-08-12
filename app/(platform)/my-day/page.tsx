@@ -20,6 +20,7 @@ import { computeRouteLegs, HOME_BASE_ADDRESS } from "@/lib/googleRoutes";
 import { completeVisit, saveVisitJobCostQuickEntry } from "./actions";
 import VisitTimer from "./VisitTimer";
 import VisitNoteForm from "./VisitNoteForm";
+import OnWayButton from "./OnWayButton";
 
 // Fixed, curated subset of materials/equipment shown right on the crew
 // card — not the full Materials & Costs list (that stays on the
@@ -51,6 +52,7 @@ type VisitRow = {
   visit_status: string | null;
   start_at: string | null;
   end_at: string | null;
+  on_way_sent_at: string | null;
 };
 
 type CustomerContact = {
@@ -260,7 +262,7 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
     supabaseServer
       .from("jobber_visits")
       .select(
-        "jobber_visit_id, jobber_client_id, customer_name, title, visit_status, start_at, end_at"
+        "jobber_visit_id, jobber_client_id, customer_name, title, visit_status, start_at, end_at, on_way_sent_at"
       )
       .gte("start_at", queryStart)
       .lte("start_at", queryEnd)
@@ -839,6 +841,15 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                         Call
                       </a>
                     </div>
+                  )}
+
+                  {contact?.phone && visit.jobber_client_id && (
+                    <OnWayButton
+                      visitId={visit.jobber_visit_id}
+                      jobberClientId={visit.jobber_client_id}
+                      customerName={visit.customer_name}
+                      initialSentAt={visit.on_way_sent_at}
+                    />
                   )}
 
                   {(quickMaterials.length > 0 || quickEquipment.length > 0) && (

@@ -160,6 +160,64 @@ export async function sendPortalMagicLinkEmail(
   }
 }
 
+// Customer-facing "we're on our way" text, sent from a My Day card
+// (app/(platform)/my-day/actions.ts's sendOnMyWay). Unlike
+// sendLeadSmsAlert below (an internal alert to staff that silently no-ops
+// without Twilio configured), this goes to a customer and the crew member
+// who tapped the button needs to know whether it actually went out —
+// same reasoning as sendPortalMagicLinkEmail returning a boolean instead
+// of swallowing the failure.
+export async function sendOnMyWaySms(
+  toPhone: string,
+  customerName: string | null
+): Promise<boolean> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_FROM_NUMBER;
+
+  if (!accountSid || !authToken || !fromNumber) {
+    console.error("Cannot send 'on my way' text: Twilio env vars are not set.");
+    return false;
+  }
+
+  const greetingName = customerName?.trim() || "there";
+  const body = `Hi ${greetingName}, this is Valley Turf Revival — we're on our way to your property now!`;
+
+  try {
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${accountSid}:${authToken}`
+          ).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          To: toPhone,
+          From: fromNumber,
+          Body: body,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      console.error(
+        "'On my way' SMS failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("'On my way' SMS error:", error);
+    return false;
+  }
+}
+
 async function sendLeadSmsAlert(lead: NewLeadAlert): Promise<void> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
