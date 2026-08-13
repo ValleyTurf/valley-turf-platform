@@ -21,6 +21,7 @@ type UserRow = {
   id: string;
   name: string;
   role: string;
+  inactiveAccount?: boolean;
 };
 
 type VisitRow = {
@@ -186,29 +187,58 @@ export default async function CrewStatusPage() {
     )
   );
 
-  const [{ data: assignmentsData }, { data: todayTimeLogsData }, { data: extraVisitsData }] =
-    await Promise.all([
-      visitIds.length > 0
-        ? supabaseServer
-            .from("visit_assignments")
-            .select("jobber_visit_id, assigned_user_id")
-            .in("jobber_visit_id", visitIds)
-        : Promise.resolve({ data: [] as AssignmentRow[] }),
-      supabaseServer
-        .from("visit_time_logs")
-        .select("user_id, started_at, stopped_at")
-        .gte("started_at", queryStart)
-        .lte("started_at", queryEnd),
-      missingActiveVisitIds.length > 0
-        ? supabaseServer
-            .from("jobber_visits")
-            .select("jobber_visit_id, customer_name, title, visit_status, start_at")
-            .in("jobber_visit_id", missingActiveVisitIds)
-        : Promise.resolve({ data: [] as VisitRow[] }),
-    ]);
+  // Same idea, but for the person, not the job: the top query only
+  // pulls active users, so a stuck timer belonging to someone who's
+  // since been deactivated in Team was invisible here — the timer
+  // existed in visit_time_logs, but their row never rendered, so there
+  // was nothing on screen to force-stop it from (confirmed live: exactly
+  // this happened, two days after the fact). Fetch those users
+  // separately, with no active filter, so a stuck timer is always
+  // reachable regardless of whether the account is still active.
+  const crewUserIds = new Set(crew.map((u) => u.id));
+  const missingActiveUserIds = Array.from(
+    new Set(
+      activeTimers.map((t) => t.user_id).filter((id) => !crewUserIds.has(id))
+    )
+  );
+
+  const [
+    { data: assignmentsData },
+    { data: todayTimeLogsData },
+    { data: extraVisitsData },
+    { data: extraUsersData },
+  ] = await Promise.all([
+    visitIds.length > 0
+      ? supabaseServer
+          .from("visit_assignments")
+          .select("jobber_visit_id, assigned_user_id")
+          .in("jobber_visit_id", visitIds)
+      : Promise.resolve({ data: [] as AssignmentRow[] }),
+    supabaseServer
+      .from("visit_time_logs")
+      .select("user_id, started_at, stopped_at")
+      .gte("started_at", queryStart)
+      .lte("started_at", queryEnd),
+    missingActiveVisitIds.length > 0
+      ? supabaseServer
+          .from("jobber_visits")
+          .select("jobber_visit_id, customer_name, title, visit_status, start_at")
+          .in("jobber_visit_id", missingActiveVisitIds)
+      : Promise.resolve({ data: [] as VisitRow[] }),
+    missingActiveUserIds.length > 0
+      ? supabaseServer
+          .from("users")
+          .select("id, name, role")
+          .in("id", missingActiveUserIds)
+      : Promise.resolve({ data: [] as UserRow[] }),
+  ]);
 
   for (const visit of (extraVisitsData ?? []) as VisitRow[]) {
     visitById.set(visit.jobber_visit_id, visit);
+  }
+
+  for (const extraUser of (extraUsersData ?? []) as UserRow[]) {
+    crew.push({ ...extraUser, inactiveAccount: true });
   }
 
   const assignedVisitsByUser = new Map<string, VisitRow[]>();
@@ -352,6 +382,11 @@ export default async function CrewStatusPage() {
                     <p className="font-bold">{user.name}</p>
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-[#9c7a20]">
                       {user.role}
+                      {user.inactiveAccount && (
+                        <span className="ml-2 text-red-600">
+                          Inactive account — has a stuck timer
+                        </span>
+                      )}
                     </p>
                   </div>
 
