@@ -202,11 +202,22 @@ export default async function CrewStatusPage() {
     )
   );
 
+  // Finished-segment minutes already on the books for each visit that
+  // currently has an active timer, so the live elapsed clock below can
+  // start from "time already logged on this job" instead of 0:00 — same
+  // "stop/restart keeps building, doesn't reset" fix as
+  // my-day/VisitTimer.tsx, using the exact same loggedMinutesByVisit
+  // shape that page computes for itself.
+  const activeTimerVisitIds = Array.from(
+    new Set(activeTimers.map((t) => t.jobber_visit_id))
+  );
+
   const [
     { data: assignmentsData },
     { data: todayTimeLogsData },
     { data: extraVisitsData },
     { data: extraUsersData },
+    { data: priorSegmentsData },
   ] = await Promise.all([
     visitIds.length > 0
       ? supabaseServer
@@ -231,6 +242,13 @@ export default async function CrewStatusPage() {
           .select("id, name, role")
           .in("id", missingActiveUserIds)
       : Promise.resolve({ data: [] as UserRow[] }),
+    activeTimerVisitIds.length > 0
+      ? supabaseServer
+          .from("visit_time_logs")
+          .select("jobber_visit_id, started_at, stopped_at")
+          .in("jobber_visit_id", activeTimerVisitIds)
+          .not("stopped_at", "is", null)
+      : Promise.resolve({ data: [] as { jobber_visit_id: string; started_at: string; stopped_at: string | null }[] }),
   ]);
 
   for (const visit of (extraVisitsData ?? []) as VisitRow[]) {
@@ -239,6 +257,21 @@ export default async function CrewStatusPage() {
 
   for (const extraUser of (extraUsersData ?? []) as UserRow[]) {
     crew.push({ ...extraUser, inactiveAccount: true });
+  }
+
+  const priorMinutesByVisit = new Map<string, number>();
+  for (const log of priorSegmentsData ?? []) {
+    if (!log.stopped_at) continue;
+
+    const startMs = new Date(log.started_at).getTime();
+    const stopMs = new Date(log.stopped_at).getTime();
+    if (Number.isNaN(startMs) || Number.isNaN(stopMs) || stopMs < startMs) continue;
+
+    const minutes = (stopMs - startMs) / 60000;
+    priorMinutesByVisit.set(
+      log.jobber_visit_id,
+      (priorMinutesByVisit.get(log.jobber_visit_id) ?? 0) + minutes
+    );
   }
 
   const assignedVisitsByUser = new Map<string, VisitRow[]>();
@@ -423,7 +456,10 @@ export default async function CrewStatusPage() {
                       </p>
                     )}
                     <p className="mt-1 text-lg font-bold tabular-nums">
-                      <LiveElapsed startedAt={status.startedAt} />
+                      <LiveElapsed
+                        startedAt={status.startedAt}
+                        priorMinutes={priorMinutesByVisit.get(status.visit.jobber_visit_id) ?? 0}
+                      />
                     </p>
 
                     <ForceStopTimerButton userId={user.id} userName={user.name} />

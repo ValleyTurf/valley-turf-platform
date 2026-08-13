@@ -7,18 +7,7 @@
 // separate from the Mark Complete button next to it.
 import { useEffect, useState, useTransition } from "react";
 import { startVisitTimer, stopVisitTimer } from "./actions";
-
-function formatElapsed(totalSeconds: number): string {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  }
-
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
+import { formatElapsedClock } from "@/lib/elapsedTime";
 
 function formatMinutes(totalMinutes: number): string {
   const hours = Math.floor(totalMinutes / 60);
@@ -79,12 +68,20 @@ export default function VisitTimer({
     });
   }
 
+  // Total across every start/stop cycle on this visit, not just the
+  // segment that's live right now -- stopping and restarting used to
+  // visually reset the ticking display to 0:00 even though the
+  // underlying total (loggedMinutes, summed from every finished segment
+  // in my-day/page.tsx) was never actually lost. Adding it as the base
+  // here just makes the display match what was already true.
+  const totalSecondsSoFar = loggedMinutes * 60 + elapsedSeconds;
+
   return (
     <div className="mt-2">
       {activeTimeLogId ? (
         <div className="flex items-center gap-2">
           <span className="rounded-lg bg-[#eef4ee] px-3 py-2.5 text-sm font-bold tabular-nums text-[#174734]">
-            ⏱ {formatElapsed(elapsedSeconds)}
+            ⏱ {formatElapsedClock(totalSecondsSoFar)}
           </span>
           <button
             type="button"

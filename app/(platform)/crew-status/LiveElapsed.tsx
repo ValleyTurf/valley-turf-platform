@@ -6,20 +6,20 @@
 // elapsed display, but read-only (no Start/Stop): a manager glancing at
 // Crew Status is looking at someone ELSE's timer, not their own.
 import { useEffect, useState } from "react";
+import { formatElapsedClock } from "@/lib/elapsedTime";
 
-function formatElapsed(totalSeconds: number): string {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  }
-
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
-
-export default function LiveElapsed({ startedAt }: { startedAt: string }) {
+export default function LiveElapsed({
+  startedAt,
+  priorMinutes = 0,
+}: {
+  startedAt: string;
+  // Finished-segment minutes already logged on this same visit before
+  // the currently-running segment -- same "total across every start/stop
+  // cycle" reasoning as my-day/VisitTimer.tsx, so a manager watching
+  // Crew Status sees continuous time on the job rather than it appearing
+  // to reset to 0:00 every time someone stops and restarts their timer.
+  priorMinutes?: number;
+}) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
@@ -35,5 +35,9 @@ export default function LiveElapsed({ startedAt }: { startedAt: string }) {
     return () => clearInterval(interval);
   }, [startedAt]);
 
-  return <span className="tabular-nums">{formatElapsed(elapsedSeconds)}</span>;
+  return (
+    <span className="tabular-nums">
+      {formatElapsedClock(priorMinutes * 60 + elapsedSeconds)}
+    </span>
+  );
 }
