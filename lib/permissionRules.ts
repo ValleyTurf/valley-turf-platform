@@ -35,12 +35,13 @@ export const SECTIONS: { id: PermissionSection; label: string; description: stri
     id: "job_costing",
     label: "Job Costing",
     description:
-      "Materials, Labor Rates, Equipment, Overhead Costs, Job Costing Analytics, Seasonal Trends.",
+      "Materials, Labor Rates, Equipment, Overhead Costs, Job Costing Analytics.",
   },
   {
     id: "financials",
     label: "Financials",
-    description: "Revenue dashboard, Profitability Alerts, Transactions, and Visits.",
+    description:
+      "Revenue dashboard, Profitability Alerts, Transactions, Visits, and Seasonal Trends.",
   },
   {
     id: "marketing_analytics",
@@ -92,7 +93,19 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
     "/costs",
     "/invoices",
   ],
-  financials: ["/revenue", "/alerts", "/transactions", "/visits"],
+  // /job-costing-analytics/trends is deliberately listed here, not under
+  // job_costing below, even though its URL still lives under
+  // /job-costing-analytics (the page didn't move, just its nav placement
+  // and permission grouping) — sectionForPath() picks the longest
+  // matching prefix across all sections, so this more specific entry
+  // wins over job_costing's broader "/job-costing-analytics".
+  financials: [
+    "/revenue",
+    "/alerts",
+    "/transactions",
+    "/visits",
+    "/job-costing-analytics/trends",
+  ],
   marketing_analytics: ["/analytics"],
   customer_intelligence: ["/customers/intelligence"],
   settings_audit: ["/settings", "/audit"],
@@ -172,14 +185,28 @@ function matchesPrefix(pathname: string, prefixes: string[]): boolean {
   );
 }
 
+// Longest matching prefix wins, not first-section-listed — so a more
+// specific prefix in one section (e.g. financials'
+// "/job-costing-analytics/trends") correctly overrides a broader prefix
+// in another section that would otherwise also match (job_costing's
+// "/job-costing-analytics"). Doesn't change resolution for any path
+// where only one section's prefixes match at all, which was every path
+// before Seasonal Trends needed to carve itself out of job_costing.
 function sectionForPath(pathname: string): PermissionSection | null {
+  let bestSection: PermissionSection | null = null;
+  let bestPrefixLength = -1;
+
   for (const section of SECTIONS) {
-    if (matchesPrefix(pathname, SECTION_PREFIXES[section.id])) {
-      return section.id;
+    for (const prefix of SECTION_PREFIXES[section.id]) {
+      const matches = pathname === prefix || pathname.startsWith(`${prefix}/`);
+      if (matches && prefix.length > bestPrefixLength) {
+        bestSection = section.id;
+        bestPrefixLength = prefix.length;
+      }
     }
   }
 
-  return null;
+  return bestSection;
 }
 
 export function isPathAllowedForRole(

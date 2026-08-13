@@ -181,6 +181,26 @@ describe("isPathAllowedForRole", () => {
     ).toBe(true);
   });
 
+  it("gates Seasonal Trends under financials, not job_costing, despite sharing the /job-costing-analytics URL prefix", () => {
+    // financials granted, job_costing not — should still be allowed,
+    // since the page moved to the Financials nav group.
+    expect(
+      isPathAllowedForRole("/job-costing-analytics/trends", "staff", {
+        ...NONE_ALLOWED,
+        staff: { ...NONE_ALLOWED.staff, financials: true },
+      })
+    ).toBe(true);
+
+    // job_costing granted, financials not — should now be blocked, the
+    // reverse of how it worked before the move.
+    expect(
+      isPathAllowedForRole("/job-costing-analytics/trends", "staff", {
+        ...NONE_ALLOWED,
+        staff: { ...NONE_ALLOWED.staff, job_costing: true },
+      })
+    ).toBe(false);
+  });
+
   it("leaves My Day, Timeclock, and account/logout-style paths open to every role regardless of permissions", () => {
     expect(isPathAllowedForRole("/my-day", "staff", NONE_ALLOWED)).toBe(
       true

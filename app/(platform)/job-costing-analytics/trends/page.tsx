@@ -1,7 +1,6 @@
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { formatCurrency, formatPercent } from "@/lib/format";
 import {
@@ -139,38 +138,14 @@ export default async function SeasonalTrendsPage() {
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
       <div className="mx-auto max-w-6xl">
-        <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
-              Valley Turf Revival OS
-            </p>
+        <header>
+          <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
+            Valley Turf Revival OS
+          </p>
 
-            <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
-              Seasonal Trends
-            </h1>
-
-            <p className="mt-2 max-w-2xl text-[#6b705c]">
-              Revenue and margin by calendar month, compared year over
-              year, using the same job-costing data as the profitability
-              report.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href="/job-costing-analytics"
-              className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold transition hover:bg-white"
-            >
-              Job Costing Analytics
-            </Link>
-
-            <Link
-              href="/revenue"
-              className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
-            >
-              Back to Financial Dashboard
-            </Link>
-          </div>
+          <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
+            Seasonal Trends
+          </h1>
         </header>
 
         {fetchError ? (

@@ -93,6 +93,11 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
       { name: "Transactions", href: "/transactions", icon: "🧾" },
       { name: "Visits", href: "/visits", icon: "🗓️" },
       { name: "Profitability Alerts", href: "/alerts", icon: "🚨" },
+      {
+        name: "Seasonal Trends",
+        href: "/job-costing-analytics/trends",
+        icon: "📆",
+      },
     ],
   },
   {
@@ -106,11 +111,6 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
         name: "Job Costing Analytics",
         href: "/job-costing-analytics",
         icon: "📈",
-      },
-      {
-        name: "Seasonal Trends",
-        href: "/job-costing-analytics/trends",
-        icon: "📆",
       },
       { name: "Materials & Costs", href: "/materials", icon: "🧰" },
     ],
