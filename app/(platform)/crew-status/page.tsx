@@ -15,6 +15,7 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import LiveElapsed from "./LiveElapsed";
 import AutoRefresh from "./AutoRefresh";
+import ForceStopTimerButton from "./ForceStopTimerButton";
 
 type UserRow = {
   id: string;
@@ -389,6 +390,8 @@ export default async function CrewStatusPage() {
                     <p className="mt-1 text-lg font-bold tabular-nums">
                       <LiveElapsed startedAt={status.startedAt} />
                     </p>
+
+                    <ForceStopTimerButton userId={user.id} userName={user.name} />
                   </div>
                 )}
 
