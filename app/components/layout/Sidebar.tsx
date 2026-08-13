@@ -283,7 +283,20 @@ export default function Sidebar({
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-72 transform overflow-y-auto bg-[#174734] text-white transition-transform duration-200 ease-in-out md:relative md:inset-auto md:z-auto md:h-screen md:translate-x-0 ${
+        // Mobile: a fixed, full-viewport-height drawer with its own
+        // scroll (overflow-y-auto), since it overlays the page rather
+        // than sitting in its flow. Desktop (md:): explicitly undoes
+        // both of those — no fixed height, no clipped overflow — so the
+        // sidebar instead stretches to match the height of whichever
+        // sibling (the page content) is taller, via the parent flex
+        // row's default align-items: stretch ((platform)/layout.tsx).
+        // It used to be pinned to exactly one viewport tall
+        // (md:h-screen) with overflow-y-auto giving it its own separate
+        // internal scrollbar for the nav once that filled up — so on any
+        // page taller than one screen, the sidebar visually stopped
+        // after the first viewport instead of running the full length
+        // of the page like the user expected.
+        className={`fixed inset-y-0 left-0 z-50 w-72 transform overflow-y-auto bg-[#174734] text-white transition-transform duration-200 ease-in-out md:relative md:inset-auto md:z-auto md:h-auto md:overflow-visible md:translate-x-0 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
