@@ -35,6 +35,11 @@ const PUBLIC_PATHS = [
   "/icons",
   "/sw.js",
   "/offline.html",
+  // Same reasoning as the PWA assets above — a crawler requesting this
+  // with no session cookie was getting redirected to /login (HTML)
+  // instead of the actual disallow rules, so Googlebot had no way to
+  // even find out it wasn't supposed to be here.
+  "/robots.txt",
 ];
 
 // Routes Vercel Cron calls on a schedule (see vercel.json) that have no
