@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+/*
+ * This app has one, fixed light theme -- every page hardcodes its own
+ * colors against a light background (bg-[#f5f4ef], text-[#174734], etc.)
+ * with no dark-mode-aware alternatives anywhere. The old
+ * prefers-color-scheme override below flipped --foreground to near-white
+ * whenever a phone/browser was in dark mode. That's genuinely invisible
+ * on any element that doesn't set its own explicit text color -- and it
+ * beat Tailwind's text-gray-900 utility on <body> itself despite lower
+ * specificity, because Tailwind's utilities live in a CSS @layer and
+ * unlayered rules (this plain "body { color }" one) always win over
+ * layered ones regardless of selector specificity. Confirmed live: the
+ * Customer Map legend (Current/Recent/Past/etc., no color class of its
+ * own) was unreadable on a phone in dark mode for exactly this reason.
+ * Removing dark-mode support entirely, rather than patching every
+ * individual unstyled element, closes off this whole class of bug.
+ */
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -10,13 +26,6 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {

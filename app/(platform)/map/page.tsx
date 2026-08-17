@@ -98,7 +98,7 @@ export default async function CustomerMapPage() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col bg-[#f5f4ef] p-4 sm:p-8">
+    <main className="flex min-h-screen flex-col bg-[#f5f4ef] p-4 text-[#174734] sm:p-8">
       <div className="mx-auto w-full max-w-7xl">
         <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
           Valley Turf Revival OS
