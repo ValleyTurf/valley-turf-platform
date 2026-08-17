@@ -274,6 +274,9 @@ export default async function CodesPage() {
                         <p className="text-2xl font-bold text-[#174734]">
                           {code.totalScans}
                         </p>
+                        <p className="text-xs text-[#6b705c]">
+                          {formatArizonaTime(code.lastScan, "No scans yet")}
+                        </p>
                       </div>
 
                       <div className="text-right">
