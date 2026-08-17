@@ -731,8 +731,8 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
 
               return (
                 <Fragment key={visit.jobber_visit_id}>
-                  <article className="rounded-2xl bg-white p-4 shadow">
-                  <div className="flex items-start justify-between gap-3">
+                  <details className="group rounded-2xl bg-white p-4 shadow">
+                  <summary className="flex cursor-pointer list-none items-start justify-between gap-3 [&::-webkit-details-marker]:hidden">
                     <div className="min-w-0">
                       <p className="text-lg font-bold">
                         {formatTime(visit.start_at)}
@@ -768,13 +768,22 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                       )}
                     </div>
 
-                    <span
-                      className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${badge.classes}`}
-                    >
-                      {badge.label}
-                    </span>
-                  </div>
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      <span
+                        className={`rounded-full px-2 py-1 text-[10px] font-bold ${badge.classes}`}
+                      >
+                        {badge.label}
+                      </span>
+                      <span
+                        aria-hidden="true"
+                        className="text-[#9c7a20] transition-transform duration-200 group-open:rotate-180"
+                      >
+                        ▾
+                      </span>
+                    </div>
+                  </summary>
 
+                  <div className="mt-3">
                   {address && (
                     <p className="mt-3 text-sm text-[#6b705c]">{address}</p>
                   )}
@@ -958,7 +967,8 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                       </button>
                     </form>
                   )}
-                  </article>
+                  </div>
+                  </details>
 
                   {milesToNext != null && (
                     <p className="py-1 text-center text-xs font-semibold text-[#9c7a20]">
