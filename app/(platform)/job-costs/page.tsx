@@ -77,6 +77,13 @@ type UserRow = {
 
 const PAGE_SIZE = 15;
 
+// Visits before this date are permanently excluded from this page —
+// not just filtered out of the default "unlogged" view, but hidden
+// even under "Show All Visits" too. Set per a one-time decision not to
+// go back and log costs for anything older than this; bump (or remove)
+// this constant if that ever changes.
+const HIDE_VISITS_BEFORE = "2026-05-01";
+
 function formatDateTime(value: string | null): string {
   if (!value) {
     return "Not scheduled";
@@ -217,6 +224,7 @@ export default async function JobCostsPage({
     )
     .not("start_at", "is", null)
     .lte("start_at", nowIso)
+    .gte("start_at", `${HIDE_VISITS_BEFORE}T00:00:00-07:00`)
     .order("start_at", { ascending: false })
     .range(from, to);
 
