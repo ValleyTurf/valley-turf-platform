@@ -18,7 +18,7 @@
 //
 // Bump CACHE_NAME whenever APP_SHELL changes so old caches get cleaned
 // up in the activate handler below.
-const CACHE_NAME = "vtr-shell-v1";
+const CACHE_NAME = "vtr-shell-v2";
 
 const APP_SHELL = [
   "/offline.html",

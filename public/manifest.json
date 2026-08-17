@@ -2,7 +2,7 @@
   "name": "Valley Turf Revival OS",
   "short_name": "VTR OS",
   "description": "Valley Turf Revival business platform — revenue, customers, and job costing.",
-  "start_url": "/dashboard",
+  "start_url": "/my-day",
   "display": "standalone",
   "orientation": "portrait-primary",
   "background_color": "#f5f4ef",
