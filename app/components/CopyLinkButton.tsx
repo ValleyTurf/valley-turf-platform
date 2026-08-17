@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 
 type CopyLinkButtonProps = {
   url: string;
@@ -13,7 +13,13 @@ export default function CopyLinkButton({
 }: CopyLinkButtonProps) {
   const [copied, setCopied] = useState(false);
 
-  async function handleCopy() {
+  async function handleCopy(event: MouseEvent) {
+    // Stops the click from bubbling up to an ancestor <summary> (this
+    // button now also gets used inside collapsed QR/campaign rows on
+    // /codes) -- without this, copying the link would also toggle that
+    // row open/closed as an unrelated side effect.
+    event.stopPropagation();
+
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);

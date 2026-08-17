@@ -297,6 +297,19 @@ export default async function CodesPage() {
                         </p>
                       </div>
 
+                      <div className="flex flex-col gap-2">
+                        <CopyLinkButton
+                          url={code.trackingUrl}
+                          className="rounded-xl border border-[#174734] px-4 py-2 text-xs font-semibold text-[#174734] shadow-sm transition hover:bg-[#174734] hover:text-white"
+                        />
+                        <Link
+                          href={`/campaigns/${code.slug}`}
+                          className="rounded-xl bg-[#d4af37] px-4 py-2 text-center text-xs font-semibold text-[#174734] shadow-sm transition hover:bg-[#c49f2f]"
+                        >
+                          Details
+                        </Link>
+                      </div>
+
                       <span
                         aria-hidden="true"
                         className="text-[#9c7a20] transition-transform duration-200 group-open:rotate-180"
