@@ -758,7 +758,7 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                         )}
                       </p>
                       {service && (
-                        <p className="text-xs text-[#6b705c]">{service}</p>
+                        <p className="text-sm font-bold text-[#174734]">{service}</p>
                       )}
                       {crewNote.length > 0 && (
                         <p className="mt-1 text-xs font-semibold text-[#9c7a20]">

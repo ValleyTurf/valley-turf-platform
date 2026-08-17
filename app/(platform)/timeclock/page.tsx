@@ -136,6 +136,34 @@ export default async function TimeclockPage({ searchParams }: TimeclockPageProps
     a < b ? 1 : -1
   );
 
+  // Computed once here (rather than inline in the per-day list below) so
+  // the same numbers back both the day-by-day rows and the pay-period
+  // summary pills up top — one source of truth for what "my pay" means.
+  const dayBreakdowns = dayKeys.map((dayKey) => {
+    const shifts = shiftsByDay.get(dayKey) ?? [];
+    const segments: ShiftSegment[] = shifts.map((s) => ({
+      clockedInAt: s.clocked_in_at,
+      clockedOutAt: s.clocked_out_at,
+    }));
+    const minutes = totalMinutes(segments);
+    const hasOpenShift = shifts.some((s) => !s.clocked_out_at);
+    const wasEdited = shifts.some((s) => s.edited_by);
+
+    const dayTip = myTips.get(dayKey);
+    const tipAmount = dayTip?.amount ?? 0;
+    const wagePay = hourlyRateNumber !== null ? minutesToDecimalHours(minutes) * hourlyRateNumber : 0;
+    const totalPay = wagePay + tipAmount;
+    const showPay = hourlyRateNumber !== null || tipAmount > 0;
+
+    return { dayKey, shifts, minutes, hasOpenShift, wasEdited, dayTip, tipAmount, wagePay, totalPay, showPay };
+  });
+
+  const periodMinutes = dayBreakdowns.reduce((sum, d) => sum + d.minutes, 0);
+  const periodWages = dayBreakdowns.reduce((sum, d) => sum + d.wagePay, 0);
+  const periodTips = dayBreakdowns.reduce((sum, d) => sum + d.tipAmount, 0);
+  const periodTotal = periodWages + periodTips;
+  const showPeriodSummary = hourlyRateNumber !== null || periodTips > 0;
+
   const isManagerPlus = currentUser.role !== "staff";
 
   const prevHref = `/timeclock?period=${getPreviousPayPeriod(selectedPeriod).startDate}`;
@@ -199,28 +227,44 @@ export default async function TimeclockPage({ searchParams }: TimeclockPageProps
           </Link>
         </div>
 
+        {showPeriodSummary && (
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <div className="rounded-2xl bg-white p-3 text-center shadow">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-[#9c7a20]">
+                Wages
+              </p>
+              <p className="mt-1 text-lg font-bold tabular-nums">
+                {formatCurrencyPrecise(periodWages)}
+              </p>
+              <p className="text-[10px] text-[#6b705c]">{formatHoursMinutes(periodMinutes)}</p>
+            </div>
+            <div className="rounded-2xl bg-white p-3 text-center shadow">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-[#9c7a20]">
+                Tips
+              </p>
+              <p className="mt-1 text-lg font-bold tabular-nums">
+                {formatCurrencyPrecise(periodTips)}
+              </p>
+            </div>
+            <div className="rounded-2xl bg-[#174734] p-3 text-center text-white shadow">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-[#d4af37]">
+                Total
+              </p>
+              <p className="mt-1 text-lg font-bold tabular-nums">
+                {formatCurrencyPrecise(periodTotal)}
+              </p>
+            </div>
+          </div>
+        )}
+
         {dayKeys.length === 0 ? (
           <section className="mt-3 rounded-2xl bg-white p-5 shadow">
             <p className="text-sm text-[#6b705c]">No shifts logged this pay period.</p>
           </section>
         ) : (
           <div className="mt-3 space-y-2">
-            {dayKeys.map((dayKey) => {
-              const shifts = shiftsByDay.get(dayKey) ?? [];
-              const segments: ShiftSegment[] = shifts.map((s) => ({
-                clockedInAt: s.clocked_in_at,
-                clockedOutAt: s.clocked_out_at,
-              }));
-              const minutes = totalMinutes(segments);
-              const hasOpenShift = shifts.some((s) => !s.clocked_out_at);
-              const wasEdited = shifts.some((s) => s.edited_by);
-
-              const dayTip = myTips.get(dayKey);
-              const tipAmount = dayTip?.amount ?? 0;
-              const wagePay = hourlyRateNumber !== null ? minutesToDecimalHours(minutes) * hourlyRateNumber : 0;
-              const totalPay = wagePay + tipAmount;
-              const showPay = hourlyRateNumber !== null || tipAmount > 0;
-
+            {dayBreakdowns.map(
+              ({ dayKey, shifts, minutes, hasOpenShift, wasEdited, dayTip, tipAmount, totalPay, showPay }) => {
               return (
                 <article
                   key={dayKey}
