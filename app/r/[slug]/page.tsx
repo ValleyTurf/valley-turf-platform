@@ -27,7 +27,7 @@ export default async function Page({
 
   const { data: campaign, error: campaignError } = await supabaseServer
     .from("campaigns")
-    .select("id, slug, destination, capture_leads, alias, name")
+    .select("id, slug, destination, capture_leads")
     .eq("slug", slug)
     .single();
 
@@ -81,7 +81,6 @@ export default async function Page({
         scanId={scan.id}
         campaignId={campaign.id}
         destination={campaign.destination}
-        campaignName={campaign.alias || campaign.name}
       />
     );
   }

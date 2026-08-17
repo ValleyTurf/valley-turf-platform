@@ -6,14 +6,12 @@ type ScanCaptureProps = {
   scanId: string;
   campaignId: string;
   destination: string;
-  campaignName: string;
 };
 
 export default function ScanCapture({
   scanId,
   campaignId,
   destination,
-  campaignName,
 }: ScanCaptureProps) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -62,7 +60,7 @@ export default function ScanCapture({
           Valley Turf Revival
         </p>
         <h1 className="mt-2 text-2xl font-bold">
-          Thanks for scanning{campaignName ? ` — ${campaignName}` : ""}!
+          Thank you for reaching out to Valley Turf Revival!
         </h1>
         <p className="mt-2 text-sm text-[#6b705c]">
           Leave your info and we&apos;ll follow up about a free quote. Or skip
