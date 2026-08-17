@@ -120,10 +120,23 @@ export default async function CodesPage() {
           </p>
         </section>
 
-        <section className="mt-8 rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
-          <h2 className="text-2xl font-bold text-[#174734]">
-            New Campaign
-          </h2>
+        <details className="group mt-8 rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+            <div>
+              <h2 className="text-2xl font-bold text-[#174734]">
+                New Campaign
+              </h2>
+              <p className="mt-1 text-sm text-[#6b705c] group-open:hidden">
+                Set up a new trackable QR code or social/bio link.
+              </p>
+            </div>
+            <span
+              aria-hidden="true"
+              className="shrink-0 text-2xl text-[#9c7a20] transition-transform duration-200 group-open:rotate-45"
+            >
+              +
+            </span>
+          </summary>
 
           <form action={createCampaign} className="mt-5 grid gap-4 md:grid-cols-2">
             <div>
@@ -216,7 +229,7 @@ export default async function CodesPage() {
               </button>
             </div>
           </form>
-        </section>
+        </details>
 
         <section className="mt-10">
           <h2 className="text-2xl font-bold text-[#174734]">QR Codes</h2>
@@ -229,125 +242,140 @@ export default async function CodesPage() {
               No QR code campaigns yet.
             </p>
           ) : (
-            <div className="mt-4 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            <div className="mt-4 space-y-3">
               {qrCampaigns.map((code) => (
-                <article
+                <details
                   key={code.id}
-                  className="rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm"
+                  className="group rounded-2xl border border-[#e7e2d5] bg-white p-5 shadow-sm"
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h3 className="text-xl font-bold text-[#174734]">
-                        {code.displayName}
-                      </h3>
-                      <p className="mt-1 text-sm text-[#6b705c]">
-                        Campaign: {code.name}
-                      </p>
-                      <p className="mt-1 text-sm text-[#6b705c]">
-                        /r/{code.slug}
+                  <summary className="flex cursor-pointer list-none flex-col gap-4 [&::-webkit-details-marker]:hidden sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-lg font-bold text-[#174734]">
+                          {code.displayName}
+                        </h3>
+                        <span className="rounded-full bg-[#d4af37] px-2 py-1 text-xs font-bold text-[#174734]">
+                          QR
+                        </span>
+                        {code.capture_leads && (
+                          <span className="rounded-full bg-[#174734] px-2 py-1 text-xs font-bold text-white">
+                            Capturing Leads
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 break-all text-sm text-[#6b705c]">
+                        {code.trackingUrl}
                       </p>
                     </div>
 
-                    <div className="flex shrink-0 flex-col items-end gap-1">
-                      <div className="rounded-full bg-[#d4af37] px-3 py-1 text-xs font-bold text-[#174734]">
-                        QR
+                    <div className="flex shrink-0 items-center gap-4">
+                      <div className="text-right">
+                        <p className="text-xs text-[#6b705c]">Scans</p>
+                        <p className="text-2xl font-bold text-[#174734]">
+                          {code.totalScans}
+                        </p>
                       </div>
-                      {code.capture_leads && (
-                        <div className="rounded-full bg-[#174734] px-3 py-1 text-xs font-bold text-white">
-                          Capturing Leads
-                        </div>
+
+                      <div className="text-right">
+                        <p className="text-xs text-[#6b705c]">Revenue</p>
+                        <p className="text-lg font-bold text-[#174734]">
+                          {formatCurrency(code.revenue)}
+                        </p>
+                        <p
+                          className={`text-xs font-semibold ${
+                            code.roiPercent !== null && code.roiPercent < 0
+                              ? "text-red-600"
+                              : "text-[#6b705c]"
+                          }`}
+                        >
+                          {code.roiPercent === null
+                            ? "No spend logged"
+                            : `${code.roiPercent >= 0 ? "+" : ""}${code.roiPercent.toFixed(0)}% ROI`}
+                        </p>
+                      </div>
+
+                      <span
+                        aria-hidden="true"
+                        className="text-[#9c7a20] transition-transform duration-200 group-open:rotate-180"
+                      >
+                        ▾
+                      </span>
+                    </div>
+                  </summary>
+
+                  <div className="mt-5 border-t border-[#e7e2d5] pt-5">
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      <div className="rounded-xl bg-[#f5f4ef] p-3">
+                        <p className="text-xs text-[#6b705c]">Campaign</p>
+                        <p className="text-sm font-semibold text-[#174734]">
+                          {code.name}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl bg-[#f5f4ef] p-3">
+                        <p className="text-xs text-[#6b705c]">Slug</p>
+                        <p className="text-sm font-semibold text-[#174734]">
+                          /r/{code.slug}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl bg-[#f5f4ef] p-3">
+                        <p className="text-xs text-[#6b705c]">Last Scan</p>
+                        <p className="text-sm font-semibold text-[#174734]">
+                          {formatArizonaTime(code.lastScan, "No scans yet")}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl bg-[#f5f4ef] p-3">
+                        <p className="text-xs text-[#6b705c]">Total Scans</p>
+                        <p className="text-sm font-semibold text-[#174734]">
+                          {code.totalScans}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-5 flex justify-center rounded-xl border border-[#e7e2d5] bg-white p-4">
+                      {code.qrDataUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={code.qrDataUrl}
+                          alt={`${code.displayName} QR code`}
+                          className="h-56 w-56"
+                        />
+                      )}
+                    </div>
+
+                    <div className="mt-5 rounded-xl bg-[#f5f4ef] p-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[#6b705c]">
+                        Destination
+                      </p>
+                      <p className="mt-1 break-all text-sm text-[#174734]">
+                        {code.destination}
+                      </p>
+                    </div>
+
+                    <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                      <Link
+                        href={`/campaigns/${code.slug}`}
+                        className="inline-flex w-full justify-center rounded-xl bg-[#d4af37] px-4 py-3 text-sm font-semibold text-[#174734] shadow-sm transition hover:bg-[#d4af37]"
+                      >
+                        View Details
+                      </Link>
+
+                      <CopyLinkButton url={code.trackingUrl} />
+
+                      {code.qrDataUrl && (
+                        <a
+                          href={code.qrDataUrl}
+                          download={`${code.slug}-qr.png`}
+                          className="inline-flex w-full justify-center rounded-xl bg-[#174734] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#226246]"
+                        >
+                          Download PNG
+                        </a>
                       )}
                     </div>
                   </div>
-
-                  <div className="mt-5 grid grid-cols-2 gap-3">
-                    <div className="rounded-xl bg-[#f5f4ef] p-3">
-                      <p className="text-xs text-[#6b705c]">Total Scans</p>
-                      <p className="text-3xl font-bold text-[#174734]">
-                        {code.totalScans}
-                      </p>
-                    </div>
-
-                    <div className="rounded-xl bg-[#f5f4ef] p-3">
-                      <p className="text-xs text-[#6b705c]">Last Scan</p>
-                      <p className="text-sm font-semibold text-[#174734]">
-                        {formatArizonaTime(code.lastScan, "No scans yet")}
-                      </p>
-                    </div>
-
-                    <div className="rounded-xl bg-[#f5f4ef] p-3">
-                      <p className="text-xs text-[#6b705c]">Revenue</p>
-                      <p className="text-lg font-bold text-[#174734]">
-                        {formatCurrency(code.revenue)}
-                      </p>
-                    </div>
-
-                    <div className="rounded-xl bg-[#f5f4ef] p-3">
-                      <p className="text-xs text-[#6b705c]">ROI</p>
-                      <p
-                        className={`text-lg font-bold ${
-                          code.roiPercent !== null && code.roiPercent < 0
-                            ? "text-red-600"
-                            : "text-[#174734]"
-                        }`}
-                      >
-                        {code.roiPercent === null
-                          ? "—"
-                          : `${code.roiPercent >= 0 ? "+" : ""}${code.roiPercent.toFixed(0)}%`}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-5 flex justify-center rounded-xl border border-[#e7e2d5] bg-white p-4">
-                    {code.qrDataUrl && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={code.qrDataUrl}
-                        alt={`${code.displayName} QR code`}
-                        className="h-56 w-56"
-                      />
-                    )}
-                  </div>
-
-                  <div className="mt-5 rounded-xl bg-[#f5f4ef] p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#6b705c]">
-                      Tracking URL
-                    </p>
-                    <p className="mt-1 break-all text-sm text-[#174734]">
-                      {code.trackingUrl}
-                    </p>
-                  </div>
-
-                  <div className="mt-3 rounded-xl bg-[#f5f4ef] p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#6b705c]">
-                      Destination
-                    </p>
-                    <p className="mt-1 break-all text-sm text-[#174734]">
-                      {code.destination}
-                    </p>
-                  </div>
-
-                  <div className="mt-5 grid gap-3">
-                    <Link
-                      href={`/campaigns/${code.slug}`}
-                      className="inline-flex w-full justify-center rounded-xl bg-[#d4af37] px-4 py-3 text-sm font-semibold text-[#174734] shadow-sm transition hover:bg-[#d4af37]"
-                    >
-                      View Details
-                    </Link>
-
-                    <CopyLinkButton url={code.trackingUrl} />
-
-                    {code.qrDataUrl && (
-                      <a
-                        href={code.qrDataUrl}
-                        download={`${code.slug}-qr.png`}
-                        className="inline-flex w-full justify-center rounded-xl bg-[#174734] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#226246]"
-                      >
-                        Download PNG
-                      </a>
-                    )}
-                  </div>
-                </article>
+                </details>
               ))}
             </div>
           )}
