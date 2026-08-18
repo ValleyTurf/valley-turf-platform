@@ -128,7 +128,7 @@ export default function ScheduleInteractive({
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
-                      <p className="text-lg font-bold">
+                      <p className="text-xl font-bold">
                         {visit.startTimeLabel}
                         {visit.durationMinutes
                           ? ` · ${visit.durationMinutes} min`
@@ -136,7 +136,7 @@ export default function ScheduleInteractive({
                       </p>
 
                       <p
-                        className={`mt-1 flex items-center gap-1.5 font-semibold ${
+                        className={`mt-1 flex items-center gap-1.5 text-lg font-semibold ${
                           visit.statusLabel === "Completed"
                             ? "text-[#6b705c] line-through"
                             : ""
@@ -149,7 +149,7 @@ export default function ScheduleInteractive({
                       </p>
 
                       {visit.service && (
-                        <p className="flex items-center gap-1.5 text-sm text-[#6b705c]">
+                        <p className="flex items-center gap-1.5 text-base text-[#6b705c]">
                           <span
                             className="inline-block h-2 w-2 shrink-0 rounded-full"
                             style={{ backgroundColor: visit.serviceColorHex }}
@@ -159,7 +159,7 @@ export default function ScheduleInteractive({
                       )}
 
                       {visit.address && (
-                        <p className="mt-1 text-sm text-[#6b705c]">
+                        <p className="mt-1 text-base text-[#6b705c]">
                           {visit.address}
                         </p>
                       )}
@@ -168,14 +168,14 @@ export default function ScheduleInteractive({
                         <a
                           href={`tel:${visit.phone.replace(/[^\d+]/g, "")}`}
                           onClick={(event) => event.stopPropagation()}
-                          className="mt-1 inline-block text-sm font-semibold text-[#9c7a20] hover:underline"
+                          className="mt-1 inline-block text-base font-semibold text-[#9c7a20] hover:underline"
                         >
                           {visit.phone}
                         </a>
                       )}
 
                       {visit.gateCode && (
-                        <p className="mt-1 text-sm text-[#6b705c]">
+                        <p className="mt-1 text-base text-[#6b705c]">
                           <span className="font-semibold text-[#174734]">
                             Gate Code:
                           </span>{" "}
@@ -184,7 +184,7 @@ export default function ScheduleInteractive({
                       )}
 
                       {visit.specialInstructions && (
-                        <p className="mt-1 whitespace-pre-wrap text-sm text-[#6b705c]">
+                        <p className="mt-1 whitespace-pre-wrap text-base text-[#6b705c]">
                           <span className="font-semibold text-[#174734]">
                             Special Instructions:
                           </span>{" "}
@@ -195,7 +195,7 @@ export default function ScheduleInteractive({
 
                     <div className="flex shrink-0 flex-col items-end gap-2">
                       <span
-                        className={`rounded-full px-3 py-1 text-xs font-bold ${visit.statusClasses}`}
+                        className={`rounded-full px-3 py-1 text-sm font-bold ${visit.statusClasses}`}
                       >
                         {visit.statusLabel}
                       </span>
@@ -204,7 +204,7 @@ export default function ScheduleInteractive({
                         <Link
                           href={`/customers/${encodeURIComponent(visit.clientId)}`}
                           onClick={(event) => event.stopPropagation()}
-                          className="text-sm font-semibold text-[#9c7a20] hover:underline"
+                          className="text-base font-semibold text-[#9c7a20] hover:underline"
                         >
                           View Customer →
                         </Link>

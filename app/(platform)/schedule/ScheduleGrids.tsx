@@ -59,7 +59,7 @@ export default function ScheduleGrids({
                           key={visit.id}
                           type="button"
                           onClick={() => onSelectVisit(visit)}
-                          className={`flex w-full items-start gap-1.5 rounded text-left text-xs ${
+                          className={`flex w-full items-start gap-1.5 rounded text-left text-sm ${
                             visit.id === selectedId
                               ? "ring-2 ring-[#d4af37]"
                               : ""
@@ -83,7 +83,7 @@ export default function ScheduleGrids({
                               )}
                               {visit.startTimeLabel} · {visit.customerName}
                             </span>
-                            <span className="block truncate text-[10px] text-[#9c7a20]">
+                            <span className="block truncate text-xs text-[#9c7a20]">
                               {visit.serviceLabel}
                             </span>
                           </span>
@@ -185,7 +185,7 @@ export default function ScheduleGrids({
                           }}
                           onClick={() => onSelectVisit(visit)}
                           title={`${visit.serviceLabel} — ${visit.customerName} (drag to move)`}
-                          className={`block w-full cursor-grab truncate rounded px-1.5 py-0.5 text-left text-[10px] leading-tight transition hover:brightness-95 active:cursor-grabbing ${
+                          className={`block w-full cursor-grab truncate rounded px-1.5 py-0.5 text-left text-xs leading-tight transition hover:brightness-95 active:cursor-grabbing ${
                             visit.serviceChipClass
                           } ${
                             visit.id === selectedId
