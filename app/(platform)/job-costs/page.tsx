@@ -44,7 +44,6 @@ type VisitRow = {
   end_at: string | null;
   completed_at: string | null;
   service_category: string | null;
-  has_logged_cost: boolean | null;
 };
 
 type UsageRow = {
@@ -212,30 +211,66 @@ export default async function JobCostsPage({
     Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
 
   const from = (currentPage - 1) * PAGE_SIZE;
-  const to = from + PAGE_SIZE - 1;
 
   const nowIso = new Date().toISOString();
 
-  let visitsQuery = supabaseServer
+  // Materials/equipment fetched up front now, ahead of the visit query —
+  // needed early to know which material rows count as "Fuel" and
+  // "Labor" for the completeness check below. Point-in-time rows (see
+  // Materials & Costs at /materials) are kept as long as they were valid
+  // any time on/after HIDE_VISITS_BEFORE — a visit can never be older
+  // than that now, so it's a safe fixed lower bound in place of the old
+  // "earliest visit actually on this page" cutoff.
+  const [materialsResult, equipmentResult] = await Promise.all([
+    supabaseServer
+      .from("materials")
+      .select("id, name, unit_label, unit_cost, end_date")
+      .or(`end_date.is.null,end_date.gt.${HIDE_VISITS_BEFORE}`)
+      .order("name", { ascending: true }),
+    supabaseServer
+      .from("equipment")
+      .select("id, name, retired_date")
+      .or(`retired_date.is.null,retired_date.gt.${HIDE_VISITS_BEFORE}`)
+      .order("name", { ascending: true }),
+  ]);
+
+  const materials = (materialsResult.data ?? []) as Material[];
+  const equipmentList = (equipmentResult.data ?? []) as Equipment[];
+
+  // Matched by employee name via lib/laborMaterialName.ts (not a literal
+  // "Labor - {name}" string — some existing rows are saved with an em
+  // dash instead of a hyphen, which silently matched nothing here before)
+  // since that's the rate row job costing actually bills against —
+  // users.hourly_rate is a separate, unrelated field.
+  const laborMaterialIdByEmployeeName = new Map<string, string>();
+  for (const material of materials) {
+    const employeeName = parseLaborEmployeeName(material.name);
+    if (employeeName) {
+      laborMaterialIdByEmployeeName.set(employeeName, material.id);
+    }
+  }
+  const laborMaterialIds = new Set(laborMaterialIdByEmployeeName.values());
+
+  const fuelMaterialIds = new Set(
+    materials
+      .filter((material) => material.name.trim().toLowerCase() === "fuel")
+      .map((material) => material.id)
+  );
+
+  let allVisitsQuery = supabaseServer
     .from("visit_costing_list")
     .select(
-      "jobber_visit_id, jobber_client_id, jobber_invoice_id, customer_name, job_number, title, visit_status, start_at, end_at, completed_at, service_category, has_logged_cost",
-      { count: "exact" }
+      "jobber_visit_id, jobber_client_id, jobber_invoice_id, customer_name, job_number, title, visit_status, start_at, end_at, completed_at, service_category"
     )
     .not("start_at", "is", null)
     .lte("start_at", nowIso)
     .gte("start_at", `${HIDE_VISITS_BEFORE}T00:00:00-07:00`)
-    .order("start_at", { ascending: false })
-    .range(from, to);
-
-  if (!showAll) {
-    visitsQuery = visitsQuery.eq("has_logged_cost", false);
-  }
+    .order("start_at", { ascending: false });
 
   if (search) {
     const safeSearch = escapeSearchValue(search);
 
-    visitsQuery = visitsQuery.or(
+    allVisitsQuery = allVisitsQuery.or(
       [
         `customer_name.ilike.%${safeSearch}%`,
         `title.ilike.%${safeSearch}%`,
@@ -243,92 +278,96 @@ export default async function JobCostsPage({
     );
   }
 
-  const { data: visitsData, count, error } = await visitsQuery;
+  const { data: allVisitsData, error } = await allVisitsQuery;
+  const allVisits = (allVisitsData ?? []) as VisitRow[];
+  const allVisitIds = allVisits.map((visit) => visit.jobber_visit_id);
 
-  const visits = (visitsData ?? []) as VisitRow[];
-  const totalVisits = count ?? 0;
-  const totalPages = Math.max(1, Math.ceil(totalVisits / PAGE_SIZE));
-
-  const visitIds = visits.map((visit) => visit.jobber_visit_id);
-
-  // Materials/labor rates and equipment are point-in-time: once one gets
-  // an end_date (see Materials & Costs at /materials — that's how staff
-  // roll a price/rate change), it should stop showing up for logging NEW
-  // work, but must stay available for logging OLDER visits that predate
-  // the change. So instead of a fixed "active as of today" cutoff, use
-  // the earliest visit actually visible on this page — an ended material
-  // still shows here as long as at least one unlogged visit on screen is
-  // old enough that it was the active rate back then. Falls back to
-  // today when there's nothing to log (empty page/search).
-  const earliestVisibleDate = visits.reduce<string | null>((earliest, visit) => {
-    if (!visit.start_at) return earliest;
-    const visitDate = visit.start_at.slice(0, 10);
-    return !earliest || visitDate < earliest ? visitDate : earliest;
-  }, null);
-  const cutoffDate = earliestVisibleDate ?? new Date().toISOString().slice(0, 10);
-
-  const [
-    materialsResult,
-    equipmentResult,
-    usageResult,
-    equipmentUsageResult,
-    costResult,
-    timeLogsResult,
-    usersResult,
-  ] = await Promise.all([
-    supabaseServer
-      .from("materials")
-      .select("id, name, unit_label, unit_cost, end_date")
-      .or(`end_date.is.null,end_date.gt.${cutoffDate}`)
-      .order("name", { ascending: true }),
-    supabaseServer
-      .from("equipment")
-      .select("id, name, retired_date")
-      .or(`retired_date.is.null,retired_date.gt.${cutoffDate}`)
-      .order("name", { ascending: true }),
-    visitIds.length > 0
-      ? supabaseServer
+  // Fetched for every visit in the window (not just the current page) —
+  // needed to decide, per visit, whether it's "done" before we know
+  // which visits actually land on this page. Reused below to prefill
+  // the current page's form fields too, so this is the only usage query
+  // this render does.
+  const { data: allUsageData } =
+    allVisitIds.length > 0
+      ? await supabaseServer
           .from("visit_material_usage")
           .select("jobber_visit_id, material_id, quantity_used")
-          .in("jobber_visit_id", visitIds)
-      : Promise.resolve({ data: [] as UsageRow[] }),
-    visitIds.length > 0
-      ? supabaseServer
-          .from("visit_equipment_usage")
-          .select("jobber_visit_id, equipment_id")
-          .in("jobber_visit_id", visitIds)
-      : Promise.resolve({ data: [] as EquipmentUsageRow[] }),
-    visitIds.length > 0
-      ? supabaseServer
-          .from("visit_material_cost")
-          .select("jobber_visit_id, material_cost")
-          .in("jobber_visit_id", visitIds)
-      : Promise.resolve({ data: [] as VisitCost[] }),
-    // Job timer data (visit_time_logs) — used below to pre-fill labor
-    // hours from actual clocked time instead of a blank field, for any
-    // labor row that hasn't already been manually saved. Only completed
-    // (stopped_at set) segments count; a still-running timer's duration
-    // isn't final yet.
-    visitIds.length > 0
-      ? supabaseServer
-          .from("visit_time_logs")
-          .select("jobber_visit_id, user_id, started_at, stopped_at")
-          .in("jobber_visit_id", visitIds)
-          .not("stopped_at", "is", null)
-      : Promise.resolve({ data: [] as TimeLogRow[] }),
-    supabaseServer.from("users").select("id, name"),
-  ]);
+          .in("jobber_visit_id", allVisitIds)
+      : { data: [] as UsageRow[] };
 
-  const materials = (materialsResult.data ?? []) as Material[];
-  const equipmentList = (equipmentResult.data ?? []) as Equipment[];
+  const allUsageRows = (allUsageData ?? []) as UsageRow[];
+
+  // "Done" specifically means Fuel + at least one Labor entry logged —
+  // not just "something, anything, was saved." Quick job-cost entry on
+  // My Day only ever touches Infill/OxyTurf/equipment (see
+  // QUICK_ENTRY_MATERIALS in my-day/page.tsx), which used to be enough
+  // on its own to drop a visit off this list before Fuel/Labor were ever
+  // actually logged here. If Fuel or Labor materials aren't set up at
+  // all, that half of the check is treated as trivially satisfied rather
+  // than blocking every visit forever.
+  const hasFuelByVisit = new Set<string>();
+  const hasLaborByVisit = new Set<string>();
+  for (const row of allUsageRows) {
+    if (toNumber(row.quantity_used) <= 0) continue;
+    if (fuelMaterialIds.has(row.material_id)) {
+      hasFuelByVisit.add(row.jobber_visit_id);
+    }
+    if (laborMaterialIds.has(row.material_id)) {
+      hasLaborByVisit.add(row.jobber_visit_id);
+    }
+  }
+
+  function isCostingDone(visitId: string): boolean {
+    const fuelOk = fuelMaterialIds.size === 0 || hasFuelByVisit.has(visitId);
+    const laborOk = laborMaterialIds.size === 0 || hasLaborByVisit.has(visitId);
+    return fuelOk && laborOk;
+  }
+
+  const filteredVisits = showAll
+    ? allVisits
+    : allVisits.filter((visit) => !isCostingDone(visit.jobber_visit_id));
+
+  const totalVisits = filteredVisits.length;
+  const totalPages = Math.max(1, Math.ceil(totalVisits / PAGE_SIZE));
+  const visits = filteredVisits.slice(from, from + PAGE_SIZE);
+  const visitIds = visits.map((visit) => visit.jobber_visit_id);
 
   const usageMap = new Map<string, number>();
-  for (const row of (usageResult.data ?? []) as UsageRow[]) {
+  for (const row of allUsageRows) {
     usageMap.set(
       `${row.jobber_visit_id}:${row.material_id}`,
       toNumber(row.quantity_used)
     );
   }
+
+  const [equipmentUsageResult, costResult, timeLogsResult, usersResult] =
+    await Promise.all([
+      visitIds.length > 0
+        ? supabaseServer
+            .from("visit_equipment_usage")
+            .select("jobber_visit_id, equipment_id")
+            .in("jobber_visit_id", visitIds)
+        : Promise.resolve({ data: [] as EquipmentUsageRow[] }),
+      visitIds.length > 0
+        ? supabaseServer
+            .from("visit_material_cost")
+            .select("jobber_visit_id, material_cost")
+            .in("jobber_visit_id", visitIds)
+        : Promise.resolve({ data: [] as VisitCost[] }),
+      // Job timer data (visit_time_logs) — used below to pre-fill labor
+      // hours from actual clocked time instead of a blank field, for any
+      // labor row that hasn't already been manually saved. Only completed
+      // (stopped_at set) segments count; a still-running timer's duration
+      // isn't final yet.
+      visitIds.length > 0
+        ? supabaseServer
+            .from("visit_time_logs")
+            .select("jobber_visit_id, user_id, started_at, stopped_at")
+            .in("jobber_visit_id", visitIds)
+            .not("stopped_at", "is", null)
+        : Promise.resolve({ data: [] as TimeLogRow[] }),
+      supabaseServer.from("users").select("id, name"),
+    ]);
 
   const equipmentUsageSet = new Set<string>();
   for (const row of (equipmentUsageResult.data ??
@@ -341,25 +380,9 @@ export default async function JobCostsPage({
     costMap.set(row.jobber_visit_id, toNumber(row.material_cost));
   }
 
-  // Timer-derived labor hours, keyed the same way as usageMap so the
-  // render loop below can prefer a manually-saved value and only fall
-  // back to the timer's total when nothing's been logged yet. Matched by
-  // employee name via lib/laborMaterialName.ts (not a literal
-  // "Labor - {name}" string — some existing rows are saved with an em
-  // dash instead of a hyphen, which silently matched nothing here before)
-  // since that's the rate row job costing actually bills against —
-  // users.hourly_rate is a separate, unrelated field.
   const userNameMap = new Map<string, string>();
   for (const row of (usersResult.data ?? []) as UserRow[]) {
     if (row.name) userNameMap.set(row.id, row.name);
-  }
-
-  const laborMaterialIdByEmployeeName = new Map<string, string>();
-  for (const material of materials) {
-    const employeeName = parseLaborEmployeeName(material.name);
-    if (employeeName) {
-      laborMaterialIdByEmployeeName.set(employeeName, material.id);
-    }
   }
 
   const timerMinutesMap = new Map<string, number>();

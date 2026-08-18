@@ -572,11 +572,19 @@ export async function deleteEmployee(id: string): Promise<void> {
 // ---------- Visit-based job cost entry (Phase 2: replaces invoice-based entry) ----------
 
 export async function saveVisitCosts(formData: FormData): Promise<void> {
-  const parsedUsageRows: {
+  const toUpsert: {
     jobber_visit_id: string;
     material_id: string;
     quantity_used: number;
   }[] = [];
+
+  // Fields submitted as 0/blank/invalid — e.g. clearing a time that was
+  // accidentally logged against the wrong person. These need an actual
+  // delete if a usage row already exists, not just a skip: skipping left
+  // the old value in place untouched, which is why clearing a mistake
+  // previously required entering a near-zero value like 0:01 instead of
+  // really removing it.
+  const toClear: { jobber_visit_id: string; material_id: string }[] = [];
 
   for (const [key, value] of formData.entries()) {
     const match = key.match(/^usage\[(.+?)\]\[(.+?)\]$/);
@@ -589,20 +597,20 @@ export async function saveVisitCosts(formData: FormData): Promise<void> {
     const materialId = match[2];
     const quantity = parseQuantity(value);
 
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      continue;
+    if (Number.isFinite(quantity) && quantity > 0) {
+      toUpsert.push({
+        jobber_visit_id: jobberVisitId,
+        material_id: materialId,
+        quantity_used: quantity,
+      });
+    } else {
+      toClear.push({ jobber_visit_id: jobberVisitId, material_id: materialId });
     }
-
-    parsedUsageRows.push({
-      jobber_visit_id: jobberVisitId,
-      material_id: materialId,
-      quantity_used: quantity,
-    });
   }
 
-  if (parsedUsageRows.length > 0) {
+  if (toUpsert.length > 0) {
     const materialIds = Array.from(
-      new Set(parsedUsageRows.map((row) => row.material_id))
+      new Set(toUpsert.map((row) => row.material_id))
     );
 
     const materialsResult = await supabaseServer
@@ -623,7 +631,7 @@ export async function saveVisitCosts(formData: FormData): Promise<void> {
       ])
     );
 
-    const usageRows = parsedUsageRows.map((row) => ({
+    const usageRows = toUpsert.map((row) => ({
       jobber_visit_id: row.jobber_visit_id,
       material_id: row.material_id,
       quantity_used: row.quantity_used,
@@ -637,6 +645,26 @@ export async function saveVisitCosts(formData: FormData): Promise<void> {
     if (usageResult.error) {
       throw new Error(
         `Failed to save visit material usage: ${usageResult.error.message}`
+      );
+    }
+  }
+
+  if (toClear.length > 0) {
+    const clearResults = await Promise.all(
+      toClear.map((row) =>
+        supabaseServer
+          .from("visit_material_usage")
+          .delete()
+          .eq("jobber_visit_id", row.jobber_visit_id)
+          .eq("material_id", row.material_id)
+      )
+    );
+
+    const clearError = clearResults.find((result) => result.error)?.error;
+
+    if (clearError) {
+      throw new Error(
+        `Failed to clear visit material usage: ${clearError.message}`
       );
     }
   }
