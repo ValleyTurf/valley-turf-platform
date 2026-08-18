@@ -180,11 +180,15 @@ export async function stopVisitTimer(
 export async function saveVisitJobCostQuickEntry(
   visitId: string,
   formData: FormData
-): Promise<void> {
+): Promise<{ error: string | null }> {
   const actor = await getCurrentUser();
 
-  if (!actor || !visitId) {
-    return;
+  if (!actor) {
+    return { error: "You must be signed in." };
+  }
+
+  if (!visitId) {
+    return { error: "Missing visit." };
   }
 
   // Same "lowercase, spaces -> underscores" transform the My Day page
@@ -276,6 +280,7 @@ export async function saveVisitJobCostQuickEntry(
         `saveVisitJobCostQuickEntry material usage failed for ${visitId}:`,
         error
       );
+      return { error: `Couldn't save materials: ${error.message}` };
     }
   }
 
@@ -300,6 +305,7 @@ export async function saveVisitJobCostQuickEntry(
         `saveVisitJobCostQuickEntry equipment reset failed for ${visitId}:`,
         deleteError
       );
+      return { error: `Couldn't update equipment: ${deleteError.message}` };
     } else if (checkedEquipmentIds.length > 0) {
       const { error: insertError } = await supabaseServer
         .from("visit_equipment_usage")
@@ -315,12 +321,15 @@ export async function saveVisitJobCostQuickEntry(
           `saveVisitJobCostQuickEntry equipment save failed for ${visitId}:`,
           insertError
         );
+        return { error: `Couldn't save equipment: ${insertError.message}` };
       }
     }
   }
 
   revalidatePath("/my-day");
   revalidatePath("/job-costs");
+
+  return { error: null };
 }
 
 // Field capture counterpart to addVisitNote in

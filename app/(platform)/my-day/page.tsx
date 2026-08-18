@@ -17,10 +17,11 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { haversineMiles } from "@/lib/geoDistance";
 import { computeRouteLegs, HOME_BASE_ADDRESS } from "@/lib/googleRoutes";
-import { completeVisit, saveVisitJobCostQuickEntry } from "./actions";
+import { completeVisit } from "./actions";
 import VisitTimer from "./VisitTimer";
 import VisitNoteForm from "./VisitNoteForm";
 import OnWayButton from "./OnWayButton";
+import JobCostQuickEntryForm from "./JobCostQuickEntryForm";
 
 // Fixed, curated subset of materials/equipment shown right on the crew
 // card — not the full Materials & Costs list (that stays on the
@@ -30,15 +31,6 @@ import OnWayButton from "./OnWayButton";
 // /materials' end_date rollover) — a name just has to keep matching.
 const QUICK_ENTRY_MATERIALS = ["Infill", "OxyTurf"];
 const QUICK_ENTRY_EQUIPMENT = ["Blower", "Power Broom", "Turf Vacuum"];
-
-// Must match the identical transform in ./actions.ts's
-// saveVisitJobCostQuickEntry — kept as two independent copies rather
-// than a shared import since actions.ts is "use server" and can only
-// export async functions (see the commit that fixed the Vercel build
-// for exporting a plain constant from a 'use server' file).
-function quickEntryFieldKey(name: string): string {
-  return name.toLowerCase().replace(/\s+/g, "_");
-}
 
 type MyDayPageProps = {
   searchParams: Promise<{ date?: string }>;
@@ -729,6 +721,22 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
               const isThisVisitActive =
                 activeTimer?.jobber_visit_id === visit.jobber_visit_id;
 
+              const quickEntryDefaultQuantities: Record<string, number> = {};
+              for (const material of quickMaterials) {
+                const saved = quickUsageMap.get(
+                  `${visit.jobber_visit_id}:${material.id}`
+                );
+                if (saved) quickEntryDefaultQuantities[material.id] = saved;
+              }
+
+              const quickEntryCheckedEquipmentIds = quickEquipment
+                .filter((equipment) =>
+                  quickEquipmentUsageSet.has(
+                    `${visit.jobber_visit_id}:${equipment.id}`
+                  )
+                )
+                .map((equipment) => equipment.id);
+
               return (
                 <Fragment key={visit.jobber_visit_id}>
                   <details className="group rounded-2xl bg-white p-4 shadow">
@@ -862,72 +870,13 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                   )}
 
                   {(quickMaterials.length > 0 || quickEquipment.length > 0) && (
-                    <form
-                      action={saveVisitJobCostQuickEntry.bind(
-                        null,
-                        visit.jobber_visit_id
-                      )}
-                      className="mt-3 space-y-2 rounded-xl border border-[#174734]/15 bg-[#f7f6f1] p-3"
-                    >
-                      <p className="text-xs font-bold uppercase tracking-wide text-[#174734]/70">
-                        Job Costs
-                      </p>
-
-                      {quickMaterials.length > 0 && (
-                        <div className="grid grid-cols-2 gap-2">
-                          {quickMaterials.map((material) => (
-                            <label
-                              key={material.id}
-                              className="text-xs font-semibold text-[#174734]"
-                            >
-                              {material.name}
-                              <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                name={quickEntryFieldKey(material.name)}
-                                defaultValue={
-                                  quickUsageMap.get(
-                                    `${visit.jobber_visit_id}:${material.id}`
-                                  ) || ""
-                                }
-                                placeholder={material.unit_label ?? ""}
-                                className="mt-1 w-full rounded-lg border border-[#174734]/20 px-2 py-1.5 text-sm"
-                              />
-                            </label>
-                          ))}
-                        </div>
-                      )}
-
-                      {quickEquipment.length > 0 && (
-                        <div className="flex flex-wrap gap-3">
-                          {quickEquipment.map((equipment) => (
-                            <label
-                              key={equipment.id}
-                              className="flex items-center gap-1.5 text-xs font-semibold text-[#174734]"
-                            >
-                              <input
-                                type="checkbox"
-                                name={quickEntryFieldKey(equipment.name)}
-                                value="1"
-                                defaultChecked={quickEquipmentUsageSet.has(
-                                  `${visit.jobber_visit_id}:${equipment.id}`
-                                )}
-                                className="h-4 w-4 rounded border-[#174734]/30"
-                              />
-                              {equipment.name}
-                            </label>
-                          ))}
-                        </div>
-                      )}
-
-                      <button
-                        type="submit"
-                        className="w-full rounded-lg border border-[#174734] px-3 py-1.5 text-xs font-bold text-[#174734] transition hover:bg-white"
-                      >
-                        Save Job Costs
-                      </button>
-                    </form>
+                    <JobCostQuickEntryForm
+                      visitId={visit.jobber_visit_id}
+                      materials={quickMaterials}
+                      equipment={quickEquipment}
+                      defaultQuantities={quickEntryDefaultQuantities}
+                      defaultCheckedEquipmentIds={quickEntryCheckedEquipmentIds}
+                    />
                   )}
 
                   {visit.jobber_client_id && (
