@@ -78,10 +78,13 @@ const PAGE_SIZE = 15;
 
 // Visits before this date are permanently excluded from this page —
 // not just filtered out of the default "unlogged" view, but hidden
-// even under "Show All Visits" too. Set per a one-time decision not to
-// go back and log costs for anything older than this; bump (or remove)
-// this constant if that ever changes.
-const HIDE_VISITS_BEFORE = "2026-05-01";
+// even under "Show All Visits" too. Originally set to 2026-05-01 (a
+// one-time decision not to go back that far); bumped to 2026-08-19 to
+// wipe the remaining backlog through 2026-08-18 and start tracking
+// clean from here forward. Bump (or remove) again any time the same
+// way — it's just a fixed floor, not a rolling window, so visits from
+// this date onward keep accumulating normally as they happen.
+const HIDE_VISITS_BEFORE = "2026-08-19";
 
 function formatDateTime(value: string | null): string {
   if (!value) {
