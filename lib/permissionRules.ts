@@ -156,7 +156,19 @@ export const ALWAYS_ADMIN_ONLY_PREFIXES = [
 // the route level instead of in-page. Not part of the configurable
 // SECTION_PREFIXES system — an admin can't grant this to staff via
 // /settings/permissions, same as ALWAYS_ADMIN_ONLY_PREFIXES.
-export const MANAGER_PLUS_PREFIXES = ["/crew-status", "/timecards"];
+// Knowledge Base itself (/knowledge-base and /knowledge-base/[id]) is
+// deliberately NOT listed anywhere in this file — every role, staff
+// included, can view it unconditionally, same as My Day/Timeclock (see
+// 036_add_knowledge_base.sql for why). Only creating a new article is
+// gated here; editing/deleting an existing one happens inline on the
+// detail page itself and is gated by role check + requireManager() in
+// the actions, not a route prefix (there's no separate /edit route to
+// list a prefix for).
+export const MANAGER_PLUS_PREFIXES = [
+  "/crew-status",
+  "/timecards",
+  "/knowledge-base/new",
+];
 
 export type RolePermissionsMap = Record<
   Exclude<Role, "admin">,

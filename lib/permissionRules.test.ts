@@ -212,4 +212,41 @@ describe("isPathAllowedForRole", () => {
       true
     );
   });
+
+  it("leaves the Knowledge Base itself open to every role regardless of permissions, since it isn't in any gated section", () => {
+    expect(
+      isPathAllowedForRole("/knowledge-base", "staff", NONE_ALLOWED)
+    ).toBe(true);
+    expect(
+      isPathAllowedForRole(
+        "/knowledge-base/9f1c-some-article-id",
+        "staff",
+        NONE_ALLOWED
+      )
+    ).toBe(true);
+  });
+
+  it("blocks staff from Knowledge Base's manager-plus prefixes (new article) but allows manager and admin", () => {
+    expect(
+      isPathAllowedForRole("/knowledge-base/new", "staff", ALL_ALLOWED)
+    ).toBe(false);
+    expect(
+      isPathAllowedForRole("/knowledge-base/new", "manager", ALL_ALLOWED)
+    ).toBe(true);
+    expect(
+      isPathAllowedForRole("/knowledge-base/new", "admin", NONE_ALLOWED)
+    ).toBe(true);
+  });
+
+  it("blocks staff from Crew Status and Timecards even with every section granted", () => {
+    expect(isPathAllowedForRole("/crew-status", "staff", ALL_ALLOWED)).toBe(
+      false
+    );
+    expect(isPathAllowedForRole("/timecards", "staff", ALL_ALLOWED)).toBe(
+      false
+    );
+    expect(isPathAllowedForRole("/crew-status", "manager", ALL_ALLOWED)).toBe(
+      true
+    );
+  });
 });

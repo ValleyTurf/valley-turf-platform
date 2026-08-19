@@ -51,6 +51,11 @@ const topLevelItems: NavItem[] = [
     href: "/map",
     icon: "🗺️",
   },
+  {
+    name: "Knowledge Base",
+    href: "/knowledge-base",
+    icon: "📚",
+  },
 ];
 
 const groups: { title: string; icon: string; items: NavItem[] }[] = [
@@ -170,9 +175,12 @@ export default function Sidebar({
   // Applies to topLevelItems too, not just the collapsible groups below:
   // Dashboard/Schedule/Recurring Services/Customer Map are gated by
   // general_access same as anything else now (see
-  // lib/permissionRules.ts) — My Day and Timeclock aren't in any gated
-  // prefix list, so they pass this filter unconditionally and stay
-  // visible to every role.
+  // lib/permissionRules.ts) — My Day, Timeclock, and Knowledge Base
+  // aren't in any gated prefix list, so they pass this filter
+  // unconditionally and stay visible to every role. (Creating a
+  // Knowledge Base article is still manager+ only — see
+  // /knowledge-base/new in MANAGER_PLUS_PREFIXES — but reading the
+  // list/articles themselves isn't gated at all.)
   const visibleTopLevelItems = useMemo(() => {
     if (user?.role === "admin") {
       return topLevelItems;
