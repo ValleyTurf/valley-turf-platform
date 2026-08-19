@@ -17,7 +17,8 @@ type QuoteRow = {
   quote_number: number;
   recipient_name: string;
   service_category: string | null;
-  price_total: number | string;
+  price_total: number | string | null;
+  pricing_mode: "flat" | "tiered";
   status: string;
   expires_at: string | null;
   created_at: string;
@@ -51,7 +52,7 @@ export default async function QuotesPage({ searchParams }: QuotesPageProps) {
   let query = supabaseServer
     .from("quotes")
     .select(
-      "id, quote_number, recipient_name, service_category, price_total, status, expires_at, created_at"
+      "id, quote_number, recipient_name, service_category, price_total, pricing_mode, status, expires_at, created_at"
     )
     .order("created_at", { ascending: false })
     .limit(200);
@@ -99,8 +100,9 @@ export default async function QuotesPage({ searchParams }: QuotesPageProps) {
             </p>
             <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Quotes</h1>
             <p className="mt-2 max-w-2xl text-[#6b705c]">
-              Flat-price quotes for customers and leads, each with a
-              shareable link they can accept or decline.
+              Flat-price or good/better/best quotes for customers and
+              leads, each with a shareable link they can accept or
+              decline.
             </p>
           </div>
 
@@ -226,9 +228,15 @@ export default async function QuotesPage({ searchParams }: QuotesPageProps) {
                     >
                       {quoteStatusLabel(displayStatus)}
                     </span>
-                    <p className="text-xl font-bold">
-                      {formatCurrency(quote.price_total)}
-                    </p>
+                    {quote.price_total !== null ? (
+                      <p className="text-xl font-bold">
+                        {formatCurrency(quote.price_total)}
+                      </p>
+                    ) : (
+                      <p className="text-sm font-bold text-[#9c7a20]">
+                        Good / Better / Best
+                      </p>
+                    )}
                   </div>
                 </Link>
               );

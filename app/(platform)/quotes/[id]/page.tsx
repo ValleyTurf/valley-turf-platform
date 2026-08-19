@@ -13,7 +13,9 @@ import {
   allowedStatusTransitions,
   canEditQuote,
   isQuoteStatus,
+  sortTiers,
   type QuoteStatus,
+  type QuoteTier,
 } from "@/lib/quotes";
 import {
   markQuoteStatus,
@@ -32,7 +34,9 @@ type QuoteDetail = {
   recipient_address: string | null;
   service_category: string | null;
   description: string;
-  price_total: number | string;
+  price_total: number | string | null;
+  pricing_mode: "flat" | "tiered";
+  selected_tier_id: string | null;
   status: QuoteStatus;
   expires_at: string | null;
   viewed_at: string | null;
@@ -73,7 +77,7 @@ export default async function QuoteDetailPage({
   const { data, error } = await supabaseServer
     .from("quotes")
     .select(
-      "id, quote_number, customer_id, lead_id, recipient_name, recipient_email, recipient_phone, recipient_address, service_category, description, price_total, status, expires_at, viewed_at, responded_at, response_note, public_token, created_by_name, created_at, jobber_job_id, jobber_job_number, job_creation_error, job_creation_attempted_at"
+      "id, quote_number, customer_id, lead_id, recipient_name, recipient_email, recipient_phone, recipient_address, service_category, description, price_total, pricing_mode, selected_tier_id, status, expires_at, viewed_at, responded_at, response_note, public_token, created_by_name, created_at, jobber_job_id, jobber_job_number, job_creation_error, job_creation_attempted_at"
     )
     .eq("id", id)
     .single();
@@ -86,6 +90,15 @@ export default async function QuoteDetailPage({
 
   if (!isQuoteStatus(quote.status)) {
     notFound();
+  }
+
+  let tiers: QuoteTier[] = [];
+  if (quote.pricing_mode === "tiered") {
+    const { data: tierRows } = await supabaseServer
+      .from("quote_tiers")
+      .select("id, quote_id, tier_key, name, price, features, is_featured, display_order")
+      .eq("quote_id", quote.id);
+    tiers = sortTiers((tierRows ?? []) as QuoteTier[]);
   }
 
   const displayStatus = computeDisplayStatus(quote.status, quote.expires_at);
@@ -122,9 +135,19 @@ export default async function QuoteDetailPage({
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <p className="text-xs font-bold text-[#9c7a20]">Price</p>
-              <p className="mt-1 text-2xl font-bold">
-                {formatCurrency(quote.price_total)}
-              </p>
+              {quote.pricing_mode === "tiered" ? (
+                <p className="mt-1 text-2xl font-bold">
+                  {quote.price_total !== null
+                    ? formatCurrency(quote.price_total)
+                    : tiers.length > 0
+                      ? `${formatCurrency(tiers[0].price)}–${formatCurrency(tiers[tiers.length - 1].price)}`
+                      : "—"}
+                </p>
+              ) : (
+                <p className="mt-1 text-2xl font-bold">
+                  {formatCurrency(quote.price_total)}
+                </p>
+              )}
             </div>
             <div>
               <p className="text-xs font-bold text-[#9c7a20]">
@@ -170,6 +193,53 @@ export default async function QuoteDetailPage({
               {quote.description}
             </p>
           </div>
+
+          {quote.pricing_mode === "tiered" && tiers.length > 0 && (
+            <div className="mt-6 border-t border-[#eee9dc] pt-6">
+              <p className="text-xs font-bold text-[#9c7a20]">
+                Pricing Options
+              </p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                {tiers.map((tier) => {
+                  const isSelected = quote.selected_tier_id === tier.id;
+                  return (
+                    <div
+                      key={tier.id}
+                      className={`rounded-xl border p-4 ${
+                        isSelected
+                          ? "border-green-600 bg-green-50"
+                          : "border-[#e7e2d5]"
+                      }`}
+                    >
+                      <p className="text-sm font-bold text-[#174734]">
+                        {tier.name}
+                        {tier.is_featured && (
+                          <span className="ml-2 rounded-full bg-[#d4af37]/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#9c7a20]">
+                            Recommended
+                          </span>
+                        )}
+                      </p>
+                      <p className="mt-1 text-xl font-bold">
+                        {formatCurrency(tier.price)}
+                      </p>
+                      {tier.features.length > 0 && (
+                        <ul className="mt-2 space-y-1 text-xs text-[#6b705c]">
+                          {tier.features.map((feature, index) => (
+                            <li key={index}>• {feature}</li>
+                          ))}
+                        </ul>
+                      )}
+                      {isSelected && (
+                        <p className="mt-2 text-xs font-bold text-green-700">
+                          ✓ Customer selected this option
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {(quote.viewed_at || quote.responded_at || quote.response_note) && (
             <div className="mt-6 space-y-1 border-t border-[#eee9dc] pt-6 text-sm text-[#6b705c]">

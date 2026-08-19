@@ -74,3 +74,54 @@ export function quoteStatusLabel(status: QuoteStatus): string {
 export function generatePublicToken(): string {
   return crypto.randomUUID().replace(/-/g, "");
 }
+
+// Good/Better/Best tiered pricing (035_add_quote_tiers.sql) — a quote is
+// either 'flat' (the original single price_total/description) or
+// 'tiered' (2-3 quote_tiers rows, no price_total until one is accepted).
+export type PricingMode = "flat" | "tiered";
+
+export type TierKey = "good" | "better" | "best";
+
+export const TIER_KEYS: TierKey[] = ["good", "better", "best"];
+
+export const DEFAULT_TIER_NAMES: Record<TierKey, string> = {
+  good: "Good",
+  better: "Better",
+  best: "Best",
+};
+
+export type QuoteTier = {
+  id: string;
+  quote_id: string;
+  tier_key: TierKey;
+  name: string;
+  price: number | string;
+  features: string[];
+  is_featured: boolean;
+  display_order: number;
+};
+
+export function isPricingMode(
+  value: string | null | undefined
+): value is PricingMode {
+  return value === "flat" || value === "tiered";
+}
+
+export function isTierKey(value: string | null | undefined): value is TierKey {
+  return TIER_KEYS.includes(value as TierKey);
+}
+
+// quote_tiers has no reliable ordering guarantee from a plain select, so
+// every place that renders tiers sorts through this first — by
+// display_order (set at creation to match the good/better/best input
+// order), falling back to the fixed tier_key order for older rows.
+export function sortTiers<T extends { display_order: number; tier_key: TierKey }>(
+  tiers: T[]
+): T[] {
+  return [...tiers].sort((a, b) => {
+    if (a.display_order !== b.display_order) {
+      return a.display_order - b.display_order;
+    }
+    return TIER_KEYS.indexOf(a.tier_key) - TIER_KEYS.indexOf(b.tier_key);
+  });
+}

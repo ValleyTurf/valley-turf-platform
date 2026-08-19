@@ -10,7 +10,10 @@ import {
   allowedStatusTransitions,
   isQuoteStatus,
   canEditQuote,
+  TIER_KEYS,
+  DEFAULT_TIER_NAMES,
   type QuoteStatus,
+  type TierKey,
 } from "@/lib/quotes";
 import { attemptQuoteJobConversion } from "@/lib/quoteJobConversion";
 import type { ActionState } from "./actionState";
@@ -32,6 +35,48 @@ function cleanDate(value: FormDataEntryValue | null): string | null {
   return value;
 }
 
+function cleanFeatures(value: FormDataEntryValue | null): string[] {
+  if (typeof value !== "string") return [];
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+type ParsedTier = {
+  tier_key: TierKey;
+  name: string;
+  price: number;
+  features: string[];
+  is_featured: boolean;
+  display_order: number;
+};
+
+// Reads the three tier_{key}_* fields NewQuoteForm renders (one block per
+// good/better/best) and keeps only the ones staff actually priced —
+// leaving a tier's price blank is how you send a 2-tier ("Good"/"Best",
+// skip "Better") quote instead of always forcing all three.
+function parseTiers(formData: FormData): ParsedTier[] {
+  const featuredTier = formData.get("featured_tier");
+
+  return TIER_KEYS.map((key, index) => {
+    const price = cleanNumber(formData.get(`tier_${key}_price`));
+    if (!Number.isFinite(price) || price < 0) return null;
+
+    const name =
+      cleanText(formData.get(`tier_${key}_name`)) || DEFAULT_TIER_NAMES[key];
+
+    return {
+      tier_key: key,
+      name,
+      price,
+      features: cleanFeatures(formData.get(`tier_${key}_features`)),
+      is_featured: featuredTier === key,
+      display_order: index,
+    };
+  }).filter((tier): tier is ParsedTier => tier !== null);
+}
+
 export async function createQuote(
   _prevState: ActionState,
   formData: FormData
@@ -44,7 +89,7 @@ export async function createQuote(
 
   const recipientName = cleanText(formData.get("recipient_name"));
   const description = cleanText(formData.get("description"));
-  const priceTotal = cleanNumber(formData.get("price_total"));
+  const pricingMode = formData.get("pricing_mode") === "tiered" ? "tiered" : "flat";
 
   if (!recipientName) {
     return { error: "Recipient name is required." };
@@ -54,8 +99,23 @@ export async function createQuote(
     return { error: "A description of the work is required." };
   }
 
-  if (!Number.isFinite(priceTotal) || priceTotal < 0) {
-    return { error: "Enter a valid, non-negative price." };
+  let priceTotal: number | null = null;
+  let tiers: ParsedTier[] = [];
+
+  if (pricingMode === "tiered") {
+    tiers = parseTiers(formData);
+
+    if (tiers.length < 2) {
+      return {
+        error: "Enter a price for at least two tiers (e.g. Good and Best).",
+      };
+    }
+  } else {
+    priceTotal = cleanNumber(formData.get("price_total"));
+
+    if (!Number.isFinite(priceTotal) || priceTotal < 0) {
+      return { error: "Enter a valid, non-negative price." };
+    }
   }
 
   const row = {
@@ -68,6 +128,7 @@ export async function createQuote(
     service_category: cleanText(formData.get("service_category")),
     description,
     price_total: priceTotal,
+    pricing_mode: pricingMode,
     expires_at: cleanDate(formData.get("expires_at")),
     status: "draft" as QuoteStatus,
     public_token: generatePublicToken(),
@@ -85,13 +146,23 @@ export async function createQuote(
     return { error: `Failed to create quote: ${error.message}` };
   }
 
+  if (pricingMode === "tiered") {
+    const { error: tiersError } = await supabaseServer.from("quote_tiers").insert(
+      tiers.map((tier) => ({ ...tier, quote_id: data.id }))
+    );
+
+    if (tiersError) {
+      return { error: `Quote created, but tiers failed to save: ${tiersError.message}` };
+    }
+  }
+
   await recordAuditLog({
     actor,
     action: "create",
     entityType: "quote",
     entityId: data?.id ?? null,
     entityLabel: `Quote for ${recipientName}`,
-    after: row,
+    after: pricingMode === "tiered" ? { ...row, tiers } : row,
   });
 
   revalidatePath("/quotes");

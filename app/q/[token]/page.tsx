@@ -4,8 +4,14 @@ export const revalidate = 0;
 import type { ReactNode } from "react";
 import { supabaseServer } from "@/lib/supabase-server";
 import { formatCurrency, formatDateOnly } from "@/lib/format";
-import { computeDisplayStatus, isQuoteStatus, type QuoteStatus } from "@/lib/quotes";
-import { acceptQuote, declineQuote, markQuoteViewed } from "./actions";
+import {
+  computeDisplayStatus,
+  isQuoteStatus,
+  sortTiers,
+  type QuoteStatus,
+  type QuoteTier,
+} from "@/lib/quotes";
+import { acceptQuote, acceptQuoteTier, declineQuote, markQuoteViewed } from "./actions";
 
 type PublicQuote = {
   id: string;
@@ -13,7 +19,9 @@ type PublicQuote = {
   recipient_name: string;
   service_category: string | null;
   description: string;
-  price_total: number | string;
+  price_total: number | string | null;
+  pricing_mode: "flat" | "tiered";
+  selected_tier_id: string | null;
   status: QuoteStatus;
   expires_at: string | null;
   response_note: string | null;
@@ -45,7 +53,7 @@ export default async function PublicQuotePage({
   const { data, error } = await supabaseServer
     .from("quotes")
     .select(
-      "id, quote_number, recipient_name, service_category, description, price_total, status, expires_at, response_note"
+      "id, quote_number, recipient_name, service_category, description, price_total, pricing_mode, selected_tier_id, status, expires_at, response_note"
     )
     .eq("public_token", token)
     .single();
@@ -67,6 +75,15 @@ export default async function PublicQuotePage({
   const quote = data as PublicQuote;
   const displayStatus = computeDisplayStatus(quote.status, quote.expires_at);
 
+  let tiers: QuoteTier[] = [];
+  if (quote.pricing_mode === "tiered") {
+    const { data: tierRows } = await supabaseServer
+      .from("quote_tiers")
+      .select("id, quote_id, tier_key, name, price, features, is_featured, display_order")
+      .eq("quote_id", quote.id);
+    tiers = sortTiers((tierRows ?? []) as QuoteTier[]);
+  }
+
   if (quote.status === "sent" || quote.status === "accepted" || quote.status === "declined") {
     // "sent" (and anything already responded to) is a real, deliverable
     // quote — a customer landing here for the first time counts as a
@@ -86,11 +103,17 @@ export default async function PublicQuotePage({
       </p>
 
       <section className="mt-8 rounded-3xl bg-white p-6 shadow sm:p-8">
-        <p className="text-center text-5xl font-bold">
-          {formatCurrency(quote.price_total)}
-        </p>
+        {quote.pricing_mode === "flat" && (
+          <p className="text-center text-5xl font-bold">
+            {formatCurrency(quote.price_total)}
+          </p>
+        )}
 
-        <p className="mt-6 whitespace-pre-wrap text-[#174734]">
+        <p
+          className={`whitespace-pre-wrap text-[#174734] ${
+            quote.pricing_mode === "flat" ? "mt-6" : ""
+          }`}
+        >
           {quote.description}
         </p>
 
@@ -100,6 +123,61 @@ export default async function PublicQuotePage({
           </p>
         )}
       </section>
+
+      {quote.pricing_mode === "tiered" && tiers.length > 0 && (
+        <section className="mt-6 grid gap-4 sm:grid-cols-3">
+          {tiers.map((tier) => {
+            const isSelected = quote.selected_tier_id === tier.id;
+            return (
+              <div
+                key={tier.id}
+                className={`rounded-3xl bg-white p-6 shadow ${
+                  tier.is_featured ? "ring-2 ring-[#d4af37]" : ""
+                } ${isSelected ? "ring-2 ring-green-600" : ""}`}
+              >
+                {tier.is_featured && !isSelected && (
+                  <p className="text-center text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
+                    Most Popular
+                  </p>
+                )}
+                {isSelected && (
+                  <p className="text-center text-xs font-bold uppercase tracking-wide text-green-700">
+                    Your Selection
+                  </p>
+                )}
+                <p className="mt-1 text-center text-lg font-bold">
+                  {tier.name}
+                </p>
+                <p className="mt-2 text-center text-4xl font-bold">
+                  {formatCurrency(tier.price)}
+                </p>
+
+                {tier.features.length > 0 && (
+                  <ul className="mt-4 space-y-2 text-sm text-[#174734]">
+                    {tier.features.map((feature, index) => (
+                      <li key={index}>✓ {feature}</li>
+                    ))}
+                  </ul>
+                )}
+
+                {displayStatus === "sent" && (
+                  <form
+                    action={acceptQuoteTier.bind(null, token, tier.id)}
+                    className="mt-6"
+                  >
+                    <button
+                      type="submit"
+                      className="w-full rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
+                    >
+                      Choose {tier.name}
+                    </button>
+                  </form>
+                )}
+              </div>
+            );
+          })}
+        </section>
+      )}
 
       {result === "error" && (
         <p className="mt-4 rounded-xl bg-red-50 p-4 text-center text-sm font-semibold text-red-700">
@@ -121,10 +199,19 @@ export default async function PublicQuotePage({
         </p>
       )}
 
-      {displayStatus === "accepted" && (
+      {displayStatus === "accepted" && quote.pricing_mode === "flat" && (
         <p className="mt-6 rounded-xl bg-green-50 p-4 text-center text-sm font-semibold text-green-800">
           You accepted this quote. We&apos;ll be in touch to schedule the
           work.
+        </p>
+      )}
+
+      {displayStatus === "accepted" && quote.pricing_mode === "tiered" && (
+        <p className="mt-6 rounded-xl bg-green-50 p-4 text-center text-sm font-semibold text-green-800">
+          You selected{" "}
+          {tiers.find((tier) => tier.id === quote.selected_tier_id)?.name ||
+            "a pricing option"}
+          . We&apos;ll be in touch to schedule the work.
         </p>
       )}
 
@@ -140,15 +227,21 @@ export default async function PublicQuotePage({
       )}
 
       {displayStatus === "sent" && (
-        <div className="mt-6 grid gap-4 sm:grid-cols-2">
-          <form action={acceptQuote.bind(null, token)}>
-            <button
-              type="submit"
-              className="w-full rounded-xl bg-[#174734] px-5 py-4 text-center text-base font-bold text-white transition hover:bg-[#226246]"
-            >
-              Accept Quote
-            </button>
-          </form>
+        <div
+          className={`mt-6 grid gap-4 ${
+            quote.pricing_mode === "flat" ? "sm:grid-cols-2" : ""
+          }`}
+        >
+          {quote.pricing_mode === "flat" && (
+            <form action={acceptQuote.bind(null, token)}>
+              <button
+                type="submit"
+                className="w-full rounded-xl bg-[#174734] px-5 py-4 text-center text-base font-bold text-white transition hover:bg-[#226246]"
+              >
+                Accept Quote
+              </button>
+            </form>
+          )}
 
           <details className="rounded-xl border border-[#d8d3c6] bg-white p-4">
             <summary className="cursor-pointer text-center text-base font-bold text-[#6b705c]">
