@@ -34,16 +34,19 @@ type VisitRow = {
 type JobRow = {
   jobber_job_id: string;
   total: number | string | null;
-  job_type: string | null;
 };
 
 // The bit of jobber_jobs data buildScheduleVisit actually needs, already
-// normalized — kept as a small record rather than threading raw JobRow
-// through so buildScheduleVisit doesn't have to re-derive isRecurring
-// per call.
+// normalized to a plain number.
 type JobPricing = {
   total: number;
-  isRecurring: boolean;
+};
+
+// Just enough of jobber_visits to count how many of a job's visits land
+// in a given Phoenix-local calendar month — see visitCountByJobMonth.
+type MonthVisitRow = {
+  jobber_job_id: string | null;
+  start_at: string | null;
 };
 
 type CustomerContact = {
@@ -114,6 +117,14 @@ function phoenixDateKey(iso: string | null): string | null {
   const day = parts.find((p) => p.type === "day")?.value ?? "01";
 
   return `${year}-${month}-${day}`;
+}
+
+// Same as phoenixDateKey but truncated to "YYYY-MM" — the bucket
+// visitCountByJobMonth groups by, since a job's total is treated as a
+// per-calendar-month amount (see JobPricing's comment).
+function phoenixMonthKey(iso: string | null): string | null {
+  const dateKey = phoenixDateKey(iso);
+  return dateKey ? dateKey.slice(0, 7) : null;
 }
 
 function formatDateInput(date: Date): string {
@@ -375,7 +386,8 @@ function buildScheduleVisit(
   visit: VisitRow,
   contact: CustomerContact | null,
   assignedUsers: AssignableUser[],
-  jobPricing: JobPricing | null
+  jobPricing: JobPricing | null,
+  jobVisitCountThisMonth: number
 ): ScheduleVisit {
   const meta = statusMeta(visit.visit_status);
   const address = contact
@@ -424,31 +436,25 @@ function buildScheduleVisit(
     assignedUsers,
     jobId: visit.jobber_job_id,
     jobTotal: jobPricing ? jobPricing.total : null,
-    jobIsRecurring: jobPricing?.isRecurring ?? false,
+    jobVisitCountThisMonth,
+    visitPrice:
+      jobPricing && jobVisitCountThisMonth > 0
+        ? jobPricing.total / jobVisitCountThisMonth
+        : jobPricing?.total ?? null,
   };
 }
 
-// A job's `total` is a flat price for the whole job/billing period, not
-// per-visit (see the ScheduleVisit.jobTotal comment in types.ts) — so
-// summing jobTotal across every visit would count a recurring job's
-// price once per visit instead of once, period. This dedupes by jobId
-// (falling back to the visit's own id for the rare visit with no linked
-// job) before summing, the same rule
-// lib/visitReportFormatting.ts's summarizeVisitsByJobType and
-// app/(platform)/recurring-services/page.tsx's uniqueCustomersFor()
-// already enforce elsewhere in this app.
-function sumUniqueJobTotals(visits: ScheduleVisit[]): number {
-  const seenJobs = new Set<string>();
-  let total = 0;
-
-  for (const visit of visits) {
-    const jobKey = visit.jobId ?? visit.id;
-    if (seenJobs.has(jobKey)) continue;
-    seenJobs.add(jobKey);
-    total += visit.jobTotal ?? 0;
-  }
-
-  return total;
+// Every visit already carries its own fair share of its job's total (see
+// ScheduleVisit.visitPrice — jobTotal divided by how many of that job's
+// visits fall in the same month), so summing visitPrice across any set
+// of visits is always correct: a job's several visits add back up to
+// exactly jobTotal, and a job with only one visit this month just adds
+// its whole total once. No per-job dedup needed here (unlike the
+// job-total-based summaries in lib/visitReportFormatting.ts and
+// recurring-services/page.tsx, which sum the undivided jobTotal and so
+// dedupe by job instead).
+function sumVisitPrices(visits: ScheduleVisit[]): number {
+  return visits.reduce((sum, visit) => sum + (visit.visitPrice ?? 0), 0);
 }
 
 function toPins(visits: ScheduleVisit[]): SchedulePin[] {
@@ -562,11 +568,29 @@ export default async function SchedulePage({
   const canAssign =
     currentUser?.role === "admin" || currentUser?.role === "manager";
 
+  // The month(s) touched by the current view — day/week windows are
+  // smaller than a month, so the visits loaded above can't tell us a
+  // job's true visit count for the month it's actually billed against.
+  // At most this spans two calendar months (a week view straddling a
+  // month boundary); for month view it's exactly the one month already
+  // loaded. Queried separately from the main visits fetch above because
+  // it needs every visit for these jobs in range, not just the ones
+  // falling inside the current view's day/week window.
+  const jobCountRangeStart = new Date(
+    Date.UTC(queryStartDate.getUTCFullYear(), queryStartDate.getUTCMonth(), 1)
+  );
+  const jobCountRangeEnd = new Date(
+    Date.UTC(queryEndDate.getUTCFullYear(), queryEndDate.getUTCMonth() + 1, 0)
+  );
+  const jobCountRangeStartIso = `${formatDateInput(jobCountRangeStart)}T00:00:00-07:00`;
+  const jobCountRangeEndIso = `${formatDateInput(jobCountRangeEnd)}T23:59:59-07:00`;
+
   const [
     { data: contactsData },
     { data: assignmentsData },
     { data: usersData },
     { data: jobsData },
+    { data: monthVisitsData },
   ] = await Promise.all([
     clientIds.length > 0
       ? supabaseServer
@@ -588,16 +612,26 @@ export default async function SchedulePage({
       .eq("active", true)
       .order("name", { ascending: true }),
     // Priced off jobber_jobs.total, not anything on jobber_visits itself
-    // — see the JobPricing/sumUniqueJobTotals comments above. The
+    // — see the JobPricing/sumVisitPrices comments above. The
     // schedule's query window is always at most a month, so unlike
     // lib/visitReport.ts's fetchJobsByIds this never needs to batch past
     // Supabase's .in() row limits.
     jobIds.length > 0
       ? supabaseServer
           .from("jobber_jobs")
-          .select("jobber_job_id, total, job_type")
+          .select("jobber_job_id, total")
           .in("jobber_job_id", jobIds)
       : Promise.resolve({ data: [] as JobRow[] }),
+    // Every visit for these jobs across the full month(s) above — used
+    // only to count visits per (job, month), not rendered directly.
+    jobIds.length > 0
+      ? supabaseServer
+          .from("jobber_visits")
+          .select("jobber_job_id, start_at")
+          .in("jobber_job_id", jobIds)
+          .gte("start_at", jobCountRangeStartIso)
+          .lte("start_at", jobCountRangeEndIso)
+      : Promise.resolve({ data: [] as MonthVisitRow[] }),
   ]);
 
   const contactMap = new Map<string, CustomerContact>(
@@ -630,21 +664,44 @@ export default async function SchedulePage({
   const jobPricingMap = new Map<string, JobPricing>(
     ((jobsData ?? []) as JobRow[]).map((job) => [
       job.jobber_job_id,
-      {
-        total: toNumber(job.total),
-        isRecurring: (job.job_type ?? "").toUpperCase().includes("RECUR"),
-      },
+      { total: toNumber(job.total) },
     ])
   );
 
-  const enrichedVisits: ScheduleVisit[] = visits.map((visit) =>
-    buildScheduleVisit(
+  // Counts, per job, of how many visits land in each Phoenix-local
+  // calendar month — the denominator behind ScheduleVisit.visitPrice.
+  // Keyed "{jobId}:{YYYY-MM}" since the same job could show visits from
+  // two different months within one week-view query.
+  const visitCountByJobMonth = new Map<string, number>();
+  for (const row of (monthVisitsData ?? []) as MonthVisitRow[]) {
+    const monthKey = phoenixMonthKey(row.start_at);
+    if (!row.jobber_job_id || !monthKey) continue;
+
+    const key = `${row.jobber_job_id}:${monthKey}`;
+    visitCountByJobMonth.set(key, (visitCountByJobMonth.get(key) ?? 0) + 1);
+  }
+
+  const enrichedVisits: ScheduleVisit[] = visits.map((visit) => {
+    const monthKey = phoenixMonthKey(visit.start_at);
+    const countKey =
+      visit.jobber_job_id && monthKey
+        ? `${visit.jobber_job_id}:${monthKey}`
+        : null;
+    // Falls back to 1 (not 0) so a visit whose job somehow didn't come
+    // back in the month-visits query — e.g. a data gap — still shows its
+    // job's full total rather than dividing by zero.
+    const jobVisitCountThisMonth = countKey
+      ? visitCountByJobMonth.get(countKey) ?? 1
+      : 1;
+
+    return buildScheduleVisit(
       visit,
       visit.jobber_client_id ? contactMap.get(visit.jobber_client_id) ?? null : null,
       assignmentMap.get(visit.jobber_visit_id) ?? [],
-      visit.jobber_job_id ? jobPricingMap.get(visit.jobber_job_id) ?? null : null
-    )
-  );
+      visit.jobber_job_id ? jobPricingMap.get(visit.jobber_job_id) ?? null : null,
+      jobVisitCountThisMonth
+    );
+  });
 
   // Group every fetched visit by its Phoenix-local calendar day, for the
   // week/month grids.
@@ -654,20 +711,20 @@ export default async function SchedulePage({
     (visitsByDate[visit.dateStr] ??= []).push(visit);
   }
 
-  // One dollar total per day (deduped by job within that day — see
-  // sumUniqueJobTotals), for the pill ScheduleGrids renders at the
-  // bottom of each week/month day cell.
+  // One dollar total per day — just the sum of that day's visitPrice
+  // values (see sumVisitPrices), for the pill ScheduleGrids renders at
+  // the bottom of each week/month day cell.
   const dailyTotals: Record<string, number> = {};
   for (const [date, dayVisits] of Object.entries(visitsByDate)) {
-    dailyTotals[date] = sumUniqueJobTotals(dayVisits);
+    dailyTotals[date] = sumVisitPrices(dayVisits);
   }
 
-  // Same dedup, across the whole query window — feeds the "Total Price"
+  // Same sum, across the whole query window — feeds the "Total Price"
   // stat card below, which already scopes to exactly the current
   // day/week/month via queryStart/queryEnd, so this one number answers
   // both "total for the day" and "total for the week" depending on
   // which view is active.
-  const periodTotal = sumUniqueJobTotals(enrichedVisits);
+  const periodTotal = sumVisitPrices(enrichedVisits);
 
   const completedCount = enrichedVisits.filter(
     (v) => v.statusLabel === "Completed"

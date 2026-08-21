@@ -168,16 +168,17 @@ export default function VisitDetailModal({
             </div>
           )}
 
-          {visit.jobTotal != null && (
+          {visit.visitPrice != null && (
             <div>
               <dt className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
                 Price
               </dt>
               <dd className="mt-0.5 text-lg font-bold">
-                {formatCurrency(visit.jobTotal)}
-                {visit.jobIsRecurring && (
+                {formatCurrency(visit.visitPrice)}
+                {visit.jobVisitCountThisMonth > 1 && (
                   <span className="ml-2 text-xs font-normal normal-case text-[#6b705c]">
-                    (full recurring plan total, not just this visit)
+                    (est. — {formatCurrency(visit.jobTotal)} job total ÷{" "}
+                    {visit.jobVisitCountThisMonth} visits this month)
                   </span>
                 )}
               </dd>

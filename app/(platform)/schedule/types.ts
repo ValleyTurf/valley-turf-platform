@@ -37,16 +37,23 @@ export type ScheduleVisit = {
   // A visit can have any number of assignees (big jobs, 2+ crew) — see
   // 018_visit_assignments_multi.sql.
   assignedUsers: AssignableUser[];
-  // Priced off jobber_jobs.total, joined by jobber_job_id — NOT a
-  // per-visit price. For a recurring job, this is the flat total for the
-  // whole job/billing period (e.g. a $500/mo job's every visit carries
-  // jobTotal: 500), so day/week/period sums must dedupe by jobId rather
-  // than adding this per visit — see sumUniqueJobTotals in page.tsx and
-  // its longer comment, which mirrors the same already-fixed bug in
-  // lib/visitReportFormatting.ts's summarizeVisitsByJobType.
+  // Priced off jobber_jobs.total, joined by jobber_job_id. This is the
+  // job's flat total for its whole billing period (this app's
+  // established convention — see lib/visitReportFormatting.ts and
+  // recurring-services/page.tsx — treats that period as one calendar
+  // month), not a per-visit price on its own.
   jobId: string | null;
   jobTotal: number | null;
-  jobIsRecurring: boolean;
+  // How many of this job's visits fall in the same Phoenix-local
+  // calendar month as this visit — the denominator behind visitPrice.
+  // 1 for a true one-off job; >1 splits jobTotal evenly.
+  jobVisitCountThisMonth: number;
+  // jobTotal ÷ jobVisitCountThisMonth — what actually gets displayed as
+  // "the price" for this visit (pills, modal, day/period sums). Summing
+  // visitPrice across a job's visits always reconstructs jobTotal
+  // exactly, so day/week/period totals can just add these up directly —
+  // see sumVisitPrices in page.tsx.
+  visitPrice: number | null;
 };
 
 export type AssignableUser = {
