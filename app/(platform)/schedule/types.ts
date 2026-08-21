@@ -37,6 +37,16 @@ export type ScheduleVisit = {
   // A visit can have any number of assignees (big jobs, 2+ crew) — see
   // 018_visit_assignments_multi.sql.
   assignedUsers: AssignableUser[];
+  // Priced off jobber_jobs.total, joined by jobber_job_id — NOT a
+  // per-visit price. For a recurring job, this is the flat total for the
+  // whole job/billing period (e.g. a $500/mo job's every visit carries
+  // jobTotal: 500), so day/week/period sums must dedupe by jobId rather
+  // than adding this per visit — see sumUniqueJobTotals in page.tsx and
+  // its longer comment, which mirrors the same already-fixed bug in
+  // lib/visitReportFormatting.ts's summarizeVisitsByJobType.
+  jobId: string | null;
+  jobTotal: number | null;
+  jobIsRecurring: boolean;
 };
 
 export type AssignableUser = {

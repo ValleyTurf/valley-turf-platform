@@ -24,6 +24,7 @@ export default function ScheduleInteractive({
   weekDates,
   monthDates,
   visitsByDate,
+  dailyTotals,
   pins,
   mapTitle,
   canAssign,
@@ -35,6 +36,7 @@ export default function ScheduleInteractive({
   weekDates: GridDate[];
   monthDates: GridDate[];
   visitsByDate: Record<string, ScheduleVisit[]>;
+  dailyTotals: Record<string, number>;
   pins: SchedulePin[];
   mapTitle: string;
   canAssign: boolean;
@@ -221,6 +223,7 @@ export default function ScheduleInteractive({
             view={view}
             dates={view === "week" ? weekDates : monthDates}
             visitsByDate={visitsByDate}
+            dailyTotals={dailyTotals}
             selectedId={selectedId}
             onSelectVisit={selectAndOpen}
             onDropVisit={handleDropVisit}

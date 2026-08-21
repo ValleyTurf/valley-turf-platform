@@ -2,16 +2,32 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { formatCurrency } from "@/lib/format";
 import type { GridDate, ScheduleVisit } from "./types";
 
 // Native HTML5 drag-and-drop data-transfer key for a dragged visit's id —
 // month view only, per how this was scoped (week view stays click-only).
 const VISIT_DRAG_TYPE = "application/x-vtr-visit-id";
 
+// Small rounded-full $ badge dropped at the bottom of a day cell —
+// shared between week and month layouts below rather than duplicated,
+// and only rendered when there's a nonzero total so days with no priced
+// visits (unscheduled/no linked job) don't show a "$0" badge.
+function DailyTotalPill({ total }: { total: number }) {
+  if (total <= 0) return null;
+
+  return (
+    <p className="mt-1.5 inline-block rounded-full bg-[#174734] px-2 py-0.5 text-xs font-bold text-white">
+      {formatCurrency(total)}
+    </p>
+  );
+}
+
 export default function ScheduleGrids({
   view,
   dates,
   visitsByDate,
+  dailyTotals,
   selectedId,
   onSelectVisit,
   onDropVisit,
@@ -19,6 +35,7 @@ export default function ScheduleGrids({
   view: "week" | "month";
   dates: GridDate[];
   visitsByDate: Record<string, ScheduleVisit[]>;
+  dailyTotals: Record<string, number>;
   selectedId: string | null;
   onSelectVisit: (visit: ScheduleVisit) => void;
   onDropVisit: (visitId: string, newDateStr: string) => void;
@@ -98,6 +115,8 @@ export default function ScheduleGrids({
                   </>
                 )}
               </div>
+
+              <DailyTotalPill total={dailyTotals[day.dateStr] ?? 0} />
             </div>
           );
         })}
@@ -208,6 +227,10 @@ export default function ScheduleGrids({
                       );
                     })}
                   </div>
+
+                  {day.inMonth && (
+                    <DailyTotalPill total={dailyTotals[day.dateStr] ?? 0} />
+                  )}
                 </div>
               );
             })}

@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import type { AssignableUser, ScheduleVisit } from "./types";
 import { phoenixDateTimeParts } from "./timeHelpers";
 import { rescheduleVisit, skipVisit, setVisitAssignees } from "./actions";
+import { formatCurrency } from "@/lib/format";
 
 export default function VisitDetailModal({
   visit,
@@ -163,6 +164,22 @@ export default function VisitDetailModal({
                   style={{ backgroundColor: visit.serviceColorHex }}
                 />
                 {visit.serviceLabel}
+              </dd>
+            </div>
+          )}
+
+          {visit.jobTotal != null && (
+            <div>
+              <dt className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
+                Price
+              </dt>
+              <dd className="mt-0.5 text-lg font-bold">
+                {formatCurrency(visit.jobTotal)}
+                {visit.jobIsRecurring && (
+                  <span className="ml-2 text-xs font-normal normal-case text-[#6b705c]">
+                    (full recurring plan total, not just this visit)
+                  </span>
+                )}
               </dd>
             </div>
           )}

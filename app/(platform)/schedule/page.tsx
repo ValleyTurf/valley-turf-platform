@@ -4,6 +4,7 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
+import { formatCurrency } from "@/lib/format";
 import ScheduleInteractive from "./ScheduleInteractive";
 import type { AssignableUser, GridDate, SchedulePin, ScheduleVisit } from "./types";
 
@@ -18,6 +19,7 @@ type SchedulePageProps = {
 
 type VisitRow = {
   jobber_visit_id: string;
+  jobber_job_id: string | null;
   jobber_client_id: string | null;
   jobber_invoice_id: string | null;
   customer_name: string | null;
@@ -27,6 +29,21 @@ type VisitRow = {
   start_at: string | null;
   end_at: string | null;
   duration_minutes: number | string | null;
+};
+
+type JobRow = {
+  jobber_job_id: string;
+  total: number | string | null;
+  job_type: string | null;
+};
+
+// The bit of jobber_jobs data buildScheduleVisit actually needs, already
+// normalized — kept as a small record rather than threading raw JobRow
+// through so buildScheduleVisit doesn't have to re-derive isRecurring
+// per call.
+type JobPricing = {
+  total: number;
+  isRecurring: boolean;
 };
 
 type CustomerContact = {
@@ -357,7 +374,8 @@ function scheduleUrl(view: ViewMode, dateStr: string): string {
 function buildScheduleVisit(
   visit: VisitRow,
   contact: CustomerContact | null,
-  assignedUsers: AssignableUser[]
+  assignedUsers: AssignableUser[],
+  jobPricing: JobPricing | null
 ): ScheduleVisit {
   const meta = statusMeta(visit.visit_status);
   const address = contact
@@ -404,7 +422,33 @@ function buildScheduleVisit(
     startAtIso: visit.start_at,
     endAtIso: visit.end_at,
     assignedUsers,
+    jobId: visit.jobber_job_id,
+    jobTotal: jobPricing ? jobPricing.total : null,
+    jobIsRecurring: jobPricing?.isRecurring ?? false,
   };
+}
+
+// A job's `total` is a flat price for the whole job/billing period, not
+// per-visit (see the ScheduleVisit.jobTotal comment in types.ts) — so
+// summing jobTotal across every visit would count a recurring job's
+// price once per visit instead of once, period. This dedupes by jobId
+// (falling back to the visit's own id for the rare visit with no linked
+// job) before summing, the same rule
+// lib/visitReportFormatting.ts's summarizeVisitsByJobType and
+// app/(platform)/recurring-services/page.tsx's uniqueCustomersFor()
+// already enforce elsewhere in this app.
+function sumUniqueJobTotals(visits: ScheduleVisit[]): number {
+  const seenJobs = new Set<string>();
+  let total = 0;
+
+  for (const visit of visits) {
+    const jobKey = visit.jobId ?? visit.id;
+    if (seenJobs.has(jobKey)) continue;
+    seenJobs.add(jobKey);
+    total += visit.jobTotal ?? 0;
+  }
+
+  return total;
 }
 
 function toPins(visits: ScheduleVisit[]): SchedulePin[] {
@@ -490,7 +534,7 @@ export default async function SchedulePage({
     supabaseServer
       .from("jobber_visits")
       .select(
-        "jobber_visit_id, jobber_client_id, jobber_invoice_id, customer_name, job_number, title, visit_status, start_at, end_at, duration_minutes"
+        "jobber_visit_id, jobber_job_id, jobber_client_id, jobber_invoice_id, customer_name, job_number, title, visit_status, start_at, end_at, duration_minutes"
       )
       .gte("start_at", queryStart)
       .lte("start_at", queryEnd)
@@ -506,6 +550,10 @@ export default async function SchedulePage({
 
   const visitIds = visits.map((v) => v.jobber_visit_id);
 
+  const jobIds = Array.from(
+    new Set(visits.map((v) => v.jobber_job_id).filter(Boolean))
+  ) as string[];
+
   // canAssign gates the "Assign To" control in the detail modal — see
   // 017_add_visit_assignments.sql's header comment for why assignment is
   // local-only, and schedule/actions.ts's assignVisit for the matching
@@ -514,28 +562,43 @@ export default async function SchedulePage({
   const canAssign =
     currentUser?.role === "admin" || currentUser?.role === "manager";
 
-  const [{ data: contactsData }, { data: assignmentsData }, { data: usersData }] =
-    await Promise.all([
-      clientIds.length > 0
-        ? supabaseServer
-            .from("customers")
-            .select(
-              "jobber_client_id, phone, address_line_1, city, state, gate_code, service_instructions, latitude, longitude"
-            )
-            .in("jobber_client_id", clientIds)
-        : Promise.resolve({ data: [] as CustomerContact[] }),
-      visitIds.length > 0
-        ? supabaseServer
-            .from("visit_assignments")
-            .select("jobber_visit_id, assigned_user_id")
-            .in("jobber_visit_id", visitIds)
-        : Promise.resolve({ data: [] as VisitAssignmentRow[] }),
-      supabaseServer
-        .from("users")
-        .select("id, name")
-        .eq("active", true)
-        .order("name", { ascending: true }),
-    ]);
+  const [
+    { data: contactsData },
+    { data: assignmentsData },
+    { data: usersData },
+    { data: jobsData },
+  ] = await Promise.all([
+    clientIds.length > 0
+      ? supabaseServer
+          .from("customers")
+          .select(
+            "jobber_client_id, phone, address_line_1, city, state, gate_code, service_instructions, latitude, longitude"
+          )
+          .in("jobber_client_id", clientIds)
+      : Promise.resolve({ data: [] as CustomerContact[] }),
+    visitIds.length > 0
+      ? supabaseServer
+          .from("visit_assignments")
+          .select("jobber_visit_id, assigned_user_id")
+          .in("jobber_visit_id", visitIds)
+      : Promise.resolve({ data: [] as VisitAssignmentRow[] }),
+    supabaseServer
+      .from("users")
+      .select("id, name")
+      .eq("active", true)
+      .order("name", { ascending: true }),
+    // Priced off jobber_jobs.total, not anything on jobber_visits itself
+    // — see the JobPricing/sumUniqueJobTotals comments above. The
+    // schedule's query window is always at most a month, so unlike
+    // lib/visitReport.ts's fetchJobsByIds this never needs to batch past
+    // Supabase's .in() row limits.
+    jobIds.length > 0
+      ? supabaseServer
+          .from("jobber_jobs")
+          .select("jobber_job_id, total, job_type")
+          .in("jobber_job_id", jobIds)
+      : Promise.resolve({ data: [] as JobRow[] }),
+  ]);
 
   const contactMap = new Map<string, CustomerContact>(
     ((contactsData ?? []) as CustomerContact[]).map((c) => [
@@ -564,11 +627,22 @@ export default async function SchedulePage({
     (u) => ({ id: u.id, name: u.name })
   );
 
+  const jobPricingMap = new Map<string, JobPricing>(
+    ((jobsData ?? []) as JobRow[]).map((job) => [
+      job.jobber_job_id,
+      {
+        total: toNumber(job.total),
+        isRecurring: (job.job_type ?? "").toUpperCase().includes("RECUR"),
+      },
+    ])
+  );
+
   const enrichedVisits: ScheduleVisit[] = visits.map((visit) =>
     buildScheduleVisit(
       visit,
       visit.jobber_client_id ? contactMap.get(visit.jobber_client_id) ?? null : null,
-      assignmentMap.get(visit.jobber_visit_id) ?? []
+      assignmentMap.get(visit.jobber_visit_id) ?? [],
+      visit.jobber_job_id ? jobPricingMap.get(visit.jobber_job_id) ?? null : null
     )
   );
 
@@ -579,6 +653,21 @@ export default async function SchedulePage({
     if (!visit.dateStr) continue;
     (visitsByDate[visit.dateStr] ??= []).push(visit);
   }
+
+  // One dollar total per day (deduped by job within that day — see
+  // sumUniqueJobTotals), for the pill ScheduleGrids renders at the
+  // bottom of each week/month day cell.
+  const dailyTotals: Record<string, number> = {};
+  for (const [date, dayVisits] of Object.entries(visitsByDate)) {
+    dailyTotals[date] = sumUniqueJobTotals(dayVisits);
+  }
+
+  // Same dedup, across the whole query window — feeds the "Total Price"
+  // stat card below, which already scopes to exactly the current
+  // day/week/month via queryStart/queryEnd, so this one number answers
+  // both "total for the day" and "total for the week" depending on
+  // which view is active.
+  const periodTotal = sumUniqueJobTotals(enrichedVisits);
 
   const completedCount = enrichedVisits.filter(
     (v) => v.statusLabel === "Completed"
@@ -646,6 +735,7 @@ export default async function SchedulePage({
         weekDates={weekDates}
         monthDates={monthDates}
         visitsByDate={visitsByDate}
+        dailyTotals={dailyTotals}
         pins={pins}
         mapTitle={mapTitle}
         canAssign={canAssign}
@@ -716,7 +806,7 @@ export default async function SchedulePage({
             </div>
           </section>
 
-          <section className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <section className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-5">
             <div className="rounded-2xl bg-white p-4 text-center shadow">
               <p className="text-2xl font-bold">{enrichedVisits.length}</p>
               <p className="text-xs text-[#6b705c]">Total Visits</p>
@@ -737,6 +827,15 @@ export default async function SchedulePage({
             <div className="rounded-2xl bg-white p-4 text-center shadow">
               <p className="text-2xl font-bold">{totalHours}</p>
               <p className="text-xs text-[#6b705c]">Scheduled Hours</p>
+            </div>
+
+            <div className="rounded-2xl bg-[#fdf8ea] p-4 text-center shadow">
+              <p className="text-2xl font-bold text-[#9c7a20]">
+                {formatCurrency(periodTotal)}
+              </p>
+              <p className="text-xs text-[#9c7a20]">
+                Total Price ({viewLabel[view]})
+              </p>
             </div>
           </section>
 
