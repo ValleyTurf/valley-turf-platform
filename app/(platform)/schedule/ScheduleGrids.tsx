@@ -30,6 +30,7 @@ export default function ScheduleGrids({
   dailyTotals,
   selectedId,
   onSelectVisit,
+  onHoverVisit,
   onDropVisit,
 }: {
   view: "week" | "month";
@@ -38,6 +39,10 @@ export default function ScheduleGrids({
   dailyTotals: Record<string, number>;
   selectedId: string | null;
   onSelectVisit: (visit: ScheduleVisit) => void;
+  // Called with a visit's id on hover-in, and null on hover-out —
+  // highlights that visit's pin on the map without clicking into it
+  // (and without touching selectedId, which drives the detail modal).
+  onHoverVisit: (id: string | null) => void;
   onDropVisit: (visitId: string, newDateStr: string) => void;
 }) {
   const [dragOverDate, setDragOverDate] = useState<string | null>(null);
@@ -76,6 +81,8 @@ export default function ScheduleGrids({
                           key={visit.id}
                           type="button"
                           onClick={() => onSelectVisit(visit)}
+                          onMouseEnter={() => onHoverVisit(visit.id)}
+                          onMouseLeave={() => onHoverVisit(null)}
                           className={`flex w-full items-start gap-1.5 rounded text-left text-sm ${
                             visit.id === selectedId
                               ? "ring-2 ring-[#d4af37]"
@@ -203,6 +210,8 @@ export default function ScheduleGrids({
                             event.dataTransfer.effectAllowed = "move";
                           }}
                           onClick={() => onSelectVisit(visit)}
+                          onMouseEnter={() => onHoverVisit(visit.id)}
+                          onMouseLeave={() => onHoverVisit(null)}
                           title={`${visit.serviceLabel} — ${visit.customerName} (drag to move)`}
                           className={`block w-full cursor-grab truncate rounded px-1.5 py-0.5 text-left text-xs leading-tight transition hover:brightness-95 active:cursor-grabbing ${
                             visit.serviceChipClass

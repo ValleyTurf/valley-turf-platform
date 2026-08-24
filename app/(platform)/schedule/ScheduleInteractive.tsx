@@ -11,12 +11,14 @@ import type { AssignableUser, GridDate, SchedulePin, ScheduleVisit } from "./typ
 
 type ViewMode = "day" | "week" | "month";
 
-// Owns the one piece of state that needs to be shared between the
-// calendar (day list / week grid / month grid) and the map panel: which
-// visit is currently selected. Clicking a pin on the map highlights the
-// matching calendar entry, and clicking a calendar entry highlights the
-// matching pin — same selectedId drives both, just rendered two different
-// ways. The calendar/header markup above the grid stays server-rendered
+// Owns the two pieces of state shared between the calendar (day list /
+// week grid / month grid) and the map panel: which visit is clicked
+// (selectedId — also opens the detail modal from week/month) and which
+// one is merely hovered (hoveredId — highlights its pin on the map for
+// a quick look without clicking into anything). The map highlights
+// whichever of the two is active, hover taking priority while the mouse
+// is over a row/chip, falling back to the click-selection once it
+// isn't. The calendar/header markup above the grid stays server-rendered
 // (passed in as `children`) since none of it needs this state.
 export default function ScheduleInteractive({
   view,
@@ -44,6 +46,7 @@ export default function ScheduleInteractive({
   children: ReactNode;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [, startTransition] = useTransition();
   const [dragError, setDragError] = useState<string | null>(null);
@@ -54,6 +57,7 @@ export default function ScheduleInteractive({
   );
 
   const selectedVisit = selectedId ? visitById.get(selectedId) ?? null : null;
+  const highlightedId = hoveredId ?? selectedId;
 
   function selectOnly(id: string) {
     setSelectedId(id);
@@ -124,6 +128,8 @@ export default function ScheduleInteractive({
                   key={visit.id}
                   type="button"
                   onClick={() => selectOnly(visit.id)}
+                  onMouseEnter={() => setHoveredId(visit.id)}
+                  onMouseLeave={() => setHoveredId(null)}
                   className={`block w-full rounded-2xl bg-white p-5 text-left shadow transition ${
                     visit.id === selectedId ? "ring-2 ring-[#d4af37]" : ""
                   }`}
@@ -226,6 +232,7 @@ export default function ScheduleInteractive({
             dailyTotals={dailyTotals}
             selectedId={selectedId}
             onSelectVisit={selectAndOpen}
+            onHoverVisit={setHoveredId}
             onDropVisit={handleDropVisit}
           />
         )}
@@ -234,7 +241,7 @@ export default function ScheduleInteractive({
       <ScheduleMapPanel
         pins={pins}
         title={mapTitle}
-        selectedId={selectedId}
+        selectedId={highlightedId}
         onSelectPin={selectOnly}
       />
 
