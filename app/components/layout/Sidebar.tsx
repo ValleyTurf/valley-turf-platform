@@ -41,32 +41,21 @@ const topLevelItems: NavItem[] = [
     href: "/timeclock",
     icon: "⏰",
   },
-  {
-    name: "Recurring Services",
-    href: "/recurring-services",
-    icon: "🔁",
-  },
-  {
-    name: "Customer Map",
-    href: "/map",
-    icon: "🗺️",
-  },
-  {
-    name: "Knowledge Base",
-    href: "/knowledge-base",
-    icon: "📚",
-  },
 ];
 
+// Rendered on its own, below the collapsible groups and just above the
+// account/logout links at the bottom of the nav — not gated by role (see
+// the comment above visibleTopLevelItems), so it's just a plain NavItem
+// rendered directly in the JSX rather than filtered through a list.
+const knowledgeBaseItem: NavItem = {
+  name: "Knowledge Base",
+  href: "/knowledge-base",
+  icon: "📚",
+};
+
+// Render order below is deliberate: Customers first, then Financial,
+// Operations, Marketing, Admin.
 const groups: { title: string; icon: string; items: NavItem[] }[] = [
-  {
-    title: "Operations",
-    icon: "📡",
-    items: [
-      { name: "Crew Status", href: "/crew-status", icon: "📡" },
-      { name: "Timecards", href: "/timecards", icon: "🗓️" },
-    ],
-  },
   {
     title: "Customers",
     icon: "👥",
@@ -78,20 +67,20 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
         icon: "🧠",
       },
       { name: "Portal Messages", href: "/messages", icon: "💬" },
-    ],
-  },
-  {
-    title: "Marketing",
-    icon: "📣",
-    items: [
-      { name: "Leads", href: "/leads", icon: "🎯" },
+      { name: "Customer Map", href: "/map", icon: "🗺️" },
+      { name: "Recurring Services", href: "/recurring-services", icon: "🔁" },
+      { name: "Create Job", href: "/jobs/new", icon: "🆕" },
+      { name: "Create Invoices", href: "/invoices", icon: "💵" },
       { name: "Quotes", href: "/quotes", icon: "📝" },
-      { name: "Links & QR", href: "/codes", icon: "📱" },
-      { name: "Analytics", href: "/analytics", icon: "📊" },
     ],
   },
   {
-    title: "Financials",
+    // Combined "Job Costing" and "Financials" into a single Financial
+    // section — Create Job/Create Invoices moved out to Customers above,
+    // the rest of Job Costing's items (Log Job Costs, Job Costing
+    // Analytics, Materials & Costs) live here alongside the former
+    // Financials items.
+    title: "Financial",
     icon: "💰",
     items: [
       { name: "Revenue", href: "/revenue", icon: "💰" },
@@ -103,21 +92,30 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
         href: "/job-costing-analytics/trends",
         icon: "📆",
       },
-    ],
-  },
-  {
-    title: "Job Costing",
-    icon: "🧾",
-    items: [
-      { name: "Create Job", href: "/jobs/new", icon: "🆕" },
       { name: "Log Job Costs", href: "/job-costs", icon: "🧾" },
-      { name: "Create Invoices", href: "/invoices", icon: "💵" },
       {
         name: "Job Costing Analytics",
         href: "/job-costing-analytics",
         icon: "📈",
       },
       { name: "Materials & Costs", href: "/materials", icon: "🧰" },
+    ],
+  },
+  {
+    title: "Operations",
+    icon: "📡",
+    items: [
+      { name: "Crew Status", href: "/crew-status", icon: "📡" },
+      { name: "Timecards", href: "/timecards", icon: "🗓️" },
+    ],
+  },
+  {
+    title: "Marketing",
+    icon: "📣",
+    items: [
+      { name: "Leads", href: "/leads", icon: "🎯" },
+      { name: "Links & QR", href: "/codes", icon: "📱" },
+      { name: "Analytics", href: "/analytics", icon: "📊" },
     ],
   },
   {
@@ -173,14 +171,13 @@ export default function Sidebar({
   // never drift.
   //
   // Applies to topLevelItems too, not just the collapsible groups below:
-  // Dashboard/Schedule/Recurring Services/Customer Map are gated by
-  // general_access same as anything else now (see
-  // lib/permissionRules.ts) — My Day, Timeclock, and Knowledge Base
-  // aren't in any gated prefix list, so they pass this filter
-  // unconditionally and stay visible to every role. (Creating a
-  // Knowledge Base article is still manager+ only — see
-  // /knowledge-base/new in MANAGER_PLUS_PREFIXES — but reading the
-  // list/articles themselves isn't gated at all.)
+  // Dashboard/Schedule are gated by general_access same as anything else
+  // now (see lib/permissionRules.ts) — My Day and Timeclock aren't in
+  // any gated prefix list, so they pass this filter unconditionally and
+  // stay visible to every role. Knowledge Base is rendered separately,
+  // below the groups (see knowledgeBaseItem), and is likewise never
+  // gated for viewing — only /knowledge-base/new (creating an article)
+  // is manager+ only, via MANAGER_PLUS_PREFIXES.
   const visibleTopLevelItems = useMemo(() => {
     if (user?.role === "admin") {
       return topLevelItems;
@@ -383,6 +380,18 @@ export default function Sidebar({
               </div>
             );
           })}
+
+          <div className="pt-2" />
+
+          <Link
+            href={knowledgeBaseItem.href}
+            className={linkClasses(
+              isItemActive(pathname, knowledgeBaseItem.href)
+            )}
+          >
+            <span className="text-xl">{knowledgeBaseItem.icon}</span>
+            <span>{knowledgeBaseItem.name}</span>
+          </Link>
 
           <div className="pt-2" />
 
