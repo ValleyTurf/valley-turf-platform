@@ -10,6 +10,7 @@ import {
   isUpcoming,
   matchesReactivationFilter,
   nextReactivationState,
+  normalizeReactivationStatus,
   type ReactivationCurrentState,
 } from "./reactivation";
 
@@ -30,6 +31,32 @@ describe("isReactivationStatus", () => {
     expect(isReactivationStatus("booked")).toBe(false);
     expect(isReactivationStatus("")).toBe(false);
     expect(isReactivationStatus("Candidate")).toBe(false);
+  });
+});
+
+describe("normalizeReactivationStatus", () => {
+  it("treats null/empty as candidate", () => {
+    expect(normalizeReactivationStatus(null)).toBe("candidate");
+    expect(normalizeReactivationStatus("")).toBe("candidate");
+  });
+
+  it("passes current-style statuses through unchanged", () => {
+    expect(normalizeReactivationStatus("scheduled")).toBe("scheduled");
+    expect(normalizeReactivationStatus("dog_passed_away")).toBe(
+      "dog_passed_away"
+    );
+  });
+
+  it("maps legacy pre-rebuild statuses to their closest current equivalent", () => {
+    expect(normalizeReactivationStatus("contacted")).toBe("contacted_email");
+    expect(normalizeReactivationStatus("follow_up")).toBe("follow_up_3mo");
+    expect(normalizeReactivationStatus("booked")).toBe("scheduled");
+  });
+
+  it("falls back to candidate for anything unrecognized", () => {
+    expect(normalizeReactivationStatus("some_future_status")).toBe(
+      "candidate"
+    );
   });
 });
 
@@ -312,6 +339,7 @@ describe("buildRecontactGroupStats", () => {
   it("counts total and scheduled per interval, excluding dead-end outcomes from the denominator", () => {
     const customers: {
       reactivationStatus:
+        | "candidate"
         | "follow_up_3mo"
         | "follow_up_6mo"
         | "scheduled"
