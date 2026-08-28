@@ -15,6 +15,7 @@ import {
   isUpcoming,
   matchesReactivationFilter,
   nextReactivationState,
+  normalizeReactivationStatus,
   type ReactivationFilter,
   type ReactivationStatus,
   type RecontactInterval,
@@ -46,29 +47,69 @@ type ReactivationPriority = {
   color: string;
 };
 
+// The Reactivation Pipeline groups by disposition rather than by time
+// bucket (which is how Customer Intelligence groups its raw, untouched
+// candidate list) — once a customer enters this pipeline, what matters
+// day-to-day is "what stage of the conversation are they at," not how
+// long ago their last invoice was. contacted_email/contacted_text share
+// a "Contacted" group; follow_up_3mo/follow_up_6mo share a "Follow-Up
+// Scheduled" group (the interval badge on each card still shows which
+// window). Collapsed by default, same as Intelligence's bucket cards.
+type PipelineGroupKey =
+  | "candidate"
+  | "contacted"
+  | "follow_up"
+  | "scheduled"
+  | "not_interested"
+  | "dog_passed_away";
+
+const PIPELINE_GROUPS: {
+  key: PipelineGroupKey;
+  title: string;
+  subtitle: string;
+}[] = [
+  { key: "candidate", title: "Candidates", subtitle: "Never contacted yet." },
+  {
+    key: "contacted",
+    title: "Contacted",
+    subtitle: "Reached out — no follow-up date set yet.",
+  },
+  {
+    key: "follow_up",
+    title: "Follow-Up Scheduled",
+    subtitle: "A reach-out date is on the calendar.",
+  },
+  {
+    key: "scheduled",
+    title: "Cleaning Scheduled",
+    subtitle: "Converted — a cleaning is booked.",
+  },
+  {
+    key: "not_interested",
+    title: "Not Interested",
+    subtitle: "Said no, for now.",
+  },
+  {
+    key: "dog_passed_away",
+    title: "Dog Passed Away",
+    subtitle: "",
+  },
+];
+
+function pipelineGroupForStatus(status: ReactivationStatus): PipelineGroupKey {
+  if (status === "contacted_email" || status === "contacted_text")
+    return "contacted";
+  if (status === "follow_up_3mo" || status === "follow_up_6mo")
+    return "follow_up";
+  if (status === "scheduled") return "scheduled";
+  if (status === "not_interested") return "not_interested";
+  if (status === "dog_passed_away") return "dog_passed_away";
+  return "candidate";
+}
+
 const SIX_MONTHS_IN_DAYS = 183;
 const NINE_MONTHS_IN_DAYS = 274;
 const TWELVE_MONTHS_IN_DAYS = 365;
-
-// This page predates lib/reactivation.ts's status set (contacted /
-// follow_up / booked, no email-vs-text or 3mo-vs-6mo distinction). Any
-// row still carrying one of those old values displays/filters as its
-// closest new equivalent — but the moment someone clicks a new action
-// button on that row, it's overwritten with a current-style status.
-// Nothing here rewrites old rows in bulk; this is just a display-time
-// safety net so a legacy value doesn't fall through every filter as an
-// unrecognized string.
-const LEGACY_STATUS_MAP: Record<string, ReactivationStatus> = {
-  contacted: "contacted_email",
-  follow_up: "follow_up_3mo",
-  booked: "scheduled",
-};
-
-function normalizeStatus(raw: string | null): ReactivationStatus {
-  if (!raw) return "candidate";
-  if (isReactivationStatus(raw)) return raw;
-  return LEGACY_STATUS_MAP[raw] ?? "candidate";
-}
 
 function normalizeInterval(raw: string | null): RecontactInterval | null {
   return raw === "3mo" || raw === "6mo" ? raw : null;
@@ -130,6 +171,12 @@ async function updateReactivationStatus(formData: FormData) {
   }
 
   revalidatePath("/reactivation");
+  // A status change here can also flip whether this customer belongs in
+  // Customer Intelligence's raw candidate buckets (see
+  // isActiveWorkflowStatus / normalizeReactivationStatus) — keep that
+  // page's cached view in sync too, so nobody sees stale duplicate
+  // entries across the two pages.
+  revalidatePath("/customers/intelligence");
 }
 
 function customerName(customer: Customer) {
@@ -278,46 +325,70 @@ export default async function ReactivationPage({
     const inactiveDays = daysSince(customer.last_job_at);
     return (
       inactiveDays >= SIX_MONTHS_IN_DAYS ||
-      isActiveWorkflowStatus(normalizeStatus(customer.reactivation_status))
+      isActiveWorkflowStatus(
+        normalizeReactivationStatus(customer.reactivation_status)
+      )
     );
   });
 
   const filteredCustomers = customerList.filter((customer) =>
     matchesReactivationFilter(
-      normalizeStatus(customer.reactivation_status),
+      normalizeReactivationStatus(customer.reactivation_status),
       daysSince(customer.last_job_at),
       activeFilter,
       TWELVE_MONTHS_IN_DAYS
     )
   );
 
+  // Groups are built from filteredCustomers, so a specific filter chip
+  // (e.g. "Follow Up") naturally collapses this down to just the one
+  // relevant group instead of five empty accordions — only when "all"
+  // is selected do we show every group, empty ones included, as a full
+  // overview (matching Customer Intelligence's always-show-3-buckets
+  // pattern).
+  const groupedCustomers = PIPELINE_GROUPS.map((group) => ({
+    ...group,
+    customers: filteredCustomers.filter(
+      (customer) =>
+        pipelineGroupForStatus(
+          normalizeReactivationStatus(customer.reactivation_status)
+        ) === group.key
+    ),
+  })).filter((group) => activeFilter === "all" || group.customers.length > 0);
+
   const candidates = customerList.filter(
-    (customer) => normalizeStatus(customer.reactivation_status) === "candidate"
+    (customer) =>
+      normalizeReactivationStatus(customer.reactivation_status) ===
+      "candidate"
   ).length;
 
   const contacted = customerList.filter((customer) => {
-    const status = normalizeStatus(customer.reactivation_status);
+    const status = normalizeReactivationStatus(customer.reactivation_status);
     return status === "contacted_email" || status === "contacted_text";
   }).length;
 
   const followUps = customerList.filter((customer) => {
-    const status = normalizeStatus(customer.reactivation_status);
+    const status = normalizeReactivationStatus(customer.reactivation_status);
     return status === "follow_up_3mo" || status === "follow_up_6mo";
   }).length;
 
   const scheduled = customerList.filter(
-    (customer) => normalizeStatus(customer.reactivation_status) === "scheduled"
+    (customer) =>
+      normalizeReactivationStatus(customer.reactivation_status) ===
+      "scheduled"
   ).length;
 
   const dogPassedAway = customerList.filter(
     (customer) =>
-      normalizeStatus(customer.reactivation_status) === "dog_passed_away"
+      normalizeReactivationStatus(customer.reactivation_status) ===
+      "dog_passed_away"
   ).length;
 
   const winBackCustomers = customerList.filter(
     (customer) =>
       daysSince(customer.last_job_at) >= TWELVE_MONTHS_IN_DAYS &&
-      normalizeStatus(customer.reactivation_status) === "candidate"
+      normalizeReactivationStatus(customer.reactivation_status) ===
+        "candidate"
   ).length;
 
   const overdueCustomers = customerList.filter((customer) =>
@@ -334,7 +405,9 @@ export default async function ReactivationPage({
 
   const recontactStats = buildRecontactGroupStats(
     customerList.map((customer) => ({
-      reactivationStatus: normalizeStatus(customer.reactivation_status),
+      reactivationStatus: normalizeReactivationStatus(
+        customer.reactivation_status
+      ),
       recontactInterval: normalizeInterval(
         customer.reactivation_recontact_interval
       ),
@@ -453,196 +526,187 @@ export default async function ReactivationPage({
           </div>
         </section>
 
-        <section className="mt-6 overflow-hidden rounded-3xl bg-white shadow">
-          <div className="border-b border-[#e7e2d5] p-5 sm:p-6">
-            <h2 className="text-2xl font-bold">Reactivation Pipeline</h2>
-            <p className="mt-1 text-sm text-[#6b705c]">
-              {filteredCustomers.length} customers shown.
-            </p>
+        <section className="mt-6 rounded-3xl bg-white p-5 shadow sm:p-8">
+          <h2 className="text-2xl font-bold">Reactivation Pipeline</h2>
+          <p className="mt-1 text-sm text-[#6b705c]">
+            {filteredCustomers.length} customers shown.
+          </p>
 
-            <div className="mt-4 flex flex-wrap gap-2">
-              {filters.map((filter) => {
-                const isActive = activeFilter === filter.value;
+          <div className="mt-4 flex flex-wrap gap-2">
+            {filters.map((filter) => {
+              const isActive = activeFilter === filter.value;
 
-                return (
-                  <Link
-                    key={filter.value}
-                    href={
-                      filter.value === "all"
-                        ? "/reactivation"
-                        : `/reactivation?filter=${filter.value}`
-                    }
-                    scroll={false}
-                    className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-bold transition ${
-                      isActive
-                        ? "bg-[#d4af37] text-[#174734]"
-                        : "border border-[#d8d3c6] bg-white text-[#6b705c] hover:border-[#d4af37]"
+              return (
+                <Link
+                  key={filter.value}
+                  href={
+                    filter.value === "all"
+                      ? "/reactivation"
+                      : `/reactivation?filter=${filter.value}`
+                  }
+                  scroll={false}
+                  className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-bold transition ${
+                    isActive
+                      ? "bg-[#d4af37] text-[#174734]"
+                      : "border border-[#d8d3c6] bg-white text-[#6b705c] hover:border-[#d4af37]"
+                  }`}
+                >
+                  {filter.label}
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs ${
+                      isActive ? "bg-white/40" : "bg-[#f7f6f1]"
                     }`}
                   >
-                    {filter.label}
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs ${
-                        isActive ? "bg-white/40" : "bg-[#f7f6f1]"
-                      }`}
-                    >
-                      {filter.count}
-                    </span>
-                  </Link>
-                );
-              })}
-            </div>
+                    {filter.count}
+                  </span>
+                </Link>
+              );
+            })}
           </div>
 
-          {filteredCustomers.length === 0 ? (
-            <p className="p-10 text-center text-[#6b705c]">
-              No customers match this filter.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-[#f7f6f1] text-left">
-                    <TableHeader>Customer</TableHeader>
-                    <TableHeader>Priority</TableHeader>
-                    <TableHeader>Last Service</TableHeader>
-                    <TableHeader>Inactive</TableHeader>
-                    <TableHeader>Jobs</TableHeader>
-                    <TableHeader>Status</TableHeader>
-                    <TableHeader>Follow Up</TableHeader>
-                    <TableHeader>Attempts</TableHeader>
-                    <TableHeader>Actions</TableHeader>
-                    <TableHeader />
-                  </tr>
-                </thead>
+          <div className="mt-6 space-y-3">
+            {groupedCustomers.length === 0 ? (
+              <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+                No customers match this filter.
+              </p>
+            ) : (
+              groupedCustomers.map((group) => (
+                <details
+                  key={group.key}
+                  className="rounded-2xl border border-[#e7e2d5] p-5"
+                >
+                  <summary className="flex cursor-pointer list-none items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-lg font-bold">{group.title}</h3>
+                      {group.subtitle && (
+                        <p className="mt-1 text-sm text-[#6b705c]">
+                          {group.subtitle}
+                        </p>
+                      )}
+                    </div>
 
-                <tbody>
-                  {filteredCustomers.map((customer) => {
-                    const status = normalizeStatus(customer.reactivation_status);
-                    const statusStyle = REACTIVATION_STATUS_STYLES[status];
-                    const priority = getPriority(customer.last_job_at);
-                    const interval = normalizeInterval(
-                      customer.reactivation_recontact_interval
-                    );
+                    <span className="rounded-full bg-[#f7f6f1] px-3 py-1 text-sm font-bold">
+                      {group.customers.length}
+                    </span>
+                  </summary>
 
-                    return (
-                      <tr key={customer.id} className="border-t border-[#e7e2d5]">
-                        <TableCell>
-                          <p className="font-bold">{customerName(customer)}</p>
-                          <div className="mt-1 grid gap-0.5 text-xs text-[#6b705c]">
-                            <span>{customer.phone || "No phone"}</span>
-                            <span>{customer.email || "No email"}</span>
-                          </div>
-                        </TableCell>
-
-                        <TableCell>
-                          <span
-                            className="inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold"
-                            style={{
-                              background: priority.background,
-                              color: priority.color,
-                            }}
-                          >
-                            {priority.label}
-                          </span>
-                        </TableCell>
-
-                        <TableCell>{formatDate(customer.last_job_at)}</TableCell>
-
-                        <TableCell>
-                          <strong>{formatInactiveTime(customer.last_job_at)}</strong>
-                        </TableCell>
-
-                        <TableCell>{customer.total_completed_jobs ?? 0}</TableCell>
-
-                        <TableCell>
-                          <span
-                            className="inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold"
-                            style={statusStyle}
-                          >
-                            {REACTIVATION_STATUS_LABELS[status]}
-                          </span>
-                        </TableCell>
-
-                        <TableCell>
-                          {formatDate(customer.reactivation_next_follow_up_at)}
-                          {interval && (
-                            <span className="ml-1.5 text-xs text-[#9c7a20]">
-                              ({interval})
-                            </span>
-                          )}
-                        </TableCell>
-
-                        <TableCell>
-                          {customer.reactivation_contact_attempts ?? 0}
-                        </TableCell>
-
-                        <TableCell>
-                          <div className="flex min-w-[260px] flex-wrap gap-1.5">
-                            <StatusButton
-                              customerId={customer.id}
-                              status="contacted_email"
-                              label="Emailed"
-                            />
-                            <StatusButton
-                              customerId={customer.id}
-                              status="contacted_text"
-                              label="Texted"
-                            />
-                            <StatusButton
-                              customerId={customer.id}
-                              status="follow_up_3mo"
-                              label="Reach Out 3mo"
-                            />
-                            <StatusButton
-                              customerId={customer.id}
-                              status="follow_up_6mo"
-                              label="Reach Out 6mo"
-                            />
-                            <StatusButton
-                              customerId={customer.id}
-                              status="scheduled"
-                              label="Cleaning Scheduled"
-                              tone="positive"
-                            />
-                            <StatusButton
-                              customerId={customer.id}
-                              status="not_interested"
-                              label="Not Interested"
-                              tone="negative"
-                            />
-                            <StatusButton
-                              customerId={customer.id}
-                              status="dog_passed_away"
-                              label="Dog Passed Away"
-                              tone="negative"
-                            />
-                            <StatusButton
-                              customerId={customer.id}
-                              status="removed"
-                              label="Remove"
-                              tone="negative"
-                            />
-                          </div>
-                        </TableCell>
-
-                        <TableCell>
-                          <Link
-                            href={`/customers/${customer.jobber_client_id ?? customer.id}`}
-                            className="inline-flex whitespace-nowrap rounded-lg bg-[#174734] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#226246]"
-                          >
-                            View Customer
-                          </Link>
-                        </TableCell>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  <div className="mt-4 space-y-3">
+                    {group.customers.length === 0 ? (
+                      <p className="rounded-xl bg-[#f7f6f1] p-4 text-sm text-[#6b705c]">
+                        No customers in this group.
+                      </p>
+                    ) : (
+                      group.customers.map((customer) => (
+                        <ReactivationCard key={customer.id} customer={customer} />
+                      ))
+                    )}
+                  </div>
+                </details>
+              ))
+            )}
+          </div>
         </section>
       </div>
     </main>
+  );
+}
+
+// Deliberately a top-level function, not nested inside ReactivationPage —
+// it doesn't close over anything page-local (updateReactivationStatus is
+// already a module-level server action), and nesting a component
+// definition inside another component's render trips
+// react/no-unstable-nested-components. Same reasoning as FollowUpCard/
+// StatusButton below.
+function ReactivationCard({ customer }: { customer: Customer }) {
+  const status = normalizeReactivationStatus(customer.reactivation_status);
+  const statusStyle = REACTIVATION_STATUS_STYLES[status];
+  const priority = getPriority(customer.last_job_at);
+  const interval = normalizeInterval(customer.reactivation_recontact_interval);
+
+  return (
+    <div className="rounded-xl bg-[#f7f6f1] p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <Link
+            href={`/customers/${customer.jobber_client_id ?? customer.id}`}
+            className="font-bold hover:text-[#9c7a20]"
+          >
+            {customerName(customer)}
+          </Link>
+
+          <p className="mt-1 text-xs text-[#6b705c]">
+            {customer.phone || "No phone"} · {customer.email || "No email"}
+          </p>
+
+          <p className="mt-1 text-sm text-[#6b705c]">
+            Last service {formatDate(customer.last_job_at)} ·{" "}
+            {formatInactiveTime(customer.last_job_at)} inactive ·{" "}
+            {customer.total_completed_jobs ?? 0} jobs ·{" "}
+            {customer.reactivation_contact_attempts ?? 0} attempts
+          </p>
+
+          {customer.reactivation_next_follow_up_at && (
+            <p className="mt-1 text-sm text-[#6b705c]">
+              Follow up {formatDate(customer.reactivation_next_follow_up_at)}
+              {interval && (
+                <span className="ml-1 text-xs text-[#9c7a20]">
+                  ({interval})
+                </span>
+              )}
+            </p>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className="inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold"
+            style={{ background: priority.background, color: priority.color }}
+          >
+            {priority.label}
+          </span>
+
+          <span
+            className="inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold"
+            style={statusStyle}
+          >
+            {REACTIVATION_STATUS_LABELS[status]}
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        <StatusButton customerId={customer.id} status="contacted_email" label="Emailed" />
+        <StatusButton customerId={customer.id} status="contacted_text" label="Texted" />
+        <StatusButton customerId={customer.id} status="follow_up_3mo" label="Reach Out 3mo" />
+        <StatusButton customerId={customer.id} status="follow_up_6mo" label="Reach Out 6mo" />
+        <StatusButton
+          customerId={customer.id}
+          status="scheduled"
+          label="Cleaning Scheduled"
+          tone="positive"
+        />
+        <StatusButton
+          customerId={customer.id}
+          status="not_interested"
+          label="Not Interested"
+          tone="negative"
+        />
+        <StatusButton
+          customerId={customer.id}
+          status="dog_passed_away"
+          label="Dog Passed Away"
+          tone="negative"
+        />
+        <StatusButton customerId={customer.id} status="removed" label="Remove" tone="negative" />
+
+        <Link
+          href={`/customers/${customer.jobber_client_id ?? customer.id}`}
+          className="inline-flex whitespace-nowrap rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246]"
+        >
+          View Customer
+        </Link>
+      </div>
+    </div>
   );
 }
 
@@ -732,16 +796,4 @@ function StatusButton({
       </button>
     </form>
   );
-}
-
-function TableHeader({ children }: { children?: React.ReactNode }) {
-  return (
-    <th className="whitespace-nowrap px-4 py-3 text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
-      {children}
-    </th>
-  );
-}
-
-function TableCell({ children }: { children: React.ReactNode }) {
-  return <td className="px-4 py-4 align-middle text-sm">{children}</td>;
 }

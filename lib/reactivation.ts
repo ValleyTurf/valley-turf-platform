@@ -34,6 +34,29 @@ export function isReactivationStatus(
   return (REACTIVATION_STATUSES as string[]).includes(value);
 }
 
+// /reactivation predates this file's status set (contacted / follow_up /
+// booked, no email-vs-text or 3mo-vs-6mo distinction). Any row still
+// carrying one of those old values normalizes to its closest current
+// equivalent here — a display-time safety net, not a bulk rewrite of old
+// rows. Shared by app/(platform)/reactivation (rendering the pipeline)
+// and app/(platform)/customers/intelligence (deciding whether a
+// candidate is still "untouched" or already being worked in
+// Reactivation) so the two pages can't drift on what counts as which
+// status.
+const LEGACY_STATUS_MAP: Record<string, ReactivationStatus> = {
+  contacted: "contacted_email",
+  follow_up: "follow_up_3mo",
+  booked: "scheduled",
+};
+
+export function normalizeReactivationStatus(
+  raw: string | null
+): ReactivationStatus {
+  if (!raw) return "candidate";
+  if (isReactivationStatus(raw)) return raw;
+  return LEGACY_STATUS_MAP[raw] ?? "candidate";
+}
+
 export const REACTIVATION_STATUS_LABELS: Record<ReactivationStatus, string> =
   {
     candidate: "Candidate",

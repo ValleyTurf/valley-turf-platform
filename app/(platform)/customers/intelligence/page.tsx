@@ -10,6 +10,7 @@ import {
   formatNumber,
   formatPercent,
 } from "@/lib/format";
+import { normalizeReactivationStatus } from "@/lib/reactivation";
 
 type Timeframe =
   | "last-7-days"
@@ -27,6 +28,12 @@ type Customer = {
   postal_code: string | null;
   recurring_service: boolean | null;
   status: string | null;
+  // Set once someone acts on this customer in the Reactivation pipeline
+  // (Manage Outreach) — see the reactivationCandidates filter below,
+  // which uses this to drop them from this page's raw candidate list
+  // the moment they're being actively worked there, so the two pages
+  // don't show the same person as if nobody had touched them yet.
+  reactivation_status: string | null;
 };
 
 type Invoice = {
@@ -206,7 +213,7 @@ async function fetchCustomers(): Promise<Customer[]> {
     const { data, error } = await supabaseServer
       .from("customers")
       .select(
-        "jobber_client_id, full_name, company_name, city, postal_code, recurring_service, status",
+        "jobber_client_id, full_name, company_name, city, postal_code, recurring_service, status, reactivation_status",
       )
       .not("jobber_client_id", "is", null)
       .range(from, from + pageSize - 1);
@@ -511,7 +518,16 @@ export default async function CustomerIntelligencePage({
         !recurringClientIds.has(summary.customer.jobber_client_id) &&
         !reactivationExcludedClientIds.has(
           summary.customer.jobber_client_id,
-        ),
+        ) &&
+        // Once a customer has any action logged against them in
+        // Manage Outreach (/reactivation) — a contact, a follow-up
+        // scheduled, a cleaning booked, whatever — they drop off this
+        // raw candidate list. This is what keeps the two pages from
+        // both showing the same untouched-looking entry: this page is
+        // "who hasn't been worked yet," Manage Outreach is "here's
+        // everyone I'm actively working, at whatever stage."
+        normalizeReactivationStatus(summary.customer.reactivation_status) ===
+          "candidate",
     )
     .sort(
       (a, b) =>
@@ -868,13 +884,17 @@ export default async function CustomerIntelligencePage({
             </div>
 
             <p className="mt-1 text-[#6b705c]">
-              Non-recurring customers grouped by time since their last invoice.
-              Customers at 18+ months are automatically left off the active list.
-              Use a reason below to remove someone for good, or head to{" "}
+              Non-recurring customers grouped by time since their last invoice
+              who haven&apos;t been touched yet — the moment you log a
+              contact, follow-up, or outcome for someone in{" "}
               <Link href="/reactivation" className="font-semibold underline">
                 Manage Outreach
-              </Link>{" "}
-              to log a contact attempt or schedule a follow-up.
+              </Link>
+              , they drop off this list and live there instead. Use a reason
+              below only to remove someone for good (moved, do not contact,
+              etc.) without ever working them in Manage Outreach.
+              Customers at 18+ months are automatically left off the active
+              list.
             </p>
 
             <div className="mt-6 space-y-3">
