@@ -136,6 +136,23 @@ describe("isPathAllowedForRole", () => {
     );
   });
 
+  it("gates /reactivation under customer_intelligence, same as /customers/intelligence", () => {
+    const customerIntelOnly: RolePermissionsMap = {
+      ...NONE_ALLOWED,
+      staff: { ...NONE_ALLOWED.staff, customer_intelligence: true },
+    };
+
+    expect(isPathAllowedForRole("/reactivation", "staff", NONE_ALLOWED)).toBe(
+      false
+    );
+    expect(
+      isPathAllowedForRole("/reactivation", "staff", customerIntelOnly)
+    ).toBe(true);
+    expect(
+      isPathAllowedForRole("/reactivation", "manager", customerIntelOnly)
+    ).toBe(true);
+  });
+
   it("resolves /customers/intelligence to customer_intelligence, not general_access, even though /customers is also gated", () => {
     const customerIntelOnly: RolePermissionsMap = {
       ...NONE_ALLOWED,

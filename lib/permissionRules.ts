@@ -51,7 +51,8 @@ export const SECTIONS: { id: PermissionSection; label: string; description: stri
   {
     id: "customer_intelligence",
     label: "Customer Intelligence",
-    description: "Churn-risk and value scoring on the Customers page.",
+    description:
+      "Churn-risk and value scoring on the Customers page, plus the Reactivation outreach pipeline (contact logging, follow-up scheduling, Cleaning Scheduled tracking).",
   },
   {
     id: "settings_audit",
@@ -107,7 +108,12 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
     "/job-costing-analytics/trends",
   ],
   marketing_analytics: ["/analytics"],
-  customer_intelligence: ["/customers/intelligence"],
+  // /reactivation is grouped here rather than given its own section — it's
+  // the outreach-workflow half of the same "who's at risk / who's worth
+  // winning back" feature Customer Intelligence's Reactivation Pipeline
+  // card summarizes; an admin toggling this on/off for a role should get
+  // both together, not one without the other.
+  customer_intelligence: ["/customers/intelligence", "/reactivation"],
   settings_audit: ["/settings", "/audit"],
   // The public accept/decline page (/q/[token]) is a separate,
   // unauthenticated route handled by proxy.ts's PUBLIC_PATHS, not this

@@ -270,6 +270,7 @@ async function excludeFromReactivation(formData: FormData) {
     "no_longer_has_turf",
     "do_not_contact",
     "bad_fit",
+    "dog_passed_away",
     "other",
   ]);
 
@@ -855,11 +856,25 @@ export default async function CustomerIntelligencePage({
           </article>
 
           <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
-            <h2 className="text-2xl font-bold">Reactivation Pipeline</h2>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <h2 className="text-2xl font-bold">Reactivation Pipeline</h2>
+
+              <Link
+                href="/reactivation"
+                className="rounded-lg border border-[#174734] px-3 py-1.5 text-xs font-bold text-[#174734] transition hover:bg-[#174734] hover:text-white"
+              >
+                Manage Outreach →
+              </Link>
+            </div>
 
             <p className="mt-1 text-[#6b705c]">
               Non-recurring customers grouped by time since their last invoice.
               Customers at 18+ months are automatically left off the active list.
+              Use a reason below to remove someone for good, or head to{" "}
+              <Link href="/reactivation" className="font-semibold underline">
+                Manage Outreach
+              </Link>{" "}
+              to log a contact attempt or schedule a follow-up.
             </p>
 
             <div className="mt-6 space-y-3">
@@ -941,6 +956,9 @@ export default async function CustomerIntelligencePage({
                                   Do Not Contact
                                 </option>
                                 <option value="bad_fit">Bad Fit</option>
+                                <option value="dog_passed_away">
+                                  Dog Passed Away
+                                </option>
                                 <option value="other">Other</option>
                               </select>
 
@@ -948,7 +966,7 @@ export default async function CustomerIntelligencePage({
                                 type="submit"
                                 className="rounded-lg border border-[#174734] px-3 py-2 text-xs font-bold transition hover:bg-[#174734] hover:text-white"
                               >
-                                Remove From List
+                                Save
                               </button>
                             </form>
                           </div>

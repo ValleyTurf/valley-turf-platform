@@ -67,6 +67,7 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
         icon: "🧠",
       },
       { name: "Portal Messages", href: "/messages", icon: "💬" },
+      { name: "Reactivation", href: "/reactivation", icon: "📞" },
       { name: "Customer Map", href: "/map", icon: "🗺️" },
       { name: "Recurring Services", href: "/recurring-services", icon: "🔁" },
       { name: "Create Job", href: "/jobs/new", icon: "🆕" },
