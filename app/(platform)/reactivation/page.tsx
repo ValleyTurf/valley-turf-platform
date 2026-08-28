@@ -7,20 +7,23 @@ import { supabaseServer } from "@/lib/supabase-server";
 import {
   REACTIVATION_STATUS_LABELS,
   REACTIVATION_STATUS_STYLES,
-  buildRecontactGroupStats,
+  daysBetweenDateStrings,
   isActiveWorkflowStatus,
   isDueToday,
   isOverdue,
+  isReactivationCandidate,
   isReactivationStatus,
   isUpcoming,
   matchesReactivationFilter,
   nextReactivationState,
   normalizeReactivationStatus,
+  REACTIVATION_TIME_BUCKETS,
+  timeBucketForDays,
   type ReactivationFilter,
   type ReactivationStatus,
   type RecontactInterval,
 } from "@/lib/reactivation";
-import { formatPercent } from "@/lib/format";
+import { formatCurrency, formatNumber, formatPercent, toNumber } from "@/lib/format";
 
 type Customer = {
   id: string;
@@ -30,10 +33,6 @@ type Customer = {
   company_name: string | null;
   email: string | null;
   phone: string | null;
-  first_job_at: string | null;
-  last_job_at: string | null;
-  total_jobs: number | null;
-  total_completed_jobs: number | null;
   reactivation_status: string | null;
   reactivation_last_contacted_at: string | null;
   reactivation_next_follow_up_at: string | null;
@@ -41,75 +40,30 @@ type Customer = {
   reactivation_recontact_interval: string | null;
 };
 
-type ReactivationPriority = {
-  label: string;
-  background: string;
-  color: string;
+type Invoice = {
+  jobber_client_id: string | null;
+  issue_date: string | null;
+  invoice_total: number | string;
 };
 
-// The Reactivation Pipeline groups by disposition rather than by time
-// bucket (which is how Customer Intelligence groups its raw, untouched
-// candidate list) — once a customer enters this pipeline, what matters
-// day-to-day is "what stage of the conversation are they at," not how
-// long ago their last invoice was. contacted_email/contacted_text share
-// a "Contacted" group; follow_up_3mo/follow_up_6mo share a "Follow-Up
-// Scheduled" group (the interval badge on each card still shows which
-// window). Collapsed by default, same as Intelligence's bucket cards.
-type PipelineGroupKey =
-  | "candidate"
-  | "contacted"
-  | "follow_up"
-  | "scheduled"
-  | "not_interested"
-  | "dog_passed_away";
+type RecurringServiceRow = {
+  jobber_client_id: string | null;
+  is_recurring_service: boolean | null;
+};
 
-const PIPELINE_GROUPS: {
-  key: PipelineGroupKey;
-  title: string;
-  subtitle: string;
-}[] = [
-  { key: "candidate", title: "Candidates", subtitle: "Never contacted yet." },
-  {
-    key: "contacted",
-    title: "Contacted",
-    subtitle: "Reached out — no follow-up date set yet.",
-  },
-  {
-    key: "follow_up",
-    title: "Follow-Up Scheduled",
-    subtitle: "A reach-out date is on the calendar.",
-  },
-  {
-    key: "scheduled",
-    title: "Cleaning Scheduled",
-    subtitle: "Converted — a cleaning is booked.",
-  },
-  {
-    key: "not_interested",
-    title: "Not Interested",
-    subtitle: "Said no, for now.",
-  },
-  {
-    key: "dog_passed_away",
-    title: "Dog Passed Away",
-    subtitle: "",
-  },
-];
-
-function pipelineGroupForStatus(status: ReactivationStatus): PipelineGroupKey {
-  if (status === "contacted_email" || status === "contacted_text")
-    return "contacted";
-  if (status === "follow_up_3mo" || status === "follow_up_6mo")
-    return "follow_up";
-  if (status === "scheduled") return "scheduled";
-  if (status === "not_interested") return "not_interested";
-  if (status === "dog_passed_away") return "dog_passed_away";
-  return "candidate";
-}
-
-const SIX_MONTHS_IN_DAYS = 183;
-const NINE_MONTHS_IN_DAYS = 274;
-const TWELVE_MONTHS_IN_DAYS = 365;
+// A customer plus everything computed from their invoice history —
+// built once per page load, then filtered/bucketed/grouped repeatedly
+// below. Kept separate from the raw Customer row so the invoice-derived
+// fields (which require joining against a second table) are computed
+// in exactly one place.
+type PipelineEntry = {
+  customer: Customer;
+  invoiceCount: number;
+  lifetimeRevenue: number;
+  latestInvoiceDate: string | null;
+  daysSinceLastInvoice: number | null;
+  status: ReactivationStatus;
+};
 
 function normalizeInterval(raw: string | null): RecontactInterval | null {
   return raw === "3mo" || raw === "6mo" ? raw : null;
@@ -171,11 +125,6 @@ async function updateReactivationStatus(formData: FormData) {
   }
 
   revalidatePath("/reactivation");
-  // A status change here can also flip whether this customer belongs in
-  // Customer Intelligence's raw candidate buckets (see
-  // isActiveWorkflowStatus / normalizeReactivationStatus) — keep that
-  // page's cached view in sync too, so nobody sees stale duplicate
-  // entries across the two pages.
   revalidatePath("/customers/intelligence");
 }
 
@@ -201,41 +150,101 @@ function formatDate(date: string | null) {
   }).format(parsed);
 }
 
-function daysSince(date: string | null) {
-  if (!date) return 0;
+async function fetchAllCustomers(): Promise<Customer[]> {
+  const rows: Customer[] = [];
+  const pageSize = 1000;
 
-  const dateTime = new Date(date).getTime();
-  return Math.floor((Date.now() - dateTime) / (1000 * 60 * 60 * 24));
-}
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseServer
+      .from("customers")
+      .select(
+        `
+          id,
+          jobber_client_id,
+          first_name,
+          last_name,
+          company_name,
+          email,
+          phone,
+          reactivation_status,
+          reactivation_last_contacted_at,
+          reactivation_next_follow_up_at,
+          reactivation_contact_attempts,
+          reactivation_recontact_interval
+        `
+      )
+      .not("jobber_client_id", "is", null)
+      .range(from, from + pageSize - 1);
 
-function formatInactiveTime(date: string | null) {
-  const days = daysSince(date);
+    if (error) throw error;
 
-  if (days < 30) return `${days} days`;
+    const batch = (data ?? []) as Customer[];
+    rows.push(...batch);
 
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months} mo`;
-
-  const years = Math.floor(months / 12);
-  const remainingMonths = months % 12;
-
-  return remainingMonths === 0
-    ? `${years} yr`
-    : `${years} yr ${remainingMonths} mo`;
-}
-
-function getPriority(lastJobAt: string | null): ReactivationPriority {
-  const inactiveDays = daysSince(lastJobAt);
-
-  if (inactiveDays >= TWELVE_MONTHS_IN_DAYS) {
-    return { label: "Win-Back", background: "#fee2e2", color: "#991b1b" };
+    if (batch.length < pageSize) break;
   }
 
-  if (inactiveDays >= NINE_MONTHS_IN_DAYS) {
-    return { label: "High Priority", background: "#ffedd5", color: "#9a3412" };
+  return rows;
+}
+
+async function fetchAllInvoices(): Promise<Invoice[]> {
+  const rows: Invoice[] = [];
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseServer
+      .from("invoice_financials")
+      .select("jobber_client_id, issue_date, invoice_total")
+      .not("jobber_client_id", "is", null)
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+
+    const batch = (data ?? []) as Invoice[];
+    rows.push(...batch);
+
+    if (batch.length < pageSize) break;
   }
 
-  return { label: "Reactivation", background: "#fef3c7", color: "#92400e" };
+  return rows;
+}
+
+async function fetchRecurringClientIds(): Promise<Set<string>> {
+  const rows: RecurringServiceRow[] = [];
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseServer
+      .from("job_service_category")
+      .select("jobber_client_id, is_recurring_service")
+      .eq("is_recurring_service", true)
+      .not("jobber_client_id", "is", null)
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+
+    const batch = (data ?? []) as RecurringServiceRow[];
+    rows.push(...batch);
+
+    if (batch.length < pageSize) break;
+  }
+
+  return new Set(
+    rows
+      .filter((row) => row.is_recurring_service && row.jobber_client_id)
+      .map((row) => row.jobber_client_id as string)
+  );
+}
+
+async function fetchExcludedClientIds(): Promise<Set<string>> {
+  const { data, error } = await supabaseServer
+    .from("customer_intelligence_exclusions")
+    .select("jobber_client_id")
+    .eq("exclusion_type", "reactivation");
+
+  if (error) throw error;
+
+  return new Set((data ?? []).map((row) => row.jobber_client_id as string));
 }
 
 export default async function ReactivationPage({
@@ -251,8 +260,6 @@ export default async function ReactivationPage({
     "contacted",
     "follow_up",
     "scheduled",
-    "dog_passed_away",
-    "win_back",
   ];
 
   const requestedFilter = params.filter as ReactivationFilter;
@@ -260,174 +267,179 @@ export default async function ReactivationPage({
     ? requestedFilter
     : "all";
 
-  const { data: exclusionsData } = await supabaseServer
-    .from("customer_intelligence_exclusions")
-    .select("jobber_client_id")
-    .eq("exclusion_type", "reactivation");
+  const [allCustomers, invoices, recurringClientIds, excludedClientIds] =
+    await Promise.all([
+      fetchAllCustomers(),
+      fetchAllInvoices(),
+      fetchRecurringClientIds(),
+      fetchExcludedClientIds(),
+    ]);
 
-  const excludedClientIds = (exclusionsData ?? []).map(
-    (row) => row.jobber_client_id
-  );
+  const invoicesByClient = new Map<string, Invoice[]>();
 
-  const idListForFilter =
-    excludedClientIds.length > 0
-      ? excludedClientIds.map((id) => `"${id}"`).join(",")
-      : '"__none__"';
+  for (const invoice of invoices) {
+    if (!invoice.jobber_client_id || !invoice.issue_date) continue;
 
-  const { data: customers, error } = await supabaseServer
-    .from("customers")
-    .select(
-      `
-        id,
-        jobber_client_id,
-        first_name,
-        last_name,
-        company_name,
-        email,
-        phone,
-        first_job_at,
-        last_job_at,
-        total_jobs,
-        total_completed_jobs,
-        reactivation_status,
-        reactivation_last_contacted_at,
-        reactivation_next_follow_up_at,
-        reactivation_contact_attempts,
-        reactivation_recontact_interval
-      `
-    )
-    .gt("total_completed_jobs", 0)
-    .not("last_job_at", "is", null)
-    .neq("reactivation_status", "removed")
-    .not("jobber_client_id", "in", `(${idListForFilter})`)
-    .order("last_job_at", { ascending: true })
-    .limit(1000);
-
-  if (error) {
-    return (
-      <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
-        <div className="mx-auto max-w-3xl">
-          <h1 className="text-3xl font-bold">Customer Reactivation</h1>
-
-          <div className="mt-6 rounded-2xl bg-red-50 p-5 text-red-800">
-            Unable to load reactivation customers.
-            <div className="mt-2 text-sm">{error.message}</div>
-          </div>
-        </div>
-      </main>
-    );
+    const existing = invoicesByClient.get(invoice.jobber_client_id) ?? [];
+    existing.push(invoice);
+    invoicesByClient.set(invoice.jobber_client_id, existing);
   }
 
-  const allCustomers = (customers ?? []) as Customer[];
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Every customer plus their invoice-derived stats, then narrowed down
+  // to "belongs in the pipeline at all": either a fresh candidate
+  // (isReactivationCandidate — same rule Customer Intelligence uses) or
+  // already being actively worked (isActiveWorkflowStatus), as long as
+  // they're not recurring-service or permanently excluded either way.
+  const pipeline: PipelineEntry[] = allCustomers
+    .filter((customer) => customer.jobber_client_id)
+    .map((customer) => {
+      const clientInvoices = (
+        invoicesByClient.get(customer.jobber_client_id as string) ?? []
+      ).sort((a, b) =>
+        String(a.issue_date).localeCompare(String(b.issue_date))
+      );
+
+      const lifetimeRevenue = clientInvoices.reduce(
+        (sum, invoice) => sum + toNumber(invoice.invoice_total),
+        0
+      );
+
+      const latestInvoiceDate =
+        clientInvoices.length > 0
+          ? clientInvoices[clientInvoices.length - 1].issue_date
+          : null;
+
+      const daysSinceLastInvoice = latestInvoiceDate
+        ? daysBetweenDateStrings(latestInvoiceDate, today)
+        : null;
+
+      return {
+        customer,
+        invoiceCount: clientInvoices.length,
+        lifetimeRevenue,
+        latestInvoiceDate,
+        daysSinceLastInvoice,
+        status: normalizeReactivationStatus(customer.reactivation_status),
+      };
+    })
+    .filter((entry) => {
+      const clientId = entry.customer.jobber_client_id as string;
+
+      if (recurringClientIds.has(clientId)) return false;
+      if (excludedClientIds.has(clientId)) return false;
+      if (entry.status === "removed") return false;
+
+      return (
+        isReactivationCandidate({
+          invoiceCount: entry.invoiceCount,
+          daysSinceLastInvoice: entry.daysSinceLastInvoice,
+          isRecurring: false,
+          isExcluded: false,
+        }) || isActiveWorkflowStatus(entry.status)
+      );
+    });
+
+  const filteredPipeline = pipeline.filter((entry) =>
+    matchesReactivationFilter(entry.status, activeFilter)
+  );
+
+  // The three shared buckets, plus a catch-all for anyone actively
+  // being worked whose days-since-last-invoice has drifted past 547 (or
+  // has no invoice at all) — see isActiveWorkflowStatus above for why
+  // they're in the pipeline at all despite falling outside the normal
+  // 90–547 day candidate window.
+  const buckets = [
+    ...REACTIVATION_TIME_BUCKETS.map((bucket) => ({
+      key: bucket.key as string,
+      title: bucket.title,
+      subtitle: bucket.subtitle,
+      entries: filteredPipeline.filter(
+        (entry) =>
+          timeBucketForDays(entry.daysSinceLastInvoice ?? -1) === bucket.key
+      ),
+    })),
+    {
+      key: "18-plus",
+      title: "18+ Months",
+      subtitle: "Still being worked despite the long gap.",
+      entries: filteredPipeline.filter(
+        (entry) => timeBucketForDays(entry.daysSinceLastInvoice ?? -1) === null
+      ),
+    },
+  ].filter((bucket) => activeFilter !== "all" || bucket.entries.length > 0);
+
+  const candidates = pipeline.filter(
+    (entry) => entry.status === "candidate"
+  ).length;
+
+  const contacted = pipeline.filter(
+    (entry) =>
+      entry.status === "contacted_email" || entry.status === "contacted_text"
+  ).length;
+
+  const followUps = pipeline.filter(
+    (entry) =>
+      entry.status === "follow_up_3mo" || entry.status === "follow_up_6mo"
+  ).length;
+
+  const scheduled = pipeline.filter(
+    (entry) => entry.status === "scheduled"
+  ).length;
+
   const now = new Date();
 
-  const customerList = allCustomers.filter((customer) => {
-    const inactiveDays = daysSince(customer.last_job_at);
-    return (
-      inactiveDays >= SIX_MONTHS_IN_DAYS ||
-      isActiveWorkflowStatus(
-        normalizeReactivationStatus(customer.reactivation_status)
-      )
+  const overdueEntries = pipeline.filter((entry) =>
+    isOverdue(entry.customer.reactivation_next_follow_up_at, now)
+  );
+
+  const dueTodayEntries = pipeline.filter((entry) =>
+    isDueToday(entry.customer.reactivation_next_follow_up_at, now)
+  );
+
+  const upcomingEntries = pipeline.filter((entry) =>
+    isUpcoming(entry.customer.reactivation_next_follow_up_at, now)
+  );
+
+  // What the user actually asked for: of everyone who landed in the
+  // 3–6 month bucket (any status), what share are now Cleaning
+  // Scheduled — same for 6–12 and 12–18. Deliberately NOT the 18+
+  // catch-all, since that bucket isn't a comparable cohort (it's a
+  // grab-bag of drifted/no-invoice records, not a clean time window).
+  const reconnectionRates = REACTIVATION_TIME_BUCKETS.map((bucket) => {
+    const inBucket = pipeline.filter(
+      (entry) =>
+        timeBucketForDays(entry.daysSinceLastInvoice ?? -1) === bucket.key
     );
+
+    const scheduledInBucket = inBucket.filter(
+      (entry) => entry.status === "scheduled"
+    );
+
+    return {
+      key: bucket.key,
+      title: bucket.title,
+      total: inBucket.length,
+      scheduled: scheduledInBucket.length,
+      rate:
+        inBucket.length > 0
+          ? scheduledInBucket.length / inBucket.length
+          : 0,
+    };
   });
-
-  const filteredCustomers = customerList.filter((customer) =>
-    matchesReactivationFilter(
-      normalizeReactivationStatus(customer.reactivation_status),
-      daysSince(customer.last_job_at),
-      activeFilter,
-      TWELVE_MONTHS_IN_DAYS
-    )
-  );
-
-  // Groups are built from filteredCustomers, so a specific filter chip
-  // (e.g. "Follow Up") naturally collapses this down to just the one
-  // relevant group instead of five empty accordions — only when "all"
-  // is selected do we show every group, empty ones included, as a full
-  // overview (matching Customer Intelligence's always-show-3-buckets
-  // pattern).
-  const groupedCustomers = PIPELINE_GROUPS.map((group) => ({
-    ...group,
-    customers: filteredCustomers.filter(
-      (customer) =>
-        pipelineGroupForStatus(
-          normalizeReactivationStatus(customer.reactivation_status)
-        ) === group.key
-    ),
-  })).filter((group) => activeFilter === "all" || group.customers.length > 0);
-
-  const candidates = customerList.filter(
-    (customer) =>
-      normalizeReactivationStatus(customer.reactivation_status) ===
-      "candidate"
-  ).length;
-
-  const contacted = customerList.filter((customer) => {
-    const status = normalizeReactivationStatus(customer.reactivation_status);
-    return status === "contacted_email" || status === "contacted_text";
-  }).length;
-
-  const followUps = customerList.filter((customer) => {
-    const status = normalizeReactivationStatus(customer.reactivation_status);
-    return status === "follow_up_3mo" || status === "follow_up_6mo";
-  }).length;
-
-  const scheduled = customerList.filter(
-    (customer) =>
-      normalizeReactivationStatus(customer.reactivation_status) ===
-      "scheduled"
-  ).length;
-
-  const dogPassedAway = customerList.filter(
-    (customer) =>
-      normalizeReactivationStatus(customer.reactivation_status) ===
-      "dog_passed_away"
-  ).length;
-
-  const winBackCustomers = customerList.filter(
-    (customer) =>
-      daysSince(customer.last_job_at) >= TWELVE_MONTHS_IN_DAYS &&
-      normalizeReactivationStatus(customer.reactivation_status) ===
-        "candidate"
-  ).length;
-
-  const overdueCustomers = customerList.filter((customer) =>
-    isOverdue(customer.reactivation_next_follow_up_at, now)
-  );
-
-  const dueTodayCustomers = customerList.filter((customer) =>
-    isDueToday(customer.reactivation_next_follow_up_at, now)
-  );
-
-  const upcomingCustomers = customerList.filter((customer) =>
-    isUpcoming(customer.reactivation_next_follow_up_at, now)
-  );
-
-  const recontactStats = buildRecontactGroupStats(
-    customerList.map((customer) => ({
-      reactivationStatus: normalizeReactivationStatus(
-        customer.reactivation_status
-      ),
-      recontactInterval: normalizeInterval(
-        customer.reactivation_recontact_interval
-      ),
-    }))
-  );
 
   const filters: { value: ReactivationFilter; label: string; count: number }[] =
     [
-      { value: "all", label: "All", count: customerList.length },
+      { value: "all", label: "All", count: pipeline.length },
       { value: "candidate", label: "Candidates", count: candidates },
       { value: "contacted", label: "Contacted", count: contacted },
       { value: "follow_up", label: "Follow Up", count: followUps },
       { value: "scheduled", label: "Scheduled", count: scheduled },
-      { value: "dog_passed_away", label: "Dog Passed Away", count: dogPassedAway },
-      { value: "win_back", label: "Win-Back", count: winBackCustomers },
     ];
 
   const metricCards = [
     { label: "Candidates", value: candidates, icon: "👋" },
-    { label: "Win-Back", value: winBackCustomers, icon: "📈" },
     { label: "Contacted", value: contacted, icon: "✉️" },
     { label: "Follow Ups", value: followUps, icon: "🗓️" },
     { label: "Cleaning Scheduled", value: scheduled, icon: "✅" },
@@ -447,9 +459,9 @@ export default async function ReactivationPage({
             </h1>
 
             <p className="mt-2 max-w-2xl text-[#6b705c]">
-              Previous customers with no completed service in the last 6
-              months, plus anyone actively being worked through the outreach
-              pipeline below.
+              Customers who haven&apos;t invoiced in 3–18 months, grouped the
+              same way as Customer Intelligence, plus anyone actively being
+              worked through the outreach pipeline below.
             </p>
           </div>
 
@@ -461,7 +473,7 @@ export default async function ReactivationPage({
           </Link>
         </header>
 
-        <section className="mt-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-5">
+        <section className="mt-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
           {metricCards.map((card) => (
             <article key={card.label} className="rounded-3xl bg-white p-5 shadow">
               <div className="flex items-start justify-between gap-3">
@@ -482,44 +494,43 @@ export default async function ReactivationPage({
         <section className="mt-6 grid gap-5 sm:grid-cols-3">
           <FollowUpCard
             title="Overdue Follow-Ups"
-            customers={overdueCustomers}
+            entries={overdueEntries}
             background="#fef2f2"
             color="#991b1b"
           />
           <FollowUpCard
             title="Due Today"
-            customers={dueTodayCustomers}
+            entries={dueTodayEntries}
             background="#fff7ed"
             color="#9a3412"
           />
           <FollowUpCard
             title="Upcoming"
-            customers={upcomingCustomers}
+            entries={upcomingEntries}
             background="#eff6ff"
             color="#1d4ed8"
           />
         </section>
 
         <section className="mt-6 rounded-3xl bg-white p-5 shadow sm:p-8">
-          <h2 className="text-2xl font-bold">Recontact Conversion by Window</h2>
+          <h2 className="text-2xl font-bold">Reconnection Rate by Bucket</h2>
           <p className="mt-1 text-[#6b705c]">
-            Of the customers placed in each reach-out window, how many ended
-            up with a Cleaning Scheduled — a rough read on which timeframe
-            actually works for recontacting a lapsed customer.
+            Of everyone who landed in each time bucket, what share are now a
+            Cleaning Scheduled.
           </p>
 
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            {recontactStats.map((stat) => (
+          <div className="mt-5 grid gap-4 sm:grid-cols-3">
+            {reconnectionRates.map((bucket) => (
               <div
-                key={stat.interval}
+                key={bucket.key}
                 className="rounded-2xl border border-[#e7e2d5] p-5"
               >
-                <p className="font-bold">{stat.label}</p>
+                <p className="font-bold">{bucket.title}</p>
                 <p className="mt-2 text-3xl font-bold">
-                  {formatPercent(stat.conversionRate)}
+                  {formatPercent(bucket.rate)}
                 </p>
                 <p className="mt-1 text-sm text-[#6b705c]">
-                  {stat.scheduled} scheduled out of {stat.total} tracked
+                  {bucket.scheduled} scheduled out of {bucket.total}
                 </p>
               </div>
             ))}
@@ -529,7 +540,7 @@ export default async function ReactivationPage({
         <section className="mt-6 rounded-3xl bg-white p-5 shadow sm:p-8">
           <h2 className="text-2xl font-bold">Reactivation Pipeline</h2>
           <p className="mt-1 text-sm text-[#6b705c]">
-            {filteredCustomers.length} customers shown.
+            {filteredPipeline.length} customers shown.
           </p>
 
           <div className="mt-4 flex flex-wrap gap-2">
@@ -565,39 +576,40 @@ export default async function ReactivationPage({
           </div>
 
           <div className="mt-6 space-y-3">
-            {groupedCustomers.length === 0 ? (
+            {buckets.length === 0 ? (
               <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
                 No customers match this filter.
               </p>
             ) : (
-              groupedCustomers.map((group) => (
+              buckets.map((bucket) => (
                 <details
-                  key={group.key}
+                  key={bucket.key}
                   className="rounded-2xl border border-[#e7e2d5] p-5"
                 >
                   <summary className="flex cursor-pointer list-none items-start justify-between gap-4">
                     <div>
-                      <h3 className="text-lg font-bold">{group.title}</h3>
-                      {group.subtitle && (
-                        <p className="mt-1 text-sm text-[#6b705c]">
-                          {group.subtitle}
-                        </p>
-                      )}
+                      <h3 className="text-lg font-bold">{bucket.title}</h3>
+                      <p className="mt-1 text-sm text-[#6b705c]">
+                        {bucket.subtitle}
+                      </p>
                     </div>
 
                     <span className="rounded-full bg-[#f7f6f1] px-3 py-1 text-sm font-bold">
-                      {group.customers.length}
+                      {bucket.entries.length}
                     </span>
                   </summary>
 
                   <div className="mt-4 space-y-3">
-                    {group.customers.length === 0 ? (
+                    {bucket.entries.length === 0 ? (
                       <p className="rounded-xl bg-[#f7f6f1] p-4 text-sm text-[#6b705c]">
                         No customers in this group.
                       </p>
                     ) : (
-                      group.customers.map((customer) => (
-                        <ReactivationCard key={customer.id} customer={customer} />
+                      bucket.entries.map((entry) => (
+                        <ReactivationCard
+                          key={entry.customer.id}
+                          entry={entry}
+                        />
                       ))
                     )}
                   </div>
@@ -611,16 +623,70 @@ export default async function ReactivationPage({
   );
 }
 
-// Deliberately a top-level function, not nested inside ReactivationPage —
-// it doesn't close over anything page-local (updateReactivationStatus is
-// already a module-level server action), and nesting a component
-// definition inside another component's render trips
-// react/no-unstable-nested-components. Same reasoning as FollowUpCard/
-// StatusButton below.
-function ReactivationCard({ customer }: { customer: Customer }) {
-  const status = normalizeReactivationStatus(customer.reactivation_status);
-  const statusStyle = REACTIVATION_STATUS_STYLES[status];
-  const priority = getPriority(customer.last_job_at);
+function FollowUpCard({
+  title,
+  entries,
+  background,
+  color,
+}: {
+  title: string;
+  entries: PipelineEntry[];
+  background: string;
+  color: string;
+}) {
+  return (
+    <div
+      className="rounded-2xl border border-[#e7e2d5] p-5"
+      style={{ background }}
+    >
+      <div className="flex items-center justify-between gap-4">
+        <p className="text-sm font-bold" style={{ color }}>
+          {title}
+        </p>
+        <p className="text-2xl font-bold" style={{ color }}>
+          {entries.length}
+        </p>
+      </div>
+
+      <div className="mt-4 grid gap-2">
+        {entries.length === 0 ? (
+          <p className="text-sm text-[#6b705c]">No customers</p>
+        ) : (
+          entries.slice(0, 5).map((entry) => (
+            <Link
+              key={entry.customer.id}
+              href={`/customers/${
+                entry.customer.jobber_client_id ?? entry.customer.id
+              }`}
+              className="flex items-center justify-between gap-3 text-sm text-[#174734] hover:underline"
+            >
+              <span className="truncate font-semibold">
+                {customerName(entry.customer)}
+              </span>
+              <span className="shrink-0 text-[#6b705c]">
+                {formatDate(entry.customer.reactivation_next_follow_up_at)}
+              </span>
+            </Link>
+          ))
+        )}
+
+        {entries.length > 5 && (
+          <p className="text-xs text-[#6b705c]">
+            + {entries.length - 5} more
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Top-level, not nested inside ReactivationPage — doesn't close over
+// anything page-local (updateReactivationStatus is a module-level
+// server action), and nesting would trip
+// react/no-unstable-nested-components.
+function ReactivationCard({ entry }: { entry: PipelineEntry }) {
+  const { customer } = entry;
+  const statusStyle = REACTIVATION_STATUS_STYLES[entry.status];
   const interval = normalizeInterval(customer.reactivation_recontact_interval);
 
   return (
@@ -639,9 +705,9 @@ function ReactivationCard({ customer }: { customer: Customer }) {
           </p>
 
           <p className="mt-1 text-sm text-[#6b705c]">
-            Last service {formatDate(customer.last_job_at)} ·{" "}
-            {formatInactiveTime(customer.last_job_at)} inactive ·{" "}
-            {customer.total_completed_jobs ?? 0} jobs ·{" "}
+            {formatNumber(entry.invoiceCount)} invoices ·{" "}
+            {formatCurrency(entry.lifetimeRevenue)} lifetime · last invoice{" "}
+            {formatDate(entry.latestInvoiceDate)} ·{" "}
             {customer.reactivation_contact_attempts ?? 0} attempts
           </p>
 
@@ -657,21 +723,12 @@ function ReactivationCard({ customer }: { customer: Customer }) {
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <span
-            className="inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold"
-            style={{ background: priority.background, color: priority.color }}
-          >
-            {priority.label}
-          </span>
-
-          <span
-            className="inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold"
-            style={statusStyle}
-          >
-            {REACTIVATION_STATUS_LABELS[status]}
-          </span>
-        </div>
+        <span
+          className="inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold"
+          style={statusStyle}
+        >
+          {REACTIVATION_STATUS_LABELS[entry.status]}
+        </span>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1.5">
@@ -691,12 +748,6 @@ function ReactivationCard({ customer }: { customer: Customer }) {
           label="Not Interested"
           tone="negative"
         />
-        <StatusButton
-          customerId={customer.id}
-          status="dog_passed_away"
-          label="Dog Passed Away"
-          tone="negative"
-        />
         <StatusButton customerId={customer.id} status="removed" label="Remove" tone="negative" />
 
         <Link
@@ -705,61 +756,6 @@ function ReactivationCard({ customer }: { customer: Customer }) {
         >
           View Customer
         </Link>
-      </div>
-    </div>
-  );
-}
-
-function FollowUpCard({
-  title,
-  customers,
-  background,
-  color,
-}: {
-  title: string;
-  customers: Customer[];
-  background: string;
-  color: string;
-}) {
-  return (
-    <div
-      className="rounded-2xl border border-[#e7e2d5] p-5"
-      style={{ background }}
-    >
-      <div className="flex items-center justify-between gap-4">
-        <p className="text-sm font-bold" style={{ color }}>
-          {title}
-        </p>
-        <p className="text-2xl font-bold" style={{ color }}>
-          {customers.length}
-        </p>
-      </div>
-
-      <div className="mt-4 grid gap-2">
-        {customers.length === 0 ? (
-          <p className="text-sm text-[#6b705c]">No customers</p>
-        ) : (
-          customers.slice(0, 5).map((customer) => (
-            <Link
-              key={customer.id}
-              href={`/customers/${customer.jobber_client_id ?? customer.id}`}
-              className="flex items-center justify-between gap-3 text-sm text-[#174734] hover:underline"
-            >
-              <span className="truncate font-semibold">
-                {customerName(customer)}
-              </span>
-              <span className="shrink-0 text-[#6b705c]">
-                {formatDate(customer.reactivation_next_follow_up_at)}
-              </span>
-            </Link>
-          ))
-        )}
-
-        {customers.length > 5 && (
-          <p className="text-xs text-[#6b705c]">
-            + {customers.length - 5} more
-          </p>
-        )}
       </div>
     </div>
   );

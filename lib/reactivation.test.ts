@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   addMonthsIso,
-  buildRecontactGroupStats,
+  daysBetweenDateStrings,
   isActiveWorkflowStatus,
   isDueToday,
   isOverdue,
+  isReactivationCandidate,
   isReactivationStatus,
   isSameDay,
   isUpcoming,
   matchesReactivationFilter,
   nextReactivationState,
   normalizeReactivationStatus,
+  timeBucketForDays,
   type ReactivationCurrentState,
 } from "./reactivation";
 
@@ -241,143 +243,120 @@ describe("isActiveWorkflowStatus", () => {
 });
 
 describe("matchesReactivationFilter", () => {
-  const twelveMonths = 365;
-
   it("all matches everything", () => {
-    expect(matchesReactivationFilter("scheduled", 10, "all", twelveMonths)).toBe(
-      true
-    );
-    expect(matchesReactivationFilter(null, 10, "all", twelveMonths)).toBe(true);
+    expect(matchesReactivationFilter("scheduled", "all")).toBe(true);
+    expect(matchesReactivationFilter(null, "all")).toBe(true);
   });
 
   it("candidate matches null or explicit candidate status", () => {
-    expect(
-      matchesReactivationFilter(null, 10, "candidate", twelveMonths)
-    ).toBe(true);
-    expect(
-      matchesReactivationFilter("candidate", 10, "candidate", twelveMonths)
-    ).toBe(true);
-    expect(
-      matchesReactivationFilter("scheduled", 10, "candidate", twelveMonths)
-    ).toBe(false);
+    expect(matchesReactivationFilter(null, "candidate")).toBe(true);
+    expect(matchesReactivationFilter("candidate", "candidate")).toBe(true);
+    expect(matchesReactivationFilter("scheduled", "candidate")).toBe(false);
   });
 
   it("contacted groups both email and text dispositions", () => {
-    expect(
-      matchesReactivationFilter(
-        "contacted_email",
-        10,
-        "contacted",
-        twelveMonths
-      )
-    ).toBe(true);
-    expect(
-      matchesReactivationFilter(
-        "contacted_text",
-        10,
-        "contacted",
-        twelveMonths
-      )
-    ).toBe(true);
-    expect(
-      matchesReactivationFilter("follow_up_3mo", 10, "contacted", twelveMonths)
-    ).toBe(false);
+    expect(matchesReactivationFilter("contacted_email", "contacted")).toBe(
+      true
+    );
+    expect(matchesReactivationFilter("contacted_text", "contacted")).toBe(
+      true
+    );
+    expect(matchesReactivationFilter("follow_up_3mo", "contacted")).toBe(
+      false
+    );
   });
 
   it("follow_up groups both 3mo and 6mo windows", () => {
-    expect(
-      matchesReactivationFilter(
-        "follow_up_3mo",
-        10,
-        "follow_up",
-        twelveMonths
-      )
-    ).toBe(true);
-    expect(
-      matchesReactivationFilter(
-        "follow_up_6mo",
-        10,
-        "follow_up",
-        twelveMonths
-      )
-    ).toBe(true);
+    expect(matchesReactivationFilter("follow_up_3mo", "follow_up")).toBe(
+      true
+    );
+    expect(matchesReactivationFilter("follow_up_6mo", "follow_up")).toBe(
+      true
+    );
   });
 
-  it("win_back requires 12+ months inactive and still a candidate", () => {
-    expect(
-      matchesReactivationFilter(null, 400, "win_back", twelveMonths)
-    ).toBe(true);
-    expect(
-      matchesReactivationFilter(null, 200, "win_back", twelveMonths)
-    ).toBe(false);
-    expect(
-      matchesReactivationFilter("contacted_email", 400, "win_back", twelveMonths)
-    ).toBe(false);
-  });
-
-  it("dog_passed_away matches only that exact status", () => {
-    expect(
-      matchesReactivationFilter(
-        "dog_passed_away",
-        10,
-        "dog_passed_away",
-        twelveMonths
-      )
-    ).toBe(true);
-    expect(
-      matchesReactivationFilter(
-        "not_interested",
-        10,
-        "dog_passed_away",
-        twelveMonths
-      )
-    ).toBe(false);
+  it("scheduled matches only that exact status", () => {
+    expect(matchesReactivationFilter("scheduled", "scheduled")).toBe(true);
+    expect(matchesReactivationFilter("not_interested", "scheduled")).toBe(
+      false
+    );
   });
 });
 
-describe("buildRecontactGroupStats", () => {
-  it("counts total and scheduled per interval, excluding dead-end outcomes from the denominator", () => {
-    const customers: {
-      reactivationStatus:
-        | "candidate"
-        | "follow_up_3mo"
-        | "follow_up_6mo"
-        | "scheduled"
-        | "not_interested"
-        | "dog_passed_away"
-        | "removed"
-        | null;
-      recontactInterval: "3mo" | "6mo" | null;
-    }[] = [
-      { reactivationStatus: "follow_up_3mo", recontactInterval: "3mo" },
-      { reactivationStatus: "scheduled", recontactInterval: "3mo" },
-      { reactivationStatus: "scheduled", recontactInterval: "3mo" },
-      { reactivationStatus: "not_interested", recontactInterval: "3mo" },
-      { reactivationStatus: "follow_up_6mo", recontactInterval: "6mo" },
-      { reactivationStatus: "scheduled", recontactInterval: "6mo" },
-      { reactivationStatus: "removed", recontactInterval: "6mo" },
-      { reactivationStatus: "candidate", recontactInterval: null },
-    ];
-
-    const stats = buildRecontactGroupStats(customers);
-    const threeMonth = stats.find((stat) => stat.interval === "3mo")!;
-    const sixMonth = stats.find((stat) => stat.interval === "6mo")!;
-
-    // 4 total in the 3mo group (follow_up_3mo + 2x scheduled), the
-    // not_interested one excluded from the denominator entirely.
-    expect(threeMonth.total).toBe(3);
-    expect(threeMonth.scheduled).toBe(2);
-    expect(threeMonth.conversionRate).toBeCloseTo(2 / 3);
-
-    // 6mo group: follow_up_6mo + scheduled counted, removed excluded.
-    expect(sixMonth.total).toBe(2);
-    expect(sixMonth.scheduled).toBe(1);
-    expect(sixMonth.conversionRate).toBeCloseTo(0.5);
+describe("daysBetweenDateStrings", () => {
+  it("computes a plain day count between two dates", () => {
+    expect(daysBetweenDateStrings("2026-01-01", "2026-01-11")).toBe(10);
   });
 
-  it("returns 0 conversion rate for an empty group instead of dividing by zero", () => {
-    const stats = buildRecontactGroupStats([]);
-    expect(stats.every((stat) => stat.total === 0)).toBe(true);
-    expect(stats.every((stat) => stat.conversionRate === 0)).toBe(true);
+  it("never returns negative — clamps to 0 if end is before start", () => {
+    expect(daysBetweenDateStrings("2026-06-01", "2026-01-01")).toBe(0);
+  });
+
+  it("returns 0 for the same date", () => {
+    expect(daysBetweenDateStrings("2026-03-15", "2026-03-15")).toBe(0);
+  });
+});
+
+describe("timeBucketForDays", () => {
+  it("matches Customer Intelligence's exact day ranges", () => {
+    expect(timeBucketForDays(90)).toBe("3-6");
+    expect(timeBucketForDays(179)).toBe("3-6");
+    expect(timeBucketForDays(180)).toBe("6-12");
+    expect(timeBucketForDays(364)).toBe("6-12");
+    expect(timeBucketForDays(365)).toBe("12-18");
+    expect(timeBucketForDays(547)).toBe("12-18");
+  });
+
+  it("returns null outside the 90-547 day range", () => {
+    expect(timeBucketForDays(89)).toBeNull();
+    expect(timeBucketForDays(548)).toBeNull();
+    expect(timeBucketForDays(0)).toBeNull();
+    expect(timeBucketForDays(1000)).toBeNull();
+  });
+});
+
+describe("isReactivationCandidate", () => {
+  const valid = {
+    invoiceCount: 3,
+    daysSinceLastInvoice: 120,
+    isRecurring: false,
+    isExcluded: false,
+  };
+
+  it("accepts a customer with invoices, in-range inactivity, not recurring, not excluded", () => {
+    expect(isReactivationCandidate(valid)).toBe(true);
+  });
+
+  it("rejects a customer with zero invoices", () => {
+    expect(isReactivationCandidate({ ...valid, invoiceCount: 0 })).toBe(
+      false
+    );
+  });
+
+  it("rejects null daysSinceLastInvoice", () => {
+    expect(
+      isReactivationCandidate({ ...valid, daysSinceLastInvoice: null })
+    ).toBe(false);
+  });
+
+  it("rejects outside the 90-547 day window", () => {
+    expect(
+      isReactivationCandidate({ ...valid, daysSinceLastInvoice: 89 })
+    ).toBe(false);
+    expect(
+      isReactivationCandidate({ ...valid, daysSinceLastInvoice: 548 })
+    ).toBe(false);
+  });
+
+  it("rejects a recurring-service customer", () => {
+    expect(isReactivationCandidate({ ...valid, isRecurring: true })).toBe(
+      false
+    );
+  });
+
+  it("rejects an excluded customer", () => {
+    expect(isReactivationCandidate({ ...valid, isExcluded: true })).toBe(
+      false
+    );
   });
 });

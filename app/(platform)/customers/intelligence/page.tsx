@@ -10,7 +10,12 @@ import {
   formatNumber,
   formatPercent,
 } from "@/lib/format";
-import { normalizeReactivationStatus } from "@/lib/reactivation";
+import {
+  REACTIVATION_TIME_BUCKETS,
+  isReactivationCandidate,
+  normalizeReactivationStatus,
+  timeBucketForDays,
+} from "@/lib/reactivation";
 
 type Timeframe =
   | "last-7-days"
@@ -508,17 +513,25 @@ export default async function CustomerIntelligencePage({
     })
     .slice(0, 15);
 
+  // isReactivationCandidate is the same shared rule /reactivation uses
+  // (see lib/reactivation.ts) — pulling this out of an inline filter
+  // and into one function both pages call is specifically what fixes
+  // the two pages' candidate counts drifting apart (125 here vs. 195
+  // there was two different hand-written versions of this same
+  // condition slowly diverging).
   const reactivationCandidates = summaries
     .filter(
       (summary) =>
-        summary.invoiceCount > 0 &&
-        summary.daysSinceLastInvoice !== null &&
-        summary.daysSinceLastInvoice >= 90 &&
-        summary.daysSinceLastInvoice < 548 &&
-        !recurringClientIds.has(summary.customer.jobber_client_id) &&
-        !reactivationExcludedClientIds.has(
-          summary.customer.jobber_client_id,
-        ) &&
+        isReactivationCandidate({
+          invoiceCount: summary.invoiceCount,
+          daysSinceLastInvoice: summary.daysSinceLastInvoice,
+          isRecurring: recurringClientIds.has(
+            summary.customer.jobber_client_id,
+          ),
+          isExcluded: reactivationExcludedClientIds.has(
+            summary.customer.jobber_client_id,
+          ),
+        }) &&
         // Once a customer has any action logged against them in
         // Manage Outreach (/reactivation) — a contact, a follow-up
         // scheduled, a cleaning booked, whatever — they drop off this
@@ -534,35 +547,17 @@ export default async function CustomerIntelligencePage({
         (b.daysSinceLastInvoice ?? 0) - (a.daysSinceLastInvoice ?? 0),
     );
 
-  const reactivationBuckets: ReactivationBucket[] = [
-    {
-      title: "3–6 Months",
-      subtitle: "90–179 days since last invoice",
+  const reactivationBuckets: ReactivationBucket[] = REACTIVATION_TIME_BUCKETS.map(
+    (bucket) => ({
+      title: bucket.title,
+      subtitle: bucket.subtitle,
       customers: reactivationCandidates.filter(
         (summary) =>
-          (summary.daysSinceLastInvoice ?? 0) >= 90 &&
-          (summary.daysSinceLastInvoice ?? 0) < 180,
+          timeBucketForDays(summary.daysSinceLastInvoice ?? -1) ===
+          bucket.key,
       ),
-    },
-    {
-      title: "6–12 Months",
-      subtitle: "180–364 days since last invoice",
-      customers: reactivationCandidates.filter(
-        (summary) =>
-          (summary.daysSinceLastInvoice ?? 0) >= 180 &&
-          (summary.daysSinceLastInvoice ?? 0) < 365,
-      ),
-    },
-    {
-      title: "12–18 Months",
-      subtitle: "365–547 days since last invoice",
-      customers: reactivationCandidates.filter(
-        (summary) =>
-          (summary.daysSinceLastInvoice ?? 0) >= 365 &&
-          (summary.daysSinceLastInvoice ?? 0) < 548,
-      ),
-    },
-  ];
+    }),
+  );
 
   const topCustomers = [...customersWithInvoices]
     .sort((a, b) => b.lifetimeRevenue - a.lifetimeRevenue)

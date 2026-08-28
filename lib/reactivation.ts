@@ -142,9 +142,9 @@ export function nextReactivationState(
   // Every other status (contacted_email/contacted_text/scheduled/
   // not_interested/dog_passed_away/removed/candidate) clears the
   // follow-up date — there's nothing scheduled until a 3mo/6mo choice
-  // is made again. recontactInterval is left untouched so scheduled/
-  // not_interested/dog_passed_away outcomes still remember which
-  // window they came from, for buildRecontactGroupStats() below.
+  // is made again. recontactInterval is left untouched (not reset) so
+  // the follow-up date badge still shows which window a customer was
+  // last placed in, even after they move to a different status.
 
   return {
     status,
@@ -193,10 +193,11 @@ export function isUpcoming(
 }
 
 // Statuses that represent an in-progress or completed workflow — kept
-// visible on /reactivation regardless of how long it's been since their
-// last completed job, since staff are actively working the account.
-// Only "candidate" (never touched) and "removed" (explicitly dropped)
-// fall back to the plain inactivity-based filter.
+// visible on /reactivation even if a customer's days-since-last-invoice
+// has drifted outside the normal 90–547 day candidate window (see
+// isReactivationCandidate below), since staff are actively working the
+// account. Only "candidate" (never touched) and "removed" (explicitly
+// dropped) fall back to the plain time-bucket filter.
 export function isActiveWorkflowStatus(
   status: string | null
 ): boolean {
@@ -216,15 +217,11 @@ export type ReactivationFilter =
   | "candidate"
   | "contacted"
   | "follow_up"
-  | "scheduled"
-  | "dog_passed_away"
-  | "win_back";
+  | "scheduled";
 
 export function matchesReactivationFilter(
   status: ReactivationStatus | null,
-  daysSinceLastJob: number,
-  filter: ReactivationFilter,
-  twelveMonthsInDays: number
+  filter: ReactivationFilter
 ): boolean {
   const effectiveStatus = status ?? "candidate";
 
@@ -247,59 +244,95 @@ export function matchesReactivationFilter(
 
   if (filter === "scheduled") return effectiveStatus === "scheduled";
 
-  if (filter === "dog_passed_away") return effectiveStatus === "dog_passed_away";
-
-  if (filter === "win_back") {
-    return (
-      daysSinceLastJob >= twelveMonthsInDays && effectiveStatus === "candidate"
-    );
-  }
-
   return false;
 }
 
-export type RecontactGroupStats = {
-  interval: RecontactInterval;
-  label: string;
-  total: number;
-  scheduled: number;
-  conversionRate: number;
-};
+// Plain day-count between two YYYY-MM-DD-ish date strings, treated as
+// UTC midnight — the same math Customer Intelligence's local daysBetween
+// already used. Shared here so both pages compute "days since last
+// invoice" identically; this function existing in one place is what
+// keeps their candidate counts from silently drifting apart again.
+export function daysBetweenDateStrings(start: string, end: string): number {
+  const startDate = new Date(`${start}T00:00:00Z`);
+  const endDate = new Date(`${end}T00:00:00Z`);
 
-// "How many customers we placed in the 3-month (or 6-month) reach-out
-// window are now a Cleaning Scheduled?" — the metric the whole
-// recontact-interval column exists to answer. `total` deliberately
-// excludes not_interested/dog_passed_away/removed outcomes for that
-// interval, since a "no" doesn't tell us anything about whether the
-// *timing* worked, only that the customer wasn't a fit at all.
-export function buildRecontactGroupStats(
-  customers: {
-    reactivationStatus: ReactivationStatus | null;
-    recontactInterval: RecontactInterval | null;
-  }[]
-): RecontactGroupStats[] {
-  const intervals: RecontactInterval[] = ["3mo", "6mo"];
+  return Math.max(
+    0,
+    Math.floor((endDate.getTime() - startDate.getTime()) / 86_400_000)
+  );
+}
 
-  return intervals.map((interval) => {
-    const inGroup = customers.filter(
-      (customer) =>
-        customer.recontactInterval === interval &&
-        customer.reactivationStatus !== "not_interested" &&
-        customer.reactivationStatus !== "dog_passed_away" &&
-        customer.reactivationStatus !== "removed"
-    );
+export type ReactivationTimeBucketKey = "3-6" | "6-12" | "12-18";
 
-    const scheduled = inGroup.filter(
-      (customer) => customer.reactivationStatus === "scheduled"
-    );
+// The three buckets shown on both Customer Intelligence's Reactivation
+// Pipeline card and /reactivation's pipeline — same day ranges, same
+// titles, defined once. 18+ months is deliberately excluded from this
+// list (matches Intelligence's existing "leave 18+ months off the
+// active list" behavior); /reactivation adds its own catch-all bucket
+// on top of this for anyone being actively worked whose day count has
+// drifted past 547 — see pipelineTimeBucketForCustomer-style logic in
+// that page.
+export const REACTIVATION_TIME_BUCKETS: {
+  key: ReactivationTimeBucketKey;
+  title: string;
+  subtitle: string;
+  minDays: number;
+  maxDaysExclusive: number;
+}[] = [
+  {
+    key: "3-6",
+    title: "3–6 Months",
+    subtitle: "90–179 days since last invoice",
+    minDays: 90,
+    maxDaysExclusive: 180,
+  },
+  {
+    key: "6-12",
+    title: "6–12 Months",
+    subtitle: "180–364 days since last invoice",
+    minDays: 180,
+    maxDaysExclusive: 365,
+  },
+  {
+    key: "12-18",
+    title: "12–18 Months",
+    subtitle: "365–547 days since last invoice",
+    minDays: 365,
+    maxDaysExclusive: 548,
+  },
+];
 
-    return {
-      interval,
-      label: interval === "3mo" ? "3-Month Group" : "6-Month Group",
-      total: inGroup.length,
-      scheduled: scheduled.length,
-      conversionRate:
-        inGroup.length > 0 ? scheduled.length / inGroup.length : 0,
-    };
-  });
+export function timeBucketForDays(
+  days: number
+): ReactivationTimeBucketKey | null {
+  const match = REACTIVATION_TIME_BUCKETS.find(
+    (bucket) => days >= bucket.minDays && days < bucket.maxDaysExclusive
+  );
+
+  return match ? match.key : null;
+}
+
+// The single rule for "is this customer a reactivation candidate at
+// all" — has at least one invoice, hasn't invoiced in 90–547 days,
+// isn't on a recurring service plan, and hasn't been permanently
+// excluded (Customer Intelligence's exclusion reasons: Moved, Do Not
+// Contact, Dog Passed Away, etc). Shared by both pages so the
+// population feeding their bucket counts can't diverge — this exact
+// mismatch (125 on Intelligence vs. 195 on Reactivation) is what
+// prompted pulling it out here instead of each page rolling its own
+// version of this filter.
+export function isReactivationCandidate(input: {
+  invoiceCount: number;
+  daysSinceLastInvoice: number | null;
+  isRecurring: boolean;
+  isExcluded: boolean;
+}): boolean {
+  return (
+    input.invoiceCount > 0 &&
+    input.daysSinceLastInvoice !== null &&
+    input.daysSinceLastInvoice >= 90 &&
+    input.daysSinceLastInvoice < 548 &&
+    !input.isRecurring &&
+    !input.isExcluded
+  );
 }
