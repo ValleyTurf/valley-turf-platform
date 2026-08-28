@@ -16,6 +16,13 @@ import {
   normalizeReactivationStatus,
   timeBucketForDays,
 } from "@/lib/reactivation";
+import {
+  CHURN_REASONS,
+  cadenceCategoryFor,
+  isChurnReason,
+  isDeactivationCandidate,
+  type CadenceCategory,
+} from "@/lib/deactivation";
 
 type Timeframe =
   | "last-7-days"
@@ -72,11 +79,13 @@ type MarketSummary = {
 type RecurringServiceRow = {
   jobber_client_id: string | null;
   is_recurring_service: boolean | null;
+  service_category: string | null;
 };
 
 type IntelligenceExclusion = {
   jobber_client_id: string;
   exclusion_type: string;
+  reason: string | null;
 };
 
 type ReactivationBucket = {
@@ -241,7 +250,7 @@ async function fetchRecurringServiceRows(): Promise<RecurringServiceRow[]> {
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabaseServer
       .from("job_service_category")
-      .select("jobber_client_id, is_recurring_service")
+      .select("jobber_client_id, is_recurring_service, service_category")
       .eq("is_recurring_service", true)
       .not("jobber_client_id", "is", null)
       .range(from, from + pageSize - 1);
@@ -257,36 +266,42 @@ async function fetchRecurringServiceRows(): Promise<RecurringServiceRow[]> {
   return rows;
 }
 
+// Fetches every logged exclusion regardless of type — both the
+// Reactivation Pipeline's permanent "Save" removals and the
+// Deactivation section's cancellation-reason log live in this same
+// table, distinguished only by exclusion_type. Splitting by type
+// happens in the page body below.
 async function fetchIntelligenceExclusions(): Promise<IntelligenceExclusion[]> {
   const { data, error } = await supabaseServer
     .from("customer_intelligence_exclusions")
-    .select("jobber_client_id, exclusion_type")
-    .eq("exclusion_type", "reactivation");
+    .select("jobber_client_id, exclusion_type, reason");
 
   if (error) throw error;
 
   return (data ?? []) as IntelligenceExclusion[];
 }
 
-async function excludeFromReactivation(formData: FormData) {
+// Shared by the Reactivation Pipeline's "Save" form and the
+// Deactivation section's "Save" form — both just log a reason against
+// a customer under a different exclusion_type, so one action and one
+// shared CHURN_REASONS list (see lib/deactivation.ts) keeps them from
+// drifting into two different reason vocabularies again.
+async function saveExclusionReason(formData: FormData) {
   "use server";
 
   const jobberClientId = String(
     formData.get("jobber_client_id") ?? "",
   ).trim();
+  const exclusionType = String(formData.get("exclusion_type") ?? "").trim();
   const reason = String(formData.get("reason") ?? "").trim();
 
-  const allowedReasons = new Set([
-    "moved",
-    "canceled_permanently",
-    "no_longer_has_turf",
-    "do_not_contact",
-    "bad_fit",
-    "dog_passed_away",
-    "other",
-  ]);
+  const allowedTypes = new Set(["reactivation", "deactivation"]);
 
-  if (!jobberClientId || !allowedReasons.has(reason)) {
+  if (
+    !jobberClientId ||
+    !allowedTypes.has(exclusionType) ||
+    !isChurnReason(reason)
+  ) {
     return;
   }
 
@@ -295,7 +310,7 @@ async function excludeFromReactivation(formData: FormData) {
     .upsert(
       {
         jobber_client_id: jobberClientId,
-        exclusion_type: "reactivation",
+        exclusion_type: exclusionType,
         reason,
         excluded_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -307,10 +322,11 @@ async function excludeFromReactivation(formData: FormData) {
     );
 
   if (error) {
-    throw new Error(`Could not remove customer from reactivation: ${error.message}`);
+    throw new Error(`Could not save this customer's status: ${error.message}`);
   }
 
   revalidatePath("/customers/intelligence");
+  revalidatePath("/reactivation");
 }
 
 async function fetchInvoices(): Promise<Invoice[]> {
@@ -493,9 +509,58 @@ export default async function CustomerIntelligencePage({
       .map((row) => row.jobber_client_id as string),
   );
 
-  const reactivationExcludedClientIds = new Set(
-    intelligenceExclusions.map((row) => row.jobber_client_id),
+  const reactivationExclusionRows = intelligenceExclusions.filter(
+    (row) => row.exclusion_type === "reactivation",
   );
+
+  const deactivationExclusionRows = intelligenceExclusions.filter(
+    (row) => row.exclusion_type === "deactivation",
+  );
+
+  const reactivationExcludedClientIds = new Set(
+    reactivationExclusionRows.map((row) => row.jobber_client_id),
+  );
+
+  const deactivationExcludedClientIds = new Set(
+    deactivationExclusionRows.map((row) => row.jobber_client_id),
+  );
+
+  // Each recurring customer's dominant service category, used to pick a
+  // cadence-appropriate "probably canceled" threshold below instead of
+  // one flat day count — a semi-annual customer at 100 days is normal,
+  // a monthly customer at 100 days almost certainly isn't. "Dominant"
+  // here means most-frequent among their recurring jobs, since
+  // job_service_category doesn't carry a per-row date to pick the most
+  // recent one instead.
+  const categoryCountsByClient = new Map<string, Map<CadenceCategory, number>>();
+
+  for (const row of recurringServiceRows) {
+    if (!row.is_recurring_service || !row.jobber_client_id) continue;
+
+    const category = cadenceCategoryFor(row.service_category);
+    const counts =
+      categoryCountsByClient.get(row.jobber_client_id) ??
+      new Map<CadenceCategory, number>();
+
+    counts.set(category, (counts.get(category) ?? 0) + 1);
+    categoryCountsByClient.set(row.jobber_client_id, counts);
+  }
+
+  const cadenceByClient = new Map<string, CadenceCategory>();
+
+  for (const [clientId, counts] of categoryCountsByClient) {
+    let bestCategory: CadenceCategory = "other";
+    let bestCount = -1;
+
+    for (const [category, count] of counts) {
+      if (count > bestCount) {
+        bestCategory = category;
+        bestCount = count;
+      }
+    }
+
+    cadenceByClient.set(clientId, bestCategory);
+  }
 
   const recurringOpportunities = summaries
     .filter(
@@ -558,6 +623,42 @@ export default async function CustomerIntelligencePage({
       ),
     }),
   );
+
+  // Customers who had a recurring service and have gone quiet well past
+  // their expected cadence — the population the Deactivation section
+  // below asks you to log a reason for. Deliberately separate from
+  // reactivationCandidates: those are non-recurring customers who were
+  // never on a plan in the first place; these are ex-recurring
+  // customers whose plan appears to have ended. Logging a reason here
+  // only removes them from this list — it doesn't feed into
+  // Reactivation Pipeline eligibility.
+  const deactivationCandidates = summaries
+    .filter((summary) => {
+      const clientId = summary.customer.jobber_client_id;
+
+      return isDeactivationCandidate({
+        invoiceCount: summary.invoiceCount,
+        daysSinceLastInvoice: summary.daysSinceLastInvoice,
+        isRecurring: recurringClientIds.has(clientId),
+        cadenceCategory: cadenceByClient.get(clientId) ?? "other",
+        isLogged: deactivationExcludedClientIds.has(clientId),
+      });
+    })
+    .sort(
+      (a, b) => (b.daysSinceLastInvoice ?? 0) - (a.daysSinceLastInvoice ?? 0),
+    );
+
+  // A running tally of reasons already logged — this is the actual
+  // point of the feature ("start to see why people are cancelling"),
+  // not just the pending queue above.
+  const deactivationReasonTally = CHURN_REASONS.map((reason) => ({
+    ...reason,
+    count: deactivationExclusionRows.filter(
+      (row) => row.reason === reason.value,
+    ).length,
+  }))
+    .filter((entry) => entry.count > 0)
+    .sort((a, b) => b.count - a.count);
 
   const topCustomers = [...customersWithInvoices]
     .sort((a, b) => b.lifetimeRevenue - a.lifetimeRevenue)
@@ -672,6 +773,12 @@ export default async function CustomerIntelligencePage({
       value: formatNumber(reactivationCandidates.length),
       subtitle: "3–18 months since last activity",
       icon: "📈",
+    },
+    {
+      title: "Deactivations To Review",
+      value: formatNumber(deactivationCandidates.length),
+      subtitle: "Recurring customers gone quiet",
+      icon: "🚫",
     },
   ];
 
@@ -946,7 +1053,7 @@ export default async function CustomerIntelligencePage({
                             </div>
 
                             <form
-                              action={excludeFromReactivation}
+                              action={saveExclusionReason}
                               className="flex flex-wrap items-center gap-2"
                             >
                               <input
@@ -954,27 +1061,22 @@ export default async function CustomerIntelligencePage({
                                 name="jobber_client_id"
                                 value={summary.customer.jobber_client_id}
                               />
+                              <input
+                                type="hidden"
+                                name="exclusion_type"
+                                value="reactivation"
+                              />
 
                               <select
                                 name="reason"
                                 defaultValue="moved"
                                 className="rounded-lg border border-[#d8d3c6] bg-white px-3 py-2 text-xs font-semibold text-[#174734]"
                               >
-                                <option value="moved">Moved</option>
-                                <option value="canceled_permanently">
-                                  Canceled Permanently
-                                </option>
-                                <option value="no_longer_has_turf">
-                                  No Longer Has Turf
-                                </option>
-                                <option value="do_not_contact">
-                                  Do Not Contact
-                                </option>
-                                <option value="bad_fit">Bad Fit</option>
-                                <option value="dog_passed_away">
-                                  Dog Passed Away
-                                </option>
-                                <option value="other">Other</option>
+                                {CHURN_REASONS.map((reason) => (
+                                  <option key={reason.value} value={reason.value}>
+                                    {reason.label}
+                                  </option>
+                                ))}
                               </select>
 
                               <button
@@ -993,6 +1095,121 @@ export default async function CustomerIntelligencePage({
               ))}
             </div>
           </article>
+        </section>
+
+        <section className="mt-8 rounded-3xl bg-white p-5 shadow sm:p-8">
+          <h2 className="text-2xl font-bold">Deactivation</h2>
+
+          <p className="mt-1 text-[#6b705c]">
+            Customers with a recurring-service history who&apos;ve gone quiet
+            well past their expected visit cadence — their regular service
+            looks like it stopped. Log why so this list starts building a
+            real picture of why people cancel. Logging a reason here just
+            removes them from this queue; it doesn&apos;t send them to the{" "}
+            <Link href="/reactivation" className="font-semibold underline">
+              Reactivation Pipeline
+            </Link>
+            .
+          </p>
+
+          {deactivationReasonTally.length > 0 && (
+            <div className="mt-6">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
+                Reasons Logged So Far
+              </p>
+
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {deactivationReasonTally.map((entry) => (
+                  <div
+                    key={entry.value}
+                    className="rounded-xl bg-[#f7f6f1] p-4"
+                  >
+                    <p className="text-sm font-semibold text-[#6b705c]">
+                      {entry.label}
+                    </p>
+                    <p className="mt-1 text-2xl font-bold">{entry.count}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="mt-6 space-y-3">
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
+              {formatNumber(deactivationCandidates.length)} To Review
+            </p>
+
+            {deactivationCandidates.length === 0 ? (
+              <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
+                No recurring customers look like they&apos;ve gone quiet right
+                now.
+              </p>
+            ) : (
+              deactivationCandidates.map((summary) => (
+                <div
+                  key={summary.customer.jobber_client_id}
+                  className="rounded-xl bg-[#f7f6f1] p-4"
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <Link
+                        href={`/customers/${encodeURIComponent(
+                          summary.customer.jobber_client_id,
+                        )}`}
+                        className="font-bold hover:text-[#9c7a20]"
+                      >
+                        {summary.customer.full_name ||
+                          summary.customer.company_name ||
+                          "Unnamed Customer"}
+                      </Link>
+
+                      <p className="mt-1 text-sm text-[#6b705c]">
+                        {formatNumber(summary.daysSinceLastInvoice ?? 0)} days
+                        since last invoice ·{" "}
+                        {formatNumber(summary.invoiceCount)} invoices ·{" "}
+                        {formatCurrency(summary.lifetimeRevenue)} lifetime
+                      </p>
+                    </div>
+
+                    <form
+                      action={saveExclusionReason}
+                      className="flex flex-wrap items-center gap-2"
+                    >
+                      <input
+                        type="hidden"
+                        name="jobber_client_id"
+                        value={summary.customer.jobber_client_id}
+                      />
+                      <input
+                        type="hidden"
+                        name="exclusion_type"
+                        value="deactivation"
+                      />
+
+                      <select
+                        name="reason"
+                        defaultValue="price"
+                        className="rounded-lg border border-[#d8d3c6] bg-white px-3 py-2 text-xs font-semibold text-[#174734]"
+                      >
+                        {CHURN_REASONS.map((reason) => (
+                          <option key={reason.value} value={reason.value}>
+                            {reason.label}
+                          </option>
+                        ))}
+                      </select>
+
+                      <button
+                        type="submit"
+                        className="rounded-lg border border-[#174734] px-3 py-2 text-xs font-bold transition hover:bg-[#174734] hover:text-white"
+                      >
+                        Save
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </section>
 
         <section className="mt-8 grid gap-6 xl:grid-cols-2">
