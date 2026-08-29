@@ -139,6 +139,7 @@ describe("isPathAllowedForRole", () => {
   it("gates /reactivation under customer_intelligence, same as /customers/intelligence", () => {
     const customerIntelOnly: RolePermissionsMap = {
       ...NONE_ALLOWED,
+      manager: { ...NONE_ALLOWED.manager, customer_intelligence: true },
       staff: { ...NONE_ALLOWED.staff, customer_intelligence: true },
     };
 
