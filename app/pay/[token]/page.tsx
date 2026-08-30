@@ -8,7 +8,7 @@ export const revalidate = 0;
 // and trust model (unguessable token, no session/cookie check).
 import type { ReactNode } from "react";
 import { supabaseServer } from "@/lib/supabase-server";
-import { formatCurrency, formatDateOnly } from "@/lib/format";
+import { formatCurrencyPrecise, formatDateOnly } from "@/lib/format";
 import { payInvoice } from "./actions";
 
 type PublicInvoice = {
@@ -110,11 +110,11 @@ export default async function PublicInvoicePage({
                 <div>
                   <p className="font-semibold">{item.description}</p>
                   <p className="text-[#6b705c]">
-                    {item.quantity} &times; {formatCurrency(item.unit_price)}
+                    {item.quantity} &times; {formatCurrencyPrecise(item.unit_price)}
                   </p>
                 </div>
                 <p className="shrink-0 font-semibold">
-                  {formatCurrency(item.line_total)}
+                  {formatCurrencyPrecise(item.line_total)}
                 </p>
               </div>
             ))}
@@ -123,7 +123,7 @@ export default async function PublicInvoicePage({
 
         <div className="mt-4 flex items-center justify-between">
           <p className="text-lg font-bold">Total</p>
-          <p className="text-3xl font-bold">{formatCurrency(invoice.total)}</p>
+          <p className="text-3xl font-bold">{formatCurrencyPrecise(invoice.total)}</p>
         </div>
 
         {invoice.due_date && (

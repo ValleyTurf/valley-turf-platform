@@ -4,7 +4,7 @@ export const revalidate = 0;
 import { redirect } from "next/navigation";
 import { getCurrentPortalUser } from "@/lib/currentPortalUser";
 import { supabaseServer } from "@/lib/supabase-server";
-import { formatCurrency, formatDateOnly } from "@/lib/format";
+import { formatCurrencyPrecise, formatDateOnly } from "@/lib/format";
 import { PortalShell } from "../PortalShell";
 
 type PortalInvoice = {
@@ -74,11 +74,11 @@ export default async function PortalInvoicesPage() {
 
                     <div className="text-right">
                       <p className="text-lg font-bold">
-                        {formatCurrency(invoice.total)}
+                        {formatCurrencyPrecise(invoice.total)}
                       </p>
                       {balance > 0 ? (
                         <p className="text-sm font-semibold text-[#9c7a20]">
-                          {formatCurrency(balance)} due
+                          {formatCurrencyPrecise(balance)} due
                         </p>
                       ) : (
                         <p className="text-sm font-semibold text-green-700">

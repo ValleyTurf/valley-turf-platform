@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getCurrentPortalUser } from "@/lib/currentPortalUser";
 import { supabaseServer } from "@/lib/supabase-server";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrencyPrecise } from "@/lib/format";
 import { PortalShell } from "./PortalShell";
 
 type UpcomingVisit = {
@@ -89,7 +89,7 @@ export default async function PortalDashboardPage() {
             Account Balance
           </p>
           <p className="mt-3 text-3xl font-bold">
-            {formatCurrency(outstandingBalance)}
+            {formatCurrencyPrecise(outstandingBalance)}
           </p>
           <p className="mt-2 text-sm text-[#6b705c]">
             {outstandingBalance > 0
@@ -172,7 +172,7 @@ export default async function PortalDashboardPage() {
                     {job.job_status || "—"}
                   </p>
                 </div>
-                <p className="font-bold">{formatCurrency(job.total)}</p>
+                <p className="font-bold">{formatCurrencyPrecise(job.total)}</p>
               </div>
             ))}
           </div>
