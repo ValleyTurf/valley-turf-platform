@@ -99,6 +99,14 @@ export async function createCheckoutSession(
       success_url: successUrl,
       cancel_url: cancelUrl,
       metadata,
+      // Also stamped onto the resulting PaymentIntent, not just the
+      // Session -- Checkout does NOT copy session metadata to the
+      // PaymentIntent automatically. Without this, payment_intent.succeeded
+      // (the event Stage 5 actually trusts to mark an invoice paid, since
+      // ACH sessions "complete" before funds clear) would have no way to
+      // find its invoice without waiting on checkout.session.completed to
+      // have already run -- event delivery order isn't guaranteed.
+      payment_intent_data: metadata ? { metadata } : undefined,
     });
 
     if (!session.url) {

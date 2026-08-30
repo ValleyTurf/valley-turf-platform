@@ -1,14 +1,20 @@
 // Processes queued Stripe webhook events (rows in stripe_webhook_events).
 //
-// Skeleton only -- Tier 1 Stage 1. No native invoices/payments tables
-// exist yet (Stage 2/3 of the roadmap), so every recognized event type
-// below is a logged placeholder rather than a real handler. Deliberately
-// built with the same queue/claim/retry shape as
-// lib/jobberWebhookProcessor.ts's processPendingWebhookEvents(), so the
-// eventual real handlers slot into processStripeWebhookEvent() below
-// without restructuring the surrounding queue logic.
+// Tier 1 Stage 5: checkout.session.completed / payment_intent.succeeded /
+// payment_intent.payment_failed / charge.refunded now have real handlers
+// against the native invoices/payments tables (migrations 043/044).
+// payout.paid/failed are still logged placeholders -- native payout
+// tracking is Stage 6. Built on the same queue/claim/retry shape as
+// lib/jobberWebhookProcessor.ts's processPendingWebhookEvents().
 import "server-only";
+import type Stripe from "stripe";
 import { supabaseServer } from "@/lib/supabase-server";
+import {
+  upsertPaymentByIntentId,
+  markInvoicePaid,
+  findInvoiceIdByCheckoutSessionId,
+  findInvoiceIdByPaymentIntentId,
+} from "@/lib/payments";
 
 type StripeWebhookEventRow = {
   id: string;
@@ -18,14 +24,21 @@ type StripeWebhookEventRow = {
   payload: Record<string, unknown>;
 };
 
+// The payload column stores the full Stripe Event object as JSON
+// (see app/api/webhooks/stripe/route.ts) -- this is just enough of its
+// shape to reach `data.object` before casting to the specific Stripe
+// type each handler expects.
+type StripeEventEnvelope = {
+  data: { object: Record<string, unknown> };
+};
+
 const EVENT_BATCH_SIZE = 25;
 const MAX_ATTEMPTS = 5;
 
-// Event types this app will act on once native payments/invoicing land
-// (Tier 1 Stage 2/3). Anything else Stripe sends still gets queued and
-// marked processed with no action -- which events actually arrive here
-// is controlled by what's enabled on the webhook endpoint in the Stripe
-// Dashboard, not by this set.
+// Event types this app acts on. Anything else Stripe sends still gets
+// queued and marked processed with no action -- which events actually
+// arrive here is controlled by what's enabled on the webhook endpoint in
+// the Stripe Dashboard, not by this set.
 const RECOGNIZED_TYPES = new Set([
   "checkout.session.completed",
   "payment_intent.succeeded",
@@ -34,6 +47,160 @@ const RECOGNIZED_TYPES = new Set([
   "payout.paid",
   "payout.failed",
 ]);
+
+// Typed as a plain Record rather than Stripe.Metadata -- structurally
+// identical (Metadata is just a string-keyed index type), and this
+// avoids depending on an exact type name from the stripe package that
+// can't be verified against node_modules in this sandbox (no network
+// access to install it).
+function extractInvoiceId(
+  metadata: Record<string, string> | null | undefined
+): string | null {
+  const value = metadata?.invoice_id;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+// Fires when the customer finishes Checkout. For card payments this
+// means money is (almost always) already captured; for ACH
+// (us_bank_account) the session "completes" immediately but the debit
+// itself takes days to clear, so payment_status is "unpaid" here and the
+// real confirmation comes later via payment_intent.succeeded. This
+// handler records what it can either way -- it's the only one of the
+// four that reliably carries the Checkout Session id for the
+// stripe_checkout_session_id column.
+async function handleCheckoutSessionCompleted(
+  session: Stripe.Checkout.Session
+): Promise<void> {
+  const paymentIntentId =
+    typeof session.payment_intent === "string"
+      ? session.payment_intent
+      : (session.payment_intent?.id ?? null);
+
+  if (!paymentIntentId) {
+    console.log(
+      `checkout.session.completed ${session.id} has no payment_intent -- nothing to record.`
+    );
+    return;
+  }
+
+  const invoiceId =
+    extractInvoiceId(session.metadata) ??
+    (await findInvoiceIdByCheckoutSessionId(session.id));
+
+  const amount = (session.amount_total ?? 0) / 100;
+  const paid = session.payment_status === "paid";
+  const paidAt = new Date().toISOString();
+
+  const result = await upsertPaymentByIntentId({
+    invoiceId,
+    stripePaymentIntentId: paymentIntentId,
+    stripeCheckoutSessionId: session.id,
+    amount,
+    status: paid ? "succeeded" : "processing",
+    paidAt: paid ? paidAt : null,
+  });
+
+  if (!result.ok) {
+    throw new Error(`Failed to record payment from Checkout session: ${result.error}`);
+  }
+
+  if (paid && invoiceId) {
+    await markInvoicePaid(invoiceId, paidAt);
+  }
+}
+
+// The authoritative "money actually captured" event -- fires for card
+// immediately and for ACH once the debit clears (days later). This is
+// what actually flips an invoice to paid; checkout.session.completed
+// above is best-effort/early visibility, not the source of truth.
+async function handlePaymentIntentSucceeded(
+  paymentIntent: Stripe.PaymentIntent
+): Promise<void> {
+  const invoiceId =
+    extractInvoiceId(paymentIntent.metadata) ??
+    (await findInvoiceIdByPaymentIntentId(paymentIntent.id));
+
+  const amount = (paymentIntent.amount_received || paymentIntent.amount || 0) / 100;
+  const method = paymentIntent.payment_method_types?.[0] ?? null;
+  const chargeId =
+    typeof paymentIntent.latest_charge === "string"
+      ? paymentIntent.latest_charge
+      : (paymentIntent.latest_charge?.id ?? null);
+  const paidAt = new Date().toISOString();
+
+  const result = await upsertPaymentByIntentId({
+    invoiceId,
+    stripePaymentIntentId: paymentIntent.id,
+    stripeChargeId: chargeId,
+    amount,
+    method,
+    status: "succeeded",
+    paidAt,
+  });
+
+  if (!result.ok) {
+    throw new Error(`Failed to record succeeded payment: ${result.error}`);
+  }
+
+  if (invoiceId) {
+    await markInvoicePaid(invoiceId, paidAt);
+  } else {
+    console.error(
+      `payment_intent.succeeded ${paymentIntent.id} has no resolvable invoice -- payment recorded but no invoice was marked paid.`
+    );
+  }
+}
+
+// Card declines, insufficient funds, ACH returns/NSF -- recorded so the
+// invoice's payment history shows the attempt, but the invoice itself
+// stays whatever it was (still "sent") so the customer can retry the
+// Pay Now link.
+async function handlePaymentIntentFailed(
+  paymentIntent: Stripe.PaymentIntent
+): Promise<void> {
+  const invoiceId =
+    extractInvoiceId(paymentIntent.metadata) ??
+    (await findInvoiceIdByPaymentIntentId(paymentIntent.id));
+
+  const amount = (paymentIntent.amount ?? 0) / 100;
+
+  const result = await upsertPaymentByIntentId({
+    invoiceId,
+    stripePaymentIntentId: paymentIntent.id,
+    amount,
+    status: "failed",
+    paidAt: null,
+  });
+
+  if (!result.ok) {
+    throw new Error(`Failed to record failed payment: ${result.error}`);
+  }
+}
+
+// Marks the matching payments row refunded. Doesn't touch the invoice's
+// status (no "refunded" state in the invoices.status check constraint --
+// the invoice stays "paid," the refund lives on the payment record) --
+// revisit if/when refund handling needs to be more than a status flag.
+async function handleChargeRefunded(charge: Stripe.Charge): Promise<void> {
+  const paymentIntentId =
+    typeof charge.payment_intent === "string"
+      ? charge.payment_intent
+      : (charge.payment_intent?.id ?? null);
+
+  if (!paymentIntentId) {
+    console.log(`charge.refunded ${charge.id} has no payment_intent -- nothing to update.`);
+    return;
+  }
+
+  const { error } = await supabaseServer
+    .from("payments")
+    .update({ status: "refunded", updated_at: new Date().toISOString() })
+    .eq("stripe_payment_intent_id", paymentIntentId);
+
+  if (error) {
+    throw new Error(`Failed to mark payment refunded: ${error.message}`);
+  }
+}
 
 async function processStripeWebhookEvent(
   event: StripeWebhookEventRow
@@ -46,17 +213,38 @@ async function processStripeWebhookEvent(
     return;
   }
 
-  // TODO(Tier 1 Stage 2/3): wire real handling once the native
-  // `invoices` and `payments` tables exist --
-  //   checkout.session.completed / payment_intent.succeeded -> mark the
-  //     linked invoice paid, insert a payments row
-  //   payment_intent.payment_failed -> surface the failure on the invoice
-  //   charge.refunded -> record the refund, adjust invoice status
-  //   payout.paid / payout.failed -> native payouts table (eventually
-  //     replaces jobber_payouts for anything invoiced natively)
-  console.log(
-    `Stripe webhook "${event.type}" recognized but not yet handled (Tier 1 Stage 2/3 isn't built) -- event id ${event.id}.`
-  );
+  const envelope = event.payload as unknown as StripeEventEnvelope;
+  const object = envelope?.data?.object;
+
+  if (!object) {
+    throw new Error(`Stripe webhook ${event.id} (${event.type}) has no data.object payload.`);
+  }
+
+  switch (event.type) {
+    case "checkout.session.completed":
+      await handleCheckoutSessionCompleted(object as unknown as Stripe.Checkout.Session);
+      return;
+    case "payment_intent.succeeded":
+      await handlePaymentIntentSucceeded(object as unknown as Stripe.PaymentIntent);
+      return;
+    case "payment_intent.payment_failed":
+      await handlePaymentIntentFailed(object as unknown as Stripe.PaymentIntent);
+      return;
+    case "charge.refunded":
+      await handleChargeRefunded(object as unknown as Stripe.Charge);
+      return;
+    case "payout.paid":
+    case "payout.failed":
+      // TODO(Tier 1 Stage 6): native payouts table, replacing reliance
+      // on jobber_payouts/jobber_payment_fees for anything invoiced
+      // natively.
+      console.log(
+        `Stripe webhook "${event.type}" recognized but not yet handled (Tier 1 Stage 6 isn't built) -- event id ${event.id}.`
+      );
+      return;
+    default:
+      return;
+  }
 }
 
 export type ProcessPendingStripeWebhookEventsResult = {
