@@ -17,6 +17,10 @@ const PUBLIC_PATHS = [
   "/api/logout",
   // Jobber POSTs directly to this one — no session, no cron secret.
   "/api/jobber/webhook",
+  // Stripe POSTs directly to this one too — no session, no cron secret.
+  // Guards itself internally via the stripe-signature header check (see
+  // route.ts) instead, same as the Jobber webhook above.
+  "/api/webhooks/stripe",
   "/api/scan-leads",
   // Called by an external automation (Jobber automation / Zapier), not
   // from inside this app. Guards itself internally with its own
