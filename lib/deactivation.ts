@@ -66,7 +66,13 @@ export function isDeactivationCandidate(input: {
   isLogged: boolean;
 }): boolean {
   if (!input.isRecurring || input.isLogged) return false;
-  if (input.invoiceCount <= 0 || input.daysSinceLastInvoice === null) {
+  // Requires at least 2 invoices, not just >0 -- someone with a single
+  // invoice that happened to get tagged under a recurring service
+  // category was never actually a recurring customer in practice
+  // (nothing to have "gone quiet" from), so they don't belong in the
+  // Deactivation queue at all, regardless of how long ago that one
+  // invoice was.
+  if (input.invoiceCount <= 1 || input.daysSinceLastInvoice === null) {
     return false;
   }
 

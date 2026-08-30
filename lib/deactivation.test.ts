@@ -115,6 +115,33 @@ describe("isDeactivationCandidate", () => {
     ).toBe(false);
   });
 
+  it("ignores customers with only a single invoice, even well past threshold", () => {
+    // A single invoice that happened to get tagged under a recurring
+    // service category was never actually a recurring customer in
+    // practice -- nothing to have "gone quiet" from.
+    expect(
+      isDeactivationCandidate({
+        invoiceCount: 1,
+        daysSinceLastInvoice: 400,
+        isRecurring: true,
+        cadenceCategory: "monthly",
+        isLogged: false,
+      })
+    ).toBe(false);
+  });
+
+  it("flags a customer with exactly 2 invoices", () => {
+    expect(
+      isDeactivationCandidate({
+        invoiceCount: 2,
+        daysSinceLastInvoice: 400,
+        isRecurring: true,
+        cadenceCategory: "monthly",
+        isLogged: false,
+      })
+    ).toBe(true);
+  });
+
   it("ignores customers with a null days-since-last-invoice", () => {
     expect(
       isDeactivationCandidate({
