@@ -7,6 +7,7 @@ export const revalidate = 0;
 // this exists purely to prove the payment flow (card + ACH, webhook
 // receipt) works end to end before anything real depends on it.
 import { createTestCheckoutSession } from "./actions";
+import PaymentForm from "./PaymentForm";
 
 type StripeTestPageProps = {
   searchParams: Promise<{ error?: string }>;
@@ -45,47 +46,7 @@ export default async function StripeTestPage({
           </div>
         )}
 
-        <form
-          action={createTestCheckoutSession}
-          className="mt-5 space-y-4 rounded-2xl bg-white p-5 shadow"
-        >
-          <div>
-            <label htmlFor="description" className="block text-sm font-bold">
-              Description
-            </label>
-            <input
-              id="description"
-              name="description"
-              type="text"
-              required
-              placeholder="e.g. Turf cleaning -- 123 Main St"
-              className="mt-1 w-full rounded-xl border border-[#d9d4c6] px-3 py-2 text-sm"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="amount" className="block text-sm font-bold">
-              Amount (USD)
-            </label>
-            <input
-              id="amount"
-              name="amount"
-              type="number"
-              step="0.01"
-              min="0.50"
-              required
-              placeholder="150.00"
-              className="mt-1 w-full rounded-xl border border-[#d9d4c6] px-3 py-2 text-sm"
-            />
-          </div>
-
-          <button
-            type="submit"
-            className="w-full rounded-xl bg-[#174734] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#226246]"
-          >
-            Create Payment Link
-          </button>
-        </form>
+        <PaymentForm action={createTestCheckoutSession} />
 
         <p className="mt-4 text-xs text-[#9c9990]">
           If STRIPE_SECRET_KEY is a test-mode key (starts with sk_test_),

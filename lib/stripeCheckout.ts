@@ -10,11 +10,19 @@
 // the payment flow works end to end first; the real invoice-linked
 // version plugs in once that table exists.
 import "server-only";
+import type Stripe from "stripe";
 import { getStripeClient } from "@/lib/stripe";
 
 export type CreateCheckoutSessionParams = {
   description: string;
   amountCents: number;
+  // Optional -- rendered as its own line item (not folded into
+  // amountCents) so the customer sees "Service: $X, Tip: $Y, Total: $Z"
+  // on Stripe's own page. Stripe Checkout has no native tip prompt for
+  // online payments (that's Terminal-only, the in-person card-reader
+  // product), so this is the standard workaround: compute the tip
+  // before creating the session and list it as a second line item.
+  tipCents?: number;
   successUrl: string;
   cancelUrl: string;
   customerEmail?: string | null;
@@ -27,8 +35,14 @@ export type CreateCheckoutSessionResult =
 export async function createCheckoutSession(
   params: CreateCheckoutSessionParams
 ): Promise<CreateCheckoutSessionResult> {
-  const { description, amountCents, successUrl, cancelUrl, customerEmail } =
-    params;
+  const {
+    description,
+    amountCents,
+    tipCents,
+    successUrl,
+    cancelUrl,
+    customerEmail,
+  } = params;
 
   const trimmedDescription = description.trim();
 
@@ -38,6 +52,28 @@ export async function createCheckoutSession(
 
   if (!Number.isFinite(amountCents) || amountCents <= 0) {
     return { ok: false, error: "Enter a valid amount." };
+  }
+
+  const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = [
+    {
+      price_data: {
+        currency: "usd",
+        product_data: { name: trimmedDescription },
+        unit_amount: Math.round(amountCents),
+      },
+      quantity: 1,
+    },
+  ];
+
+  if (typeof tipCents === "number" && Number.isFinite(tipCents) && tipCents > 0) {
+    lineItems.push({
+      price_data: {
+        currency: "usd",
+        product_data: { name: "Tip" },
+        unit_amount: Math.round(tipCents),
+      },
+      quantity: 1,
+    });
   }
 
   try {
@@ -51,16 +87,7 @@ export async function createCheckoutSession(
       // invoices toward: 0.8% capped at $5 vs. card's 2.9% + 30 cents,
       // per the Tier 1 scope doc.
       payment_method_types: ["card", "us_bank_account"],
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: { name: trimmedDescription },
-            unit_amount: Math.round(amountCents),
-          },
-          quantity: 1,
-        },
-      ],
+      line_items: lineItems,
       customer_email: customerEmail || undefined,
       success_url: successUrl,
       cancel_url: cancelUrl,

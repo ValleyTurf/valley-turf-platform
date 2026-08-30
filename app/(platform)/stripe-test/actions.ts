@@ -26,12 +26,24 @@ export async function createTestCheckoutSession(
     redirect("/stripe-test?error=invalid");
   }
 
+  // PaymentForm.tsx computes this client-side (percentage of the amount
+  // field, or a custom entry) and passes it as a hidden input -- already
+  // in cents, no dollars-to-cents conversion needed here like the main
+  // amount. Defaults to 0 if missing/garbage rather than rejecting the
+  // whole submission over a tip field.
+  const tipCentsRaw = Number(formData.get("tipCents"));
+  const tipCents =
+    Number.isFinite(tipCentsRaw) && tipCentsRaw > 0
+      ? Math.round(tipCentsRaw)
+      : 0;
+
   const amountCents = Math.round(amountDollars * 100);
   const baseUrl = await getBaseUrl();
 
   const result = await createCheckoutSession({
     description,
     amountCents,
+    tipCents,
     successUrl: `${baseUrl}/stripe-test/success`,
     cancelUrl: `${baseUrl}/stripe-test/cancel`,
   });
@@ -45,7 +57,7 @@ export async function createTestCheckoutSession(
     action: "create",
     entityType: "stripe_checkout_test",
     entityLabel: description,
-    after: { amount_cents: amountCents },
+    after: { amount_cents: amountCents, tip_cents: tipCents },
   });
 
   redirect(result.url);
