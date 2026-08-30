@@ -623,7 +623,12 @@ export default async function CustomerIntelligencePage({
   // customer list behind that count (via summaryMap), so the pill can
   // expand to show exactly who's in it, same collapsible pattern as
   // the Reactivation Pipeline buckets elsewhere on this page.
-  const deactivationReasonTally = CHURN_REASONS.map((reason) => {
+  // "not_a_cancel" is deliberately excluded here — it's a dismissal
+  // for a false-positive flag, not an actual cancellation reason, so
+  // it doesn't get a pill in "Reasons Logged So Far".
+  const deactivationReasonTally = CHURN_REASONS.filter(
+    (reason) => reason.value !== "not_a_cancel",
+  ).map((reason) => {
     const customersForReason = deactivationExclusionRows
       .filter((row) => row.reason === reason.value)
       .map((row) => summaryMap.get(row.jobber_client_id))

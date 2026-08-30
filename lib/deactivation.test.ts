@@ -156,7 +156,9 @@ describe("isChurnReason", () => {
     expect(isChurnReason("price")).toBe(true);
     expect(isChurnReason("service_issues")).toBe(true);
     expect(isChurnReason("switched_providers")).toBe(true);
+    expect(isChurnReason("seasonal")).toBe(true);
     expect(isChurnReason("unresponsive")).toBe(true);
+    expect(isChurnReason("not_a_cancel")).toBe(true);
     expect(isChurnReason("other")).toBe(true);
   });
 

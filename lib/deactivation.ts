@@ -87,10 +87,20 @@ export const CHURN_REASONS: { value: string; label: string }[] = [
   { value: "price", label: "Price" },
   { value: "service_issues", label: "Service Issues" },
   { value: "switched_providers", label: "Switched Providers" },
+  { value: "seasonal", label: "Seasonal" },
   { value: "do_not_contact", label: "Do Not Contact" },
   { value: "bad_fit", label: "Bad Fit" },
   { value: "dog_passed_away", label: "Dog Passed Away" },
   { value: "unresponsive", label: "Unresponsive / No Reason Given" },
+  // For dismissing a Deactivation candidate that isn't actually a
+  // cancellation -- the cadence-based detection in
+  // isDeactivationCandidate is a heuristic (2x a customer's expected
+  // interval with no new invoice), and can false-positive on someone
+  // who's still an active recurring customer with a longer-than-usual
+  // gap. Saving this reason removes them from the "To Review" queue
+  // the same as any other reason, without claiming they actually
+  // canceled.
+  { value: "not_a_cancel", label: "Not a Cancel – Still Active" },
   { value: "other", label: "Other" },
 ];
 
