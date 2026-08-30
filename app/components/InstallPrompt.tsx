@@ -59,15 +59,18 @@ function isRunningStandalone(): boolean {
 export default function InstallPrompt() {
   const [promptEvent, setPromptEvent] =
     useState<BeforeInstallPromptEvent | null>(null);
-  // Lazy initializer instead of useState(false) + setDismissed(true) in
-  // the effect below — same result, but the effect body no longer calls
-  // setState synchronously on mount (react-hooks/set-state-in-effect).
-  // The effect still re-checks this below so it can skip registering
-  // the beforeinstallprompt/appinstalled listeners entirely when they'd
-  // be pointless (already standalone or snoozed), same as before.
-  const [dismissed, setDismissed] = useState(
-    () => isRunningStandalone() || wasRecentlyDismissed()
-  );
+  // Plain useState(false), not a lazy initializer -- a lazy initializer
+  // function still runs during Next's server-side render of this
+  // component (only event handlers and useEffect bodies are guaranteed
+  // client-only), and isRunningStandalone()/wasRecentlyDismissed() both
+  // touch window, which throws "window is not defined" on the server.
+  // Starting false is safe either way: the effect below still checks
+  // both conditions and simply returns without registering the
+  // beforeinstallprompt/appinstalled listeners when either is true, so
+  // promptEvent never gets set and the `!promptEvent` render guard below
+  // keeps this from ever showing anything -- dismissed itself doesn't
+  // need to flip to true in that branch for the banner to stay hidden.
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
     if (isRunningStandalone() || wasRecentlyDismissed()) {
