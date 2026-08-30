@@ -143,6 +143,7 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
     "/leads",
     "/codes",
     "/job-costs",
+    "/tasks",
   ],
 };
 
