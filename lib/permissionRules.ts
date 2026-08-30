@@ -93,6 +93,11 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
     "/equipment",
     "/costs",
     "/invoices",
+    // Tier 1, Stage 2 test harness -- grouped with /invoices since it's
+    // the same audience testing the same "get paid" workflow, just via
+    // Stripe directly instead of Jobber. Not linked from customer-facing
+    // pages anywhere.
+    "/stripe-test",
   ],
   // /job-costing-analytics/trends is deliberately listed here, not under
   // job_costing below, even though its URL still lives under

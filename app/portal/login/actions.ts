@@ -1,20 +1,12 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import {
   createPortalLoginToken,
   findPortalCustomerByEmail,
 } from "@/lib/portalLoginTokens";
 import { sendPortalMagicLinkEmail } from "@/lib/notifications";
-
-async function getBaseUrl(): Promise<string> {
-  const headerList = await headers();
-  const host = headerList.get("x-forwarded-host") ?? headerList.get("host");
-  const protocol = host?.includes("localhost") ? "http" : "https";
-
-  return `${protocol}://${host}`;
-}
+import { getBaseUrl } from "@/lib/baseUrl";
 
 export async function requestPortalLogin(formData: FormData): Promise<void> {
   const rawEmail = formData.get("email");
