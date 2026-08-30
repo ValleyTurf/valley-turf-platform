@@ -16,6 +16,14 @@ export type UpsertPaymentParams = {
   method?: string | null;
   status: PaymentStatus;
   paidAt?: string | null;
+  // Tier 1 Stage 6 -- the actual Stripe processing fee/net, fetched from
+  // the Charge's balance_transaction (not available on the PaymentIntent
+  // itself). Optional because most upsert callers (checkout.session.completed,
+  // payment_intent.payment_failed) never have this -- only
+  // handlePaymentIntentSucceeded in stripeWebhookProcessor.ts fetches and
+  // passes it.
+  feeAmount?: number | null;
+  netAmount?: number | null;
 };
 
 // Upserts on stripe_payment_intent_id (the migration's unique
@@ -38,6 +46,14 @@ export async function upsertPaymentByIntentId(
       status: params.status,
       paid_at: params.paidAt ?? null,
       updated_at: new Date().toISOString(),
+      // Only included when the caller actually has fee data (Stage 6,
+      // currently just handlePaymentIntentSucceeded). Omitting the keys
+      // entirely -- rather than sending null -- means an upsert without
+      // fee data (checkout.session.completed, payment_intent.payment_failed)
+      // can't clobber a fee an earlier upsert already recorded for the
+      // same PaymentIntent. Stripe doesn't guarantee event delivery order.
+      ...(params.feeAmount !== undefined ? { fee_amount: params.feeAmount } : {}),
+      ...(params.netAmount !== undefined ? { net_amount: params.netAmount } : {}),
     },
     { onConflict: "stripe_payment_intent_id" }
   );
@@ -108,4 +124,40 @@ export async function findInvoiceIdByPaymentIntentId(
   }
 
   return data?.invoice_id ?? null;
+}
+
+export type UpsertPayoutParams = {
+  stripePayoutId: string;
+  status: string;
+  amount: number;
+  currency?: string | null;
+  arrivalDate?: string | null;
+  automatic?: boolean;
+};
+
+// Upserts on stripe_payout_id (migration 045's unique constraint) --
+// same at-least-once-delivery reasoning as upsertPaymentByIntentId.
+// Stripe sends payout.paid/payout.failed independently, so a payout row
+// can land here more than once as its status changes.
+export async function upsertStripePayout(
+  params: UpsertPayoutParams
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { error } = await supabaseServer.from("stripe_payouts").upsert(
+    {
+      stripe_payout_id: params.stripePayoutId,
+      status: params.status,
+      amount: params.amount,
+      currency: params.currency ?? null,
+      arrival_date: params.arrivalDate ?? null,
+      automatic: params.automatic ?? true,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "stripe_payout_id" }
+  );
+
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  return { ok: true };
 }

@@ -1,16 +1,20 @@
 // Processes queued Stripe webhook events (rows in stripe_webhook_events).
 //
 // Tier 1 Stage 5: checkout.session.completed / payment_intent.succeeded /
-// payment_intent.payment_failed / charge.refunded now have real handlers
+// payment_intent.payment_failed / charge.refunded have real handlers
 // against the native invoices/payments tables (migrations 043/044).
-// payout.paid/failed are still logged placeholders -- native payout
-// tracking is Stage 6. Built on the same queue/claim/retry shape as
+// Tier 1 Stage 6: payout.paid/payout.failed now write to the native
+// stripe_payouts table (migration 045), and payment_intent.succeeded
+// also fetches the actual processing fee from the charge's
+// balance_transaction. Built on the same queue/claim/retry shape as
 // lib/jobberWebhookProcessor.ts's processPendingWebhookEvents().
 import "server-only";
 import type Stripe from "stripe";
 import { supabaseServer } from "@/lib/supabase-server";
+import { getStripeClient } from "@/lib/stripe";
 import {
   upsertPaymentByIntentId,
+  upsertStripePayout,
   markInvoicePaid,
   findInvoiceIdByCheckoutSessionId,
   findInvoiceIdByPaymentIntentId,
@@ -128,6 +132,39 @@ async function handlePaymentIntentSucceeded(
       : (paymentIntent.latest_charge?.id ?? null);
   const paidAt = new Date().toISOString();
 
+  // Tier 1 Stage 6: the real processing fee lives on the Charge's
+  // balance_transaction, not anywhere on the PaymentIntent -- needs its
+  // own fetch with an explicit expand. Best-effort: if this fails, the
+  // payment still gets recorded and the invoice still gets marked paid
+  // below, just without a fee figure (the Revenue dashboard undercounts
+  // native processing fees for that one payment until it's fixed up
+  // manually -- not worth failing/retrying the whole webhook over).
+  let feeAmount: number | undefined;
+  let netAmount: number | undefined;
+
+  if (chargeId) {
+    try {
+      const stripe = getStripeClient();
+      const charge = await stripe.charges.retrieve(chargeId, {
+        expand: ["balance_transaction"],
+      });
+      const balanceTransaction =
+        typeof charge.balance_transaction === "string"
+          ? null
+          : charge.balance_transaction;
+
+      if (balanceTransaction) {
+        feeAmount = balanceTransaction.fee / 100;
+        netAmount = balanceTransaction.net / 100;
+      }
+    } catch (error) {
+      console.error(
+        `Failed to fetch balance_transaction for charge ${chargeId}:`,
+        error
+      );
+    }
+  }
+
   const result = await upsertPaymentByIntentId({
     invoiceId,
     stripePaymentIntentId: paymentIntent.id,
@@ -136,6 +173,8 @@ async function handlePaymentIntentSucceeded(
     method,
     status: "succeeded",
     paidAt,
+    feeAmount,
+    netAmount,
   });
 
   if (!result.ok) {
@@ -202,6 +241,33 @@ async function handleChargeRefunded(charge: Stripe.Charge): Promise<void> {
   }
 }
 
+// The batched bank deposit -- fires once per payout, whether it lands
+// successfully or fails. Upserted by stripe_payout_id since a payout can
+// legitimately generate more than one event over its lifetime (e.g.
+// pending -> paid, or pending -> failed).
+async function handlePayoutEvent(payout: Stripe.Payout): Promise<void> {
+  const amount = (payout.amount ?? 0) / 100;
+
+  // Unix seconds -> plain date. Stripe's arrival_date represents a
+  // calendar date (when funds land), not a precise instant.
+  const arrivalDate = payout.arrival_date
+    ? new Date(payout.arrival_date * 1000).toISOString().slice(0, 10)
+    : null;
+
+  const result = await upsertStripePayout({
+    stripePayoutId: payout.id,
+    status: payout.status,
+    amount,
+    currency: payout.currency ?? null,
+    arrivalDate,
+    automatic: payout.automatic ?? true,
+  });
+
+  if (!result.ok) {
+    throw new Error(`Failed to record payout: ${result.error}`);
+  }
+}
+
 async function processStripeWebhookEvent(
   event: StripeWebhookEventRow
 ): Promise<void> {
@@ -235,12 +301,7 @@ async function processStripeWebhookEvent(
       return;
     case "payout.paid":
     case "payout.failed":
-      // TODO(Tier 1 Stage 6): native payouts table, replacing reliance
-      // on jobber_payouts/jobber_payment_fees for anything invoiced
-      // natively.
-      console.log(
-        `Stripe webhook "${event.type}" recognized but not yet handled (Tier 1 Stage 6 isn't built) -- event id ${event.id}.`
-      );
+      await handlePayoutEvent(object as unknown as Stripe.Payout);
       return;
     default:
       return;

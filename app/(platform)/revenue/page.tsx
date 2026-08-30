@@ -29,6 +29,14 @@ type DashboardPaymentFee = {
   entry_date: string | null;
 };
 
+// Tier 1 Stage 6 -- the native counterpart to DashboardPaymentFee, from
+// the payments table (migration 044/045) rather than jobber_payment_fees.
+// No surcharge concept here (that's a Jobber-specific line item); Stripe
+// just has one fee figure per charge.
+type NativeProcessingFee = {
+  fee_amount: number | string | null;
+};
+
 type MarketCustomer = {
   jobber_client_id: string;
   full_name: string | null;
@@ -611,6 +619,39 @@ async function fetchDashboardPaymentFees(
   return rows;
 }
 
+// Tier 1 Stage 6 -- native counterpart to fetchDashboardPaymentFees,
+// reading from payments.fee_amount (set by
+// lib/stripeWebhookProcessor.ts's handlePaymentIntentSucceeded) instead
+// of jobber_payment_fees. Filtered by paid_at, same role entry_date
+// plays for the Jobber side -- when the payment itself cleared, not when
+// the invoice was issued.
+async function fetchNativeProcessingFees(
+  startDate: string,
+  endDate: string,
+): Promise<NativeProcessingFee[]> {
+  const pageSize = 1000;
+  const rows: NativeProcessingFee[] = [];
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseServer
+      .from("payments")
+      .select("fee_amount")
+      .eq("status", "succeeded")
+      .gte("paid_at", `${startDate}T00:00:00Z`)
+      .lte("paid_at", `${endDate}T23:59:59Z`)
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+
+    const batch = (data ?? []) as NativeProcessingFee[];
+    rows.push(...batch);
+
+    if (batch.length < pageSize) break;
+  }
+
+  return rows;
+}
+
 async function fetchMarketCustomers(): Promise<MarketCustomer[]> {
   const pageSize = 1000;
   const rows: MarketCustomer[] = [];
@@ -766,6 +807,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
     dashboardPayments,
     dashboardPaymentFees,
     previousServiceCategoryRevenue,
+    nativeProcessingFees,
   ] = await Promise.all([
     supabaseServer
       .from("customer_financials")
@@ -837,6 +879,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
     fetchDashboardPayments(startDate, endDate),
     fetchDashboardPaymentFees(startDate, endDate),
     fetchServiceCategoryRevenue(previousStartDate, previousEndDate),
+    fetchNativeProcessingFees(startDate, endDate),
   ]);
 
   const queryErrors = [
@@ -940,11 +983,25 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
     0,
   );
 
-  const totalProcessingFees = dashboardPaymentFees.reduce(
-    (sum, fee) =>
-      sum + toNumber(fee.fee_amount) + toNumber(fee.surcharge_amount),
-    0,
-  );
+  // Combines both sources -- jobber_payment_fees (existing Jobber-billed
+  // invoices) and payments.fee_amount (Tier 1 Stage 6, anything charged
+  // natively through Stripe, currently just /invoice-test traffic ahead
+  // of Stage 7's real cutover). The two won't double-count: a given
+  // charge only ever lands in one source depending on which system
+  // actually processed the card.
+  const totalProcessingFees =
+    dashboardPaymentFees.reduce(
+      (sum, fee) =>
+        sum + toNumber(fee.fee_amount) + toNumber(fee.surcharge_amount),
+      0,
+    ) +
+    nativeProcessingFees.reduce(
+      (sum, fee) => sum + toNumber(fee.fee_amount),
+      0,
+    );
+
+  const totalChargedPayments =
+    dashboardPaymentFees.length + nativeProcessingFees.length;
 
   const customerLocationMap = new Map(
     marketCustomers.map((customer) => [customer.jobber_client_id, customer]),
@@ -1066,7 +1123,7 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
     {
       title: "Processing Fees",
       value: formatCurrency(totalProcessingFees),
-      subtitle: `Credit card / ACH fees · ${formatNumber(dashboardPaymentFees.length)} charged payments · ${marketDateLabel}`,
+      subtitle: `Credit card / ACH fees · ${formatNumber(totalChargedPayments)} charged payments · ${marketDateLabel}`,
       icon: "🏦",
     },
   ];
