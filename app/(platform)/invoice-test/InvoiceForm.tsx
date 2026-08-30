@@ -36,10 +36,25 @@ export default function InvoiceForm({
           id="customerEmail"
           name="customerEmail"
           type="email"
-          required
           placeholder="jane@example.com"
           className="mt-1 w-full rounded-xl border border-[#d9d4c6] px-3 py-2 text-sm"
         />
+      </div>
+
+      <div>
+        <label htmlFor="customerPhone" className="block text-sm font-bold">
+          Customer phone
+        </label>
+        <input
+          id="customerPhone"
+          name="customerPhone"
+          type="tel"
+          placeholder="+14805551234"
+          className="mt-1 w-full rounded-xl border border-[#d9d4c6] px-3 py-2 text-sm"
+        />
+        <p className="mt-1 text-xs text-[#9c9990]">
+          Fill in email, phone, or both. At least one is required.
+        </p>
       </div>
 
       <div>

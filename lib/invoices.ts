@@ -52,8 +52,21 @@ export type Invoice = {
   sentAt: string | null;
   paidAt: string | null;
   stripeCheckoutSessionId: string | null;
+  // Stable, unguessable link token (migration 046) -- the public
+  // /pay/[publicToken] page is what actually gets emailed/texted to
+  // customers, not a raw (expiring) Stripe Checkout Session URL. Same
+  // pattern as quotes.public_token.
+  publicToken: string | null;
   createdAt: string;
 };
+
+// Compact, URL-safe token -- identical approach to
+// lib/quotes.ts's generatePublicToken(), duplicated locally rather than
+// imported so lib/invoices.ts doesn't take on a cross-feature dependency
+// for one line of logic.
+function generatePublicToken(): string {
+  return crypto.randomUUID().replace(/-/g, "");
+}
 
 // Wraps the next_invoice_number() Postgres function (migration 043) --
 // atomic under concurrent calls via a row lock on the current year's
@@ -129,9 +142,10 @@ export async function createInvoice(
       message: message ?? null,
       created_by_user_id: createdByUserId,
       created_by_name: createdByName,
+      public_token: generatePublicToken(),
     })
     .select(
-      "id, invoice_number, jobber_client_id, customer_name, status, total, issue_date, due_date, message, sent_at, paid_at, stripe_checkout_session_id, created_at"
+      "id, invoice_number, jobber_client_id, customer_name, status, total, issue_date, due_date, message, sent_at, paid_at, stripe_checkout_session_id, public_token, created_at"
     )
     .single();
 
@@ -182,6 +196,7 @@ export async function createInvoice(
       sentAt: invoiceRow.sent_at,
       paidAt: invoiceRow.paid_at,
       stripeCheckoutSessionId: invoiceRow.stripe_checkout_session_id,
+      publicToken: invoiceRow.public_token,
       createdAt: invoiceRow.created_at,
     },
   };

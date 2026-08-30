@@ -1,10 +1,11 @@
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-// Tier 1, Stage 4 test harness -- creates a native invoice (Stage 3),
-// a Stripe Checkout session for it (Stage 2), a PDF, and emails both
-// the PDF and the Pay Now link via Resend (Stage 4). Nothing here is
-// wired into the real /invoices flow yet -- that's Stage 7.
+// Test harness -- creates a native invoice (Stage 3) and a stable
+// /pay/[token] link (migration 046), then delivers it by email
+// (PDF attached, via Resend, Stage 4), SMS (via Twilio), or both,
+// depending on what's filled in. Nothing here is wired into the real
+// /invoices flow yet -- that's Stage 7, still pending native autopay.
 import { createTestInvoiceAndSend } from "./actions";
 import InvoiceForm from "./InvoiceForm";
 
@@ -32,9 +33,10 @@ export default async function InvoiceTestPage({
           </h1>
 
           <p className="mt-2 text-sm text-[#6b705c]">
-            Creates a real invoice row, a Stripe Checkout session, a PDF,
-            and emails both to the address below via Resend. A Tier 1
-            build-order test harness, not the real invoice flow yet.
+            Creates a real invoice row and a stable Pay Now link, then
+            delivers it by email, text, or both -- whichever fields
+            below are filled in. A build-order test harness, not the
+            real invoice flow yet.
           </p>
         </header>
 
@@ -42,26 +44,28 @@ export default async function InvoiceTestPage({
           <div className="mt-4 rounded-2xl border border-red-200 bg-white p-4 text-sm text-red-600 shadow">
             {error === "invalid"
               ? "Fill in every field with a valid amount."
-              : error === "payment_cancelled"
-                ? "Checkout was cancelled -- the invoice and email were not created."
-                : error}
+              : error}
           </div>
         )}
 
         {sent && (
           <div className="mt-4 rounded-2xl border border-green-200 bg-white p-4 text-sm text-green-700 shadow">
-            Invoice {sent} created and emailed.
+            Invoice {sent} created and sent.
           </div>
         )}
 
         <InvoiceForm action={createTestInvoiceAndSend} />
 
         <p className="mt-4 text-xs text-[#9c9990]">
-          If STRIPE_SECRET_KEY is a test-mode key, the Pay Now link is a
-          test-mode Checkout page -- use card 4242 4242 4242 4242. The
-          email goes out via Resend; if RESEND_FROM_EMAIL is unset it
-          sends from onboarding@resend.dev, which can only deliver to the
-          address you signed up to Resend with.
+          The Pay Now link doesn&apos;t create a Stripe Checkout session
+          until the customer actually opens it and taps Pay Now -- if
+          STRIPE_SECRET_KEY is a test-mode key, that session is a
+          test-mode Checkout page (use card 4242 4242 4242 4242). Email
+          goes out via Resend -- if RESEND_FROM_EMAIL is unset it sends
+          from onboarding@resend.dev, which can only deliver to the
+          address you signed up to Resend with. Text goes out via
+          Twilio, if TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_FROM_NUMBER
+          are set.
         </p>
       </div>
     </main>

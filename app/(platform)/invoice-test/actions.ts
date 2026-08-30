@@ -1,20 +1,25 @@
 "use server";
 
-// Server action backing the Tier 1, Stage 4 test harness at
-// /invoice-test. Ties Stages 2-4 together end to end: creates a real
-// native invoice row (lib/invoices.ts, Stage 3), a Stripe Checkout
-// session for it (lib/stripeCheckout.ts, Stage 2), a PDF
-// (lib/invoicePdf.ts, Stage 4), and emails the PDF + Pay Now link
-// (lib/notifications.ts's sendInvoiceEmail, Stage 4) -- all before
-// Stage 7 cuts the real /invoices flow over to any of this.
+// Server action backing the /invoice-test test harness. Ties together
+// native invoice creation (lib/invoices.ts, Stage 3), the stable
+// /pay/[token] link (migration 046, ahead-of-Stage-7 gap fix), PDF
+// generation (lib/invoicePdf.ts, Stage 4), and email/SMS delivery
+// (lib/notifications.ts, Stage 4 + the SMS/stable-link fix) -- all
+// before Stage 7 cuts the real /invoices flow over to any of this.
+//
+// Unlike the original version of this action, a Stripe Checkout Session
+// is NOT created here anymore -- that happens lazily in
+// app/pay/[token]/actions.ts when the customer actually clicks Pay Now.
+// Embedding a session URL directly in an email/text meant it could go
+// stale (Checkout sessions expire ~24h after creation) before anyone
+// opened the message; the stable link fixes that for both channels.
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
 import { getBaseUrl } from "@/lib/baseUrl";
 import { createInvoice } from "@/lib/invoices";
-import { createCheckoutSession } from "@/lib/stripeCheckout";
 import { generateInvoicePdf } from "@/lib/invoicePdf";
-import { sendInvoiceEmail } from "@/lib/notifications";
+import { sendInvoiceEmail, sendInvoiceSms } from "@/lib/notifications";
 import { supabaseServer } from "@/lib/supabase-server";
 
 export async function createTestInvoiceAndSend(
@@ -28,17 +33,25 @@ export async function createTestInvoiceAndSend(
 
   const customerName = String(formData.get("customerName") ?? "").trim();
   const customerEmail = String(formData.get("customerEmail") ?? "").trim();
+  const customerPhone = String(formData.get("customerPhone") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
   const amountDollars = Number(formData.get("amount"));
 
   if (
     !customerName ||
-    !customerEmail ||
     !description ||
     !Number.isFinite(amountDollars) ||
     amountDollars <= 0
   ) {
     redirect("/invoice-test?error=invalid");
+  }
+
+  // Phone-only customers are exactly the case this harness exists to
+  // test -- email is no longer required, but at least one delivery
+  // channel has to exist or the invoice would be created and then just
+  // sit there with no way for the customer to ever see it.
+  if (!customerEmail && !customerPhone) {
+    redirect("/invoice-test?error=Enter+an+email+or+a+phone+number.");
   }
 
   const invoiceResult = await createInvoice({
@@ -60,75 +73,66 @@ export async function createTestInvoiceAndSend(
   }
 
   const invoice = invoiceResult.value;
-  const baseUrl = await getBaseUrl();
 
-  const checkoutResult = await createCheckoutSession({
-    description,
-    amountCents: Math.round(amountDollars * 100),
-    successUrl: `${baseUrl}/invoice-test/success`,
-    cancelUrl: `${baseUrl}/invoice-test?error=payment_cancelled`,
-    customerEmail,
-    metadata: { invoice_id: invoice.id },
-  });
-
-  if (!checkoutResult.ok) {
-    redirect(`/invoice-test?error=${encodeURIComponent(checkoutResult.error)}`);
+  if (!invoice.publicToken) {
+    // Shouldn't happen -- createInvoice() always generates one -- but a
+    // link-less invoice is useless, so treat it as a hard failure rather
+    // than silently sending a broken/missing link.
+    redirect(
+      `/invoice-test?error=${encodeURIComponent(
+        `Invoice ${invoice.invoiceNumber} was created but has no public link. Contact support.`
+      )}`
+    );
   }
 
-  // Everything past this point (PDF generation, the Resend call) is new
-  // code exercising a library (pdfkit) that's never run against real
-  // Vercel infra before this stage -- an unhandled throw here otherwise
-  // crashes the Server Action mid-response, which shows up in the
-  // browser as a bare "This page couldn't load" rather than a clean
-  // error message. Catch broadly and fall back to the same error-banner
-  // redirect the rest of this action already uses, so a bug in PDF/email
-  // generation degrades instead of taking out the whole request. The
-  // invoice and Checkout session already exist at this point regardless.
-  let emailSent = false;
+  const baseUrl = await getBaseUrl();
+  const payUrl = `${baseUrl}/pay/${invoice.publicToken}`;
+
+  // Same reasoning as the previous version of this action: PDF/email/SMS
+  // generation exercises libraries (pdfkit, Resend, Twilio) that can
+  // fail in ways this sandbox can't fully predict -- catch broadly so a
+  // failure here degrades to an error banner instead of crashing the
+  // whole Server Action ("This page couldn't load").
+  let emailSent: boolean | null = null;
+  let smsSent: boolean | null = null;
   let stageError: string | null = null;
 
   try {
-    // Link the Checkout session back to the invoice row so the webhook
-    // processor (Stage 5) can find it. Best-effort -- if this update
-    // fails the invoice still exists and the email still goes out, it
-    // just won't auto-flip to "paid" later without a manual fix.
-    const { error: linkError } = await supabaseServer
-      .from("invoices")
-      .update({
-        stripe_checkout_session_id: checkoutResult.sessionId,
-        status: "sent",
-        sent_at: new Date().toISOString(),
-      })
-      .eq("id", invoice.id);
+    if (customerEmail) {
+      const pdfBuffer = await generateInvoicePdf(invoice, [
+        {
+          description,
+          quantity: 1,
+          unitPrice: amountDollars,
+          lineTotal: amountDollars,
+        },
+      ]);
 
-    if (linkError) {
-      console.error("Failed to link Checkout session to invoice:", linkError);
+      emailSent = await sendInvoiceEmail({
+        toEmail: customerEmail,
+        customerName,
+        invoiceNumber: invoice.invoiceNumber,
+        total: invoice.total,
+        payNowUrl: payUrl,
+        pdfBuffer,
+      });
     }
 
-    const pdfBuffer = await generateInvoicePdf(invoice, [
-      {
-        description,
-        quantity: 1,
-        unitPrice: amountDollars,
-        lineTotal: amountDollars,
-      },
-    ]);
-
-    emailSent = await sendInvoiceEmail({
-      toEmail: customerEmail,
-      customerName,
-      invoiceNumber: invoice.invoiceNumber,
-      total: invoice.total,
-      payNowUrl: checkoutResult.url,
-      pdfBuffer,
-    });
+    if (customerPhone) {
+      smsSent = await sendInvoiceSms(
+        customerPhone,
+        customerName,
+        invoice.invoiceNumber,
+        payUrl
+      );
+    }
   } catch (error) {
     console.error(
-      `PDF/email generation threw for invoice ${invoice.invoiceNumber}:`,
+      `PDF/email/SMS generation threw for invoice ${invoice.invoiceNumber}:`,
       error
     );
     stageError =
-      error instanceof Error ? error.message : "PDF or email generation failed.";
+      error instanceof Error ? error.message : "PDF, email, or SMS generation failed.";
   }
 
   await recordAuditLog({
@@ -139,25 +143,46 @@ export async function createTestInvoiceAndSend(
     entityLabel: invoice.invoiceNumber,
     after: {
       amount: amountDollars,
-      customer_email: customerEmail,
+      customer_email: customerEmail || null,
+      customer_phone: customerPhone || null,
       email_sent: emailSent,
+      sms_sent: smsSent,
     },
   });
 
   if (stageError) {
     redirect(
       `/invoice-test?error=${encodeURIComponent(
-        `Invoice ${invoice.invoiceNumber} was created but PDF/email generation crashed: ${stageError}`
+        `Invoice ${invoice.invoiceNumber} was created but delivery crashed: ${stageError}`
       )}`
     );
   }
 
-  if (!emailSent) {
+  // Only fail the whole thing if every channel the customer actually
+  // provided failed -- if they gave both email and phone and only one
+  // went through, that's still a delivered invoice.
+  const anyChannelAttempted = emailSent !== null || smsSent !== null;
+  const anyChannelSucceeded = emailSent === true || smsSent === true;
+
+  if (anyChannelAttempted && !anyChannelSucceeded) {
     redirect(
       `/invoice-test?error=${encodeURIComponent(
-        `Invoice ${invoice.invoiceNumber} was created but the email failed to send. Check RESEND_API_KEY / RESEND_FROM_EMAIL.`
+        `Invoice ${invoice.invoiceNumber} was created but delivery failed on every channel provided. Check RESEND_API_KEY/RESEND_FROM_EMAIL and TWILIO_* env vars.`
       )}`
     );
+  }
+
+  // The invoice is now considered delivered -- flip it out of draft
+  // regardless of exactly which channel(s) succeeded, same as the
+  // original version of this action did once its single email send
+  // succeeded.
+  const { error: sentError } = await supabaseServer
+    .from("invoices")
+    .update({ status: "sent", sent_at: new Date().toISOString() })
+    .eq("id", invoice.id);
+
+  if (sentError) {
+    console.error("Failed to mark invoice sent:", sentError);
   }
 
   redirect(`/invoice-test?sent=${encodeURIComponent(invoice.invoiceNumber)}`);

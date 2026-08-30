@@ -218,18 +218,75 @@ export async function sendOnMyWaySms(
   }
 }
 
+// Customer-facing invoice text -- for customers with no email on file
+// (phone-only), or as a second channel alongside email. Sends the
+// stable /pay/[token] link (lib/invoices.ts's publicToken), never a raw
+// Stripe Checkout Session URL -- those expire in ~24h, and a text is
+// exactly the kind of thing someone might not open same-day. Same
+// boolean-return, non-silent pattern as sendOnMyWaySms above -- the
+// caller needs to know whether this actually went out.
+export async function sendInvoiceSms(
+  toPhone: string,
+  customerName: string | null,
+  invoiceNumber: string,
+  payUrl: string
+): Promise<boolean> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_FROM_NUMBER;
+
+  if (!accountSid || !authToken || !fromNumber) {
+    console.error("Cannot send invoice text: Twilio env vars are not set.");
+    return false;
+  }
+
+  const greetingName = customerName?.trim() || "there";
+  const body = `Hi ${greetingName}, this is Valley Turf Revival. Your invoice ${invoiceNumber} is ready: ${payUrl}`;
+
+  try {
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${accountSid}:${authToken}`
+          ).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          To: toPhone,
+          From: fromNumber,
+          Body: body,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      console.error(
+        "Invoice SMS failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Invoice SMS error:", error);
+    return false;
+  }
+}
+
 export type InvoiceEmail = {
   toEmail: string;
   customerName: string | null;
   invoiceNumber: string;
   total: number;
-  // Direct link to a Stripe Checkout session's hosted page (Tier 1 Stage
-  // 2's createCheckoutSession()). Note: Stripe Checkout session URLs
-  // expire 24 hours after creation by default -- fine for the Stage 4
-  // test harness where the link is used right away, but the real
-  // customer-facing invoice flow (Stage 5+) should route this through a
-  // page on this app that creates a fresh session on click, rather than
-  // embedding a link that can go stale before the customer opens it.
+  // The stable /pay/[publicToken] page (app/pay/[token]/), NOT a raw
+  // Stripe Checkout Session URL -- those expire ~24h after creation.
+  // The Checkout Session itself gets minted fresh when the customer
+  // actually clicks Pay Now on that page.
   payNowUrl: string;
   pdfBuffer: Buffer;
 };

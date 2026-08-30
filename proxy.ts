@@ -130,8 +130,13 @@ export async function proxy(request: NextRequest) {
   // model as /r/ above. Covers both the page and its Server Actions,
   // since those POST back to this same /q/[token] path.
   const isPublicQuote = pathname.startsWith("/q/");
+  // Public invoice view/pay — same unguessable-token trust model as
+  // /q/ above (public_token, migration 046). Covers both the page and
+  // its Server Action (payInvoice posts back to this same /pay/[token]
+  // path).
+  const isPublicInvoicePay = pathname.startsWith("/pay/");
 
-  if (isPublicPath || isPublicRedirect || isPublicQuote) {
+  if (isPublicPath || isPublicRedirect || isPublicQuote || isPublicInvoicePay) {
     return NextResponse.next();
   }
 
