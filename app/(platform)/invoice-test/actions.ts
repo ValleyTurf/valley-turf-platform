@@ -75,40 +75,61 @@ export async function createTestInvoiceAndSend(
     redirect(`/invoice-test?error=${encodeURIComponent(checkoutResult.error)}`);
   }
 
-  // Link the Checkout session back to the invoice row so the webhook
-  // processor (Stage 5) can find it. Best-effort -- if this update fails
-  // the invoice still exists and the email still goes out, it just won't
-  // auto-flip to "paid" later without a manual fix.
-  const { error: linkError } = await supabaseServer
-    .from("invoices")
-    .update({
-      stripe_checkout_session_id: checkoutResult.sessionId,
-      status: "sent",
-      sent_at: new Date().toISOString(),
-    })
-    .eq("id", invoice.id);
+  // Everything past this point (PDF generation, the Resend call) is new
+  // code exercising a library (pdfkit) that's never run against real
+  // Vercel infra before this stage -- an unhandled throw here otherwise
+  // crashes the Server Action mid-response, which shows up in the
+  // browser as a bare "This page couldn't load" rather than a clean
+  // error message. Catch broadly and fall back to the same error-banner
+  // redirect the rest of this action already uses, so a bug in PDF/email
+  // generation degrades instead of taking out the whole request. The
+  // invoice and Checkout session already exist at this point regardless.
+  let emailSent = false;
+  let stageError: string | null = null;
 
-  if (linkError) {
-    console.error("Failed to link Checkout session to invoice:", linkError);
+  try {
+    // Link the Checkout session back to the invoice row so the webhook
+    // processor (Stage 5) can find it. Best-effort -- if this update
+    // fails the invoice still exists and the email still goes out, it
+    // just won't auto-flip to "paid" later without a manual fix.
+    const { error: linkError } = await supabaseServer
+      .from("invoices")
+      .update({
+        stripe_checkout_session_id: checkoutResult.sessionId,
+        status: "sent",
+        sent_at: new Date().toISOString(),
+      })
+      .eq("id", invoice.id);
+
+    if (linkError) {
+      console.error("Failed to link Checkout session to invoice:", linkError);
+    }
+
+    const pdfBuffer = await generateInvoicePdf(invoice, [
+      {
+        description,
+        quantity: 1,
+        unitPrice: amountDollars,
+        lineTotal: amountDollars,
+      },
+    ]);
+
+    emailSent = await sendInvoiceEmail({
+      toEmail: customerEmail,
+      customerName,
+      invoiceNumber: invoice.invoiceNumber,
+      total: invoice.total,
+      payNowUrl: checkoutResult.url,
+      pdfBuffer,
+    });
+  } catch (error) {
+    console.error(
+      `PDF/email generation threw for invoice ${invoice.invoiceNumber}:`,
+      error
+    );
+    stageError =
+      error instanceof Error ? error.message : "PDF or email generation failed.";
   }
-
-  const pdfBuffer = await generateInvoicePdf(invoice, [
-    {
-      description,
-      quantity: 1,
-      unitPrice: amountDollars,
-      lineTotal: amountDollars,
-    },
-  ]);
-
-  const emailSent = await sendInvoiceEmail({
-    toEmail: customerEmail,
-    customerName,
-    invoiceNumber: invoice.invoiceNumber,
-    total: invoice.total,
-    payNowUrl: checkoutResult.url,
-    pdfBuffer,
-  });
 
   await recordAuditLog({
     actor,
@@ -122,6 +143,14 @@ export async function createTestInvoiceAndSend(
       email_sent: emailSent,
     },
   });
+
+  if (stageError) {
+    redirect(
+      `/invoice-test?error=${encodeURIComponent(
+        `Invoice ${invoice.invoiceNumber} was created but PDF/email generation crashed: ${stageError}`
+      )}`
+    );
+  }
 
   if (!emailSent) {
     redirect(
