@@ -218,6 +218,95 @@ export async function sendOnMyWaySms(
   }
 }
 
+export type InvoiceEmail = {
+  toEmail: string;
+  customerName: string | null;
+  invoiceNumber: string;
+  total: number;
+  // Direct link to a Stripe Checkout session's hosted page (Tier 1 Stage
+  // 2's createCheckoutSession()). Note: Stripe Checkout session URLs
+  // expire 24 hours after creation by default -- fine for the Stage 4
+  // test harness where the link is used right away, but the real
+  // customer-facing invoice flow (Stage 5+) should route this through a
+  // page on this app that creates a fresh session on click, rather than
+  // embedding a link that can go stale before the customer opens it.
+  payNowUrl: string;
+  pdfBuffer: Buffer;
+};
+
+// Customer-facing, like sendPortalMagicLinkEmail -- returns a boolean
+// rather than silently no-op'ing, since the caller needs to know whether
+// to mark the invoice "sent" or surface an error back to staff.
+export async function sendInvoiceEmail(
+  request: InvoiceEmail
+): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    console.error("Cannot send invoice email: RESEND_API_KEY is not set.");
+    return false;
+  }
+
+  const fromAddress = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
+  const greetingName = request.customerName || "there";
+
+  const html = `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
+      <p>Your invoice <strong>${escapeHtml(
+        request.invoiceNumber
+      )}</strong> from Valley Turf Revival is attached, for <strong>$${request.total.toFixed(
+    2
+  )}</strong>.</p>
+      <p style="margin: 24px 0;">
+        <a
+          href="${request.payNowUrl}"
+          style="background-color: #174734; color: #ffffff; padding: 12px 24px; border-radius: 10px; text-decoration: none; font-weight: bold;"
+        >
+          Pay Now
+        </a>
+      </p>
+      <p style="color: #6b705c; font-size: 12px;">Questions about this invoice? Just reply to this email.</p>
+    </div>
+  `;
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromAddress,
+        to: request.toEmail,
+        subject: `Invoice ${request.invoiceNumber} from Valley Turf Revival`,
+        html,
+        attachments: [
+          {
+            filename: `${request.invoiceNumber}.pdf`,
+            content: request.pdfBuffer.toString("base64"),
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(
+        "Invoice email failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Invoice email error:", error);
+    return false;
+  }
+}
+
 async function sendLeadSmsAlert(lead: NewLeadAlert): Promise<void> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;

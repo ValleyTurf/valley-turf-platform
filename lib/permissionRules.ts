@@ -98,6 +98,10 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
     // Stripe directly instead of Jobber. Not linked from customer-facing
     // pages anywhere.
     "/stripe-test",
+    // Tier 1, Stage 4 test harness -- same audience/reasoning as
+    // /stripe-test above, extended to cover native invoice + PDF +
+    // email delivery end to end.
+    "/invoice-test",
   ],
   // /job-costing-analytics/trends is deliberately listed here, not under
   // job_costing below, even though its URL still lives under

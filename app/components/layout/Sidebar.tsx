@@ -74,6 +74,7 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
       { name: "Create Invoices", href: "/invoices", icon: "💵" },
       { name: "Quotes", href: "/quotes", icon: "📝" },
       { name: "Test a Payment", href: "/stripe-test", icon: "💳" },
+      { name: "Test an Invoice", href: "/invoice-test", icon: "🧾" },
     ],
   },
   {

@@ -26,10 +26,16 @@ export type CreateCheckoutSessionParams = {
   successUrl: string;
   cancelUrl: string;
   customerEmail?: string | null;
+  // Stamped onto the session so the webhook processor (Stage 5) can look
+  // up which invoice a checkout.session.completed/payment_intent event
+  // belongs to, independent of the stripe_checkout_session_id column
+  // already stored on the invoice row -- cheap defense-in-depth, not a
+  // replacement for that column.
+  metadata?: Record<string, string>;
 };
 
 export type CreateCheckoutSessionResult =
-  | { ok: true; url: string }
+  | { ok: true; url: string; sessionId: string }
   | { ok: false; error: string };
 
 export async function createCheckoutSession(
@@ -42,6 +48,7 @@ export async function createCheckoutSession(
     successUrl,
     cancelUrl,
     customerEmail,
+    metadata,
   } = params;
 
   const trimmedDescription = description.trim();
@@ -91,13 +98,14 @@ export async function createCheckoutSession(
       customer_email: customerEmail || undefined,
       success_url: successUrl,
       cancel_url: cancelUrl,
+      metadata,
     });
 
     if (!session.url) {
       return { ok: false, error: "Stripe did not return a checkout URL." };
     }
 
-    return { ok: true, url: session.url };
+    return { ok: true, url: session.url, sessionId: session.id };
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown Stripe error.";
