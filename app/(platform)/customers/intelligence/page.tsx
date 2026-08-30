@@ -2,7 +2,6 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import Link from "next/link";
-import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
 import {
   toNumber,
@@ -19,10 +18,10 @@ import {
 import {
   CHURN_REASONS,
   cadenceCategoryFor,
-  isChurnReason,
   isDeactivationCandidate,
   type CadenceCategory,
 } from "@/lib/deactivation";
+import { ExclusionSaveForm } from "./ExclusionSaveForm";
 
 type Timeframe =
   | "last-7-days"
@@ -281,54 +280,6 @@ async function fetchIntelligenceExclusions(): Promise<IntelligenceExclusion[]> {
   return (data ?? []) as IntelligenceExclusion[];
 }
 
-// Shared by the Reactivation Pipeline's "Save" form and the
-// Deactivation section's "Save" form — both just log a reason against
-// a customer under a different exclusion_type, so one action and one
-// shared CHURN_REASONS list (see lib/deactivation.ts) keeps them from
-// drifting into two different reason vocabularies again.
-async function saveExclusionReason(formData: FormData) {
-  "use server";
-
-  const jobberClientId = String(
-    formData.get("jobber_client_id") ?? "",
-  ).trim();
-  const exclusionType = String(formData.get("exclusion_type") ?? "").trim();
-  const reason = String(formData.get("reason") ?? "").trim();
-
-  const allowedTypes = new Set(["reactivation", "deactivation"]);
-
-  if (
-    !jobberClientId ||
-    !allowedTypes.has(exclusionType) ||
-    !isChurnReason(reason)
-  ) {
-    return;
-  }
-
-  const { error } = await supabaseServer
-    .from("customer_intelligence_exclusions")
-    .upsert(
-      {
-        jobber_client_id: jobberClientId,
-        exclusion_type: exclusionType,
-        reason,
-        excluded_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-      {
-        onConflict: "jobber_client_id,exclusion_type",
-        ignoreDuplicates: false,
-      },
-    );
-
-  if (error) {
-    throw new Error(`Could not save this customer's status: ${error.message}`);
-  }
-
-  revalidatePath("/customers/intelligence");
-  revalidatePath("/reactivation");
-}
-
 async function fetchInvoices(): Promise<Invoice[]> {
   const rows: Invoice[] = [];
   const pageSize = 1000;
@@ -468,6 +419,24 @@ export default async function CustomerIntelligencePage({
   ]);
 
   const summaries = buildCustomerSummaries(customers, invoices);
+
+  // Built early (rather than down near marketSummaries, where these
+  // used to live) since deactivationReasonTally below also needs
+  // summaryMap to look up full customer details for each logged
+  // exclusion row.
+  const customerMap = new Map(
+    customers.map((customer) => [
+      customer.jobber_client_id,
+      customer,
+    ]),
+  );
+
+  const summaryMap = new Map(
+    summaries.map((summary) => [
+      summary.customer.jobber_client_id,
+      summary,
+    ]),
+  );
 
   const periodInvoices = invoices.filter(
     (invoice) =>
@@ -650,33 +619,29 @@ export default async function CustomerIntelligencePage({
 
   // A running tally of reasons already logged — this is the actual
   // point of the feature ("start to see why people are cancelling"),
-  // not just the pending queue above.
-  const deactivationReasonTally = CHURN_REASONS.map((reason) => ({
-    ...reason,
-    count: deactivationExclusionRows.filter(
-      (row) => row.reason === reason.value,
-    ).length,
-  }))
+  // not just the pending queue above. Each entry also carries the full
+  // customer list behind that count (via summaryMap), so the pill can
+  // expand to show exactly who's in it, same collapsible pattern as
+  // the Reactivation Pipeline buckets elsewhere on this page.
+  const deactivationReasonTally = CHURN_REASONS.map((reason) => {
+    const customersForReason = deactivationExclusionRows
+      .filter((row) => row.reason === reason.value)
+      .map((row) => summaryMap.get(row.jobber_client_id))
+      .filter((summary): summary is CustomerSummary => Boolean(summary))
+      .sort((a, b) => b.lifetimeRevenue - a.lifetimeRevenue);
+
+    return {
+      ...reason,
+      count: customersForReason.length,
+      customers: customersForReason,
+    };
+  })
     .filter((entry) => entry.count > 0)
     .sort((a, b) => b.count - a.count);
 
   const topCustomers = [...customersWithInvoices]
     .sort((a, b) => b.lifetimeRevenue - a.lifetimeRevenue)
     .slice(0, 10);
-
-  const customerMap = new Map(
-    customers.map((customer) => [
-      customer.jobber_client_id,
-      customer,
-    ]),
-  );
-
-  const summaryMap = new Map(
-    summaries.map((summary) => [
-      summary.customer.jobber_client_id,
-      summary,
-    ]),
-  );
 
   const marketMap = new Map<
     string,
@@ -1052,40 +1017,12 @@ export default async function CustomerIntelligencePage({
                               </p>
                             </div>
 
-                            <form
-                              action={saveExclusionReason}
-                              className="flex flex-wrap items-center gap-2"
-                            >
-                              <input
-                                type="hidden"
-                                name="jobber_client_id"
-                                value={summary.customer.jobber_client_id}
-                              />
-                              <input
-                                type="hidden"
-                                name="exclusion_type"
-                                value="reactivation"
-                              />
-
-                              <select
-                                name="reason"
-                                defaultValue="moved"
-                                className="rounded-lg border border-[#d8d3c6] bg-white px-3 py-2 text-xs font-semibold text-[#174734]"
-                              >
-                                {CHURN_REASONS.map((reason) => (
-                                  <option key={reason.value} value={reason.value}>
-                                    {reason.label}
-                                  </option>
-                                ))}
-                              </select>
-
-                              <button
-                                type="submit"
-                                className="rounded-lg border border-[#174734] px-3 py-2 text-xs font-bold transition hover:bg-[#174734] hover:text-white"
-                              >
-                                Save
-                              </button>
-                            </form>
+                            <ExclusionSaveForm
+                              jobberClientId={summary.customer.jobber_client_id}
+                              exclusionType="reactivation"
+                              defaultReason="moved"
+                              reasons={CHURN_REASONS}
+                            />
                           </div>
                         </div>
                       ))
@@ -1120,15 +1057,38 @@ export default async function CustomerIntelligencePage({
 
               <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {deactivationReasonTally.map((entry) => (
-                  <div
+                  <details
                     key={entry.value}
                     className="rounded-xl bg-[#f7f6f1] p-4"
                   >
-                    <p className="text-sm font-semibold text-[#6b705c]">
-                      {entry.label}
-                    </p>
-                    <p className="mt-1 text-2xl font-bold">{entry.count}</p>
-                  </div>
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                      <span className="text-sm font-semibold text-[#6b705c]">
+                        {entry.label}
+                      </span>
+                      <span className="text-2xl font-bold">{entry.count}</span>
+                    </summary>
+
+                    <div className="mt-3 space-y-2 border-t border-[#e7e2d5] pt-3">
+                      {entry.customers.map((summary) => (
+                        <Link
+                          key={summary.customer.jobber_client_id}
+                          href={`/customers/${encodeURIComponent(
+                            summary.customer.jobber_client_id,
+                          )}`}
+                          className="flex items-center justify-between gap-3 text-sm text-[#174734] hover:underline"
+                        >
+                          <span className="truncate font-semibold">
+                            {summary.customer.full_name ||
+                              summary.customer.company_name ||
+                              "Unnamed Customer"}
+                          </span>
+                          <span className="shrink-0 text-[#6b705c]">
+                            {formatCurrency(summary.lifetimeRevenue)}
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  </details>
                 ))}
               </div>
             </div>
@@ -1171,40 +1131,12 @@ export default async function CustomerIntelligencePage({
                       </p>
                     </div>
 
-                    <form
-                      action={saveExclusionReason}
-                      className="flex flex-wrap items-center gap-2"
-                    >
-                      <input
-                        type="hidden"
-                        name="jobber_client_id"
-                        value={summary.customer.jobber_client_id}
-                      />
-                      <input
-                        type="hidden"
-                        name="exclusion_type"
-                        value="deactivation"
-                      />
-
-                      <select
-                        name="reason"
-                        defaultValue="price"
-                        className="rounded-lg border border-[#d8d3c6] bg-white px-3 py-2 text-xs font-semibold text-[#174734]"
-                      >
-                        {CHURN_REASONS.map((reason) => (
-                          <option key={reason.value} value={reason.value}>
-                            {reason.label}
-                          </option>
-                        ))}
-                      </select>
-
-                      <button
-                        type="submit"
-                        className="rounded-lg border border-[#174734] px-3 py-2 text-xs font-bold transition hover:bg-[#174734] hover:text-white"
-                      >
-                        Save
-                      </button>
-                    </form>
+                    <ExclusionSaveForm
+                      jobberClientId={summary.customer.jobber_client_id}
+                      exclusionType="deactivation"
+                      defaultReason="price"
+                      reasons={CHURN_REASONS}
+                    />
                   </div>
                 </div>
               ))
