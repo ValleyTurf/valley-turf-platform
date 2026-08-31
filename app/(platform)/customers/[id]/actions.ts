@@ -10,6 +10,7 @@ import {
   removeVisitNotePhoto,
 } from "@/lib/visitNotes";
 import { removeJobberJobNotePhoto } from "@/lib/jobberJobNotes";
+import { getOrCreateEnrollmentToken, setAutopayEnabled } from "@/lib/autopay";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
@@ -205,6 +206,57 @@ export async function removeVisitPhoto(
   revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
 
   return { error: null };
+}
+
+// Staff-facing counterpart to the portal's self-serve autopay flow
+// (app/portal/autopay/actions.ts) -- for customers who won't log into
+// the portal. Creates (or reuses) an unguessable enrollment_token so
+// staff can copy /autopay/[token] and send it however they normally
+// reach this customer (text, email, read it over the phone). Doesn't
+// itself save a card -- the customer does that by opening the link.
+export async function generateAutopayLink(jobberClientId: string): Promise<void> {
+  const actor = await getCurrentUser();
+  const result = await getOrCreateEnrollmentToken(jobberClientId);
+
+  if (!result.ok) {
+    throw new Error(`Failed to generate autopay link: ${result.error}`);
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "create",
+    entityType: "autopay_enrollment_link",
+    entityId: jobberClientId,
+    entityLabel: jobberClientId,
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+}
+
+// Staff override -- turn a customer's autopay on/off without going
+// through either enrollment flow (e.g. a customer calls and asks to
+// pause it, or wants it back on and their card is still on file).
+export async function toggleAutopay(
+  jobberClientId: string,
+  enabled: boolean
+): Promise<void> {
+  const actor = await getCurrentUser();
+  const result = await setAutopayEnabled(jobberClientId, enabled);
+
+  if (!result.ok) {
+    throw new Error(`Failed to update autopay: ${result.error}`);
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "autopay_enrollment",
+    entityId: jobberClientId,
+    entityLabel: jobberClientId,
+    after: { autopay_enabled: enabled },
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
 }
 
 // Same idea as removeVisitPhoto above, for a photo in the "Imported from

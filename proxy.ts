@@ -135,8 +135,18 @@ export async function proxy(request: NextRequest) {
   // its Server Action (payInvoice posts back to this same /pay/[token]
   // path).
   const isPublicInvoicePay = pathname.startsWith("/pay/");
+  // Staff-shared autopay enrollment link -- same unguessable-token trust
+  // model as /pay/ and /q/ above (customer_payment_methods.enrollment_token,
+  // migration 047). Covers both the page and its Server Action.
+  const isPublicAutopay = pathname.startsWith("/autopay/");
 
-  if (isPublicPath || isPublicRedirect || isPublicQuote || isPublicInvoicePay) {
+  if (
+    isPublicPath ||
+    isPublicRedirect ||
+    isPublicQuote ||
+    isPublicInvoicePay ||
+    isPublicAutopay
+  ) {
     return NextResponse.next();
   }
 

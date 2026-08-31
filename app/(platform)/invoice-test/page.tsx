@@ -2,15 +2,16 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 // Test harness -- creates a native invoice (Stage 3) and a stable
-// /pay/[token] link (migration 046), then delivers it by email
-// (PDF attached, via Resend, Stage 4), SMS (via Twilio), or both,
-// depending on what's filled in. Nothing here is wired into the real
-// /invoices flow yet -- that's Stage 7, still pending native autopay.
+// /pay/[token] link (migration 046), then either charges it
+// automatically via autopay (lib/autopay.ts, if a Jobber Client ID with
+// autopay enabled is entered) or delivers it by email (PDF attached, via
+// Resend, Stage 4), SMS (via Twilio), or both. Nothing here is wired
+// into the real /invoices flow yet -- that's Stage 7.
 import { createTestInvoiceAndSend } from "./actions";
 import InvoiceForm from "./InvoiceForm";
 
 type InvoiceTestPageProps = {
-  searchParams: Promise<{ error?: string; sent?: string }>;
+  searchParams: Promise<{ error?: string; sent?: string; charged?: string }>;
 };
 
 export default async function InvoiceTestPage({
@@ -19,6 +20,7 @@ export default async function InvoiceTestPage({
   const params = await searchParams;
   const error = params.error;
   const sent = params.sent;
+  const charged = params.charged;
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
@@ -51,6 +53,13 @@ export default async function InvoiceTestPage({
         {sent && (
           <div className="mt-4 rounded-2xl border border-green-200 bg-white p-4 text-sm text-green-700 shadow">
             Invoice {sent} created and sent.
+          </div>
+        )}
+
+        {charged && (
+          <div className="mt-4 rounded-2xl border border-green-200 bg-white p-4 text-sm text-green-700 shadow">
+            Invoice {charged} created and charged automatically via
+            autopay.
           </div>
         )}
 

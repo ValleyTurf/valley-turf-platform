@@ -19,6 +19,7 @@ import {
   findInvoiceIdByCheckoutSessionId,
   findInvoiceIdByPaymentIntentId,
 } from "@/lib/payments";
+import { attachPaymentMethodFromSetupIntent } from "@/lib/autopay";
 
 type StripeWebhookEventRow = {
   id: string;
@@ -50,6 +51,12 @@ const RECOGNIZED_TYPES = new Set([
   "charge.refunded",
   "payout.paid",
   "payout.failed",
+  // Autopay (native, pre-Stage-7): fires once a customer finishes the
+  // `setup` mode Checkout Session from lib/autopay.ts's
+  // createAutopaySetupSession(). This needs to be added as a listened-for
+  // event type on the webhook endpoint in the Stripe Dashboard, same as
+  // every other type in this set.
+  "setup_intent.succeeded",
 ]);
 
 // Typed as a plain Record rather than Stripe.Metadata -- structurally
@@ -268,6 +275,18 @@ async function handlePayoutEvent(payout: Stripe.Payout): Promise<void> {
   }
 }
 
+// Autopay card save completing. A `setup` mode Checkout Session has no
+// payment_intent at all (checkout.session.completed's existing handler
+// already no-ops for it, since it bails out when payment_intent is
+// missing) -- this event is the actual authoritative signal, mirroring
+// how payment_intent.succeeded (not checkout.session.completed) is what
+// really marks an invoice paid above.
+async function handleSetupIntentSucceeded(
+  setupIntent: Stripe.SetupIntent
+): Promise<void> {
+  await attachPaymentMethodFromSetupIntent(setupIntent);
+}
+
 async function processStripeWebhookEvent(
   event: StripeWebhookEventRow
 ): Promise<void> {
@@ -302,6 +321,9 @@ async function processStripeWebhookEvent(
     case "payout.paid":
     case "payout.failed":
       await handlePayoutEvent(object as unknown as Stripe.Payout);
+      return;
+    case "setup_intent.succeeded":
+      await handleSetupIntentSucceeded(object as unknown as Stripe.SetupIntent);
       return;
     default:
       return;

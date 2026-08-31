@@ -10,7 +10,10 @@ import {
   updateGeneralNotes,
   removeVisitPhoto,
   removeImportedJobNotePhoto,
+  generateAutopayLink,
+  toggleAutopay,
 } from "./actions";
+import { getPaymentMethodByClientId } from "@/lib/autopay";
 import { saveVisitCosts } from "../../materials/actions";
 import { getVisitNotesForClient, type VisitNoteGroup } from "@/lib/visitNotes";
 import { getJobberJobNotesForClient, type JobberJobNote } from "@/lib/jobberJobNotes";
@@ -1028,6 +1031,7 @@ export default async function CustomerDetailPage({
     visitNoteGroups,
     jobberJobNotes,
     payments,
+    autopayPaymentMethod,
   ] = await Promise.all([
     getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
@@ -1041,6 +1045,7 @@ export default async function CustomerDetailPage({
     getVisitNotesForClient(decodedId),
     getJobberJobNotesForClient(decodedId),
     getCustomerPayments(decodedId),
+    getPaymentMethodByClientId(decodedId),
   ]);
 
   if (!client) {
@@ -1810,6 +1815,84 @@ export default async function CustomerDetailPage({
                   <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
                     No payments recorded yet.
                   </p>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">Autopay</h2>
+
+              <p className="mt-1 text-xs text-[#6b705c]">
+                Native autopay (not yet wired into the real invoice
+                flow -- see /invoice-test). Customers can also self-enroll
+                from their customer portal.
+              </p>
+
+              <div className="mt-3 rounded-xl bg-[#f7f6f1] px-3 py-3">
+                {autopayPaymentMethod?.stripePaymentMethodId ? (
+                  <>
+                    <p className="text-sm font-bold">
+                      {autopayPaymentMethod.cardBrand
+                        ? `${autopayPaymentMethod.cardBrand.charAt(0).toUpperCase()}${autopayPaymentMethod.cardBrand.slice(1)}`
+                        : "Card"}{" "}
+                      ending in {autopayPaymentMethod.cardLast4 ?? "----"}
+                    </p>
+                    <p className="mt-1 text-xs text-[#6b705c]">
+                      Autopay is{" "}
+                      <span
+                        className={
+                          autopayPaymentMethod.autopayEnabled
+                            ? "font-semibold text-green-700"
+                            : "font-semibold text-[#9c7a20]"
+                        }
+                      >
+                        {autopayPaymentMethod.autopayEnabled ? "on" : "off"}
+                      </span>
+                      .
+                    </p>
+
+                    <form
+                      action={toggleAutopay.bind(
+                        null,
+                        decodedId,
+                        !autopayPaymentMethod.autopayEnabled
+                      )}
+                      className="mt-3"
+                    >
+                      <button
+                        type="submit"
+                        className="rounded-lg border border-[#d8d3c6] bg-white px-3 py-1.5 text-xs font-bold text-[#6b705c] transition hover:border-[#d4af37]"
+                      >
+                        {autopayPaymentMethod.autopayEnabled
+                          ? "Turn off autopay"
+                          : "Turn on autopay"}
+                      </button>
+                    </form>
+                  </>
+                ) : autopayPaymentMethod?.enrollmentToken ? (
+                  <>
+                    <p className="text-sm text-[#6b705c]">
+                      No card saved yet. Send this link to have the
+                      customer add one:
+                    </p>
+                    <p className="mt-2 break-all rounded-lg bg-white px-3 py-2 text-xs font-mono text-[#174734]">
+                      /autopay/{autopayPaymentMethod.enrollmentToken}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-[#6b705c]">
+                      No autopay enrollment started for this customer.
+                    </p>
+                    <form action={generateAutopayLink.bind(null, decodedId)} className="mt-3">
+                      <button
+                        type="submit"
+                        className="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246]"
+                      >
+                        Get autopay link
+                      </button>
+                    </form>
+                  </>
                 )}
               </div>
             </section>

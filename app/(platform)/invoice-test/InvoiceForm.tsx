@@ -2,8 +2,9 @@
 
 // Client component for /invoice-test's form. Plain fields, no live math
 // needed here (unlike stripe-test's tip calculator) -- this just collects
-// what createInvoice() + createCheckoutSession() + sendInvoiceEmail()
-// need.
+// what createInvoice(), the email/SMS senders in lib/notifications.ts,
+// and (if a Jobber Client ID is filled in) lib/autopay.ts's charge
+// attempt need.
 export default function InvoiceForm({
   action,
 }: {
@@ -54,6 +55,24 @@ export default function InvoiceForm({
         />
         <p className="mt-1 text-xs text-[#9c9990]">
           Fill in email, phone, or both. At least one is required.
+        </p>
+      </div>
+
+      <div>
+        <label htmlFor="jobberClientId" className="block text-sm font-bold">
+          Jobber Client ID (optional -- autopay testing)
+        </label>
+        <input
+          id="jobberClientId"
+          name="jobberClientId"
+          type="text"
+          placeholder="Leave blank unless testing autopay"
+          className="mt-1 w-full rounded-xl border border-[#d9d4c6] px-3 py-2 text-sm"
+        />
+        <p className="mt-1 text-xs text-[#9c9990]">
+          If this client has autopay enabled (see their Customer page),
+          the invoice is charged automatically instead of sending a Pay
+          Now link.
         </p>
       </div>
 

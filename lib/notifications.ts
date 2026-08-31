@@ -364,6 +364,143 @@ export async function sendInvoiceEmail(
   }
 }
 
+export type AutopayReceiptEmail = {
+  toEmail: string;
+  customerName: string | null;
+  invoiceNumber: string;
+  total: number;
+  cardLast4: string | null;
+  pdfBuffer: Buffer;
+};
+
+// Sent instead of sendInvoiceEmail when lib/autopay.ts's
+// attemptAutopayCharge() succeeds -- a receipt, not a request for
+// payment, so no Pay Now button. Same PDF-attached pattern as the
+// regular invoice email for consistent recordkeeping either way.
+export async function sendAutopayReceiptEmail(
+  request: AutopayReceiptEmail
+): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    console.error("Cannot send autopay receipt email: RESEND_API_KEY is not set.");
+    return false;
+  }
+
+  const fromAddress = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
+  const greetingName = request.customerName || "there";
+  const cardSuffix = request.cardLast4 ? ` (card ending in ${request.cardLast4})` : "";
+
+  const html = `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
+      <p>Your invoice <strong>${escapeHtml(
+        request.invoiceNumber
+      )}</strong> from Valley Turf Revival has been paid automatically${escapeHtml(
+    cardSuffix
+  )} for <strong>$${request.total.toFixed(2)}</strong>, as part of your autopay enrollment.</p>
+      <p>Your receipt is attached. No action is needed.</p>
+      <p style="color: #6b705c; font-size: 12px;">Questions about this charge? Just reply to this email.</p>
+    </div>
+  `;
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromAddress,
+        to: request.toEmail,
+        subject: `Invoice ${request.invoiceNumber} paid automatically -- Valley Turf Revival`,
+        html,
+        attachments: [
+          {
+            filename: `${request.invoiceNumber}.pdf`,
+            content: request.pdfBuffer.toString("base64"),
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(
+        "Autopay receipt email failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Autopay receipt email error:", error);
+    return false;
+  }
+}
+
+// Text counterpart to sendAutopayReceiptEmail -- same reasoning as
+// sendInvoiceSms existing alongside sendInvoiceEmail for phone-only
+// customers.
+export async function sendAutopayReceiptSms(
+  toPhone: string,
+  customerName: string | null,
+  invoiceNumber: string,
+  total: number,
+  cardLast4: string | null
+): Promise<boolean> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_FROM_NUMBER;
+
+  if (!accountSid || !authToken || !fromNumber) {
+    console.error("Cannot send autopay receipt text: Twilio env vars are not set.");
+    return false;
+  }
+
+  const greetingName = customerName?.trim() || "there";
+  const cardSuffix = cardLast4 ? ` (card ending in ${cardLast4})` : "";
+  const body = `Hi ${greetingName}, this is Valley Turf Revival. Invoice ${invoiceNumber} ($${total.toFixed(
+    2
+  )}) was paid automatically${cardSuffix} via autopay. No action needed.`;
+
+  try {
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${accountSid}:${authToken}`
+          ).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          To: toPhone,
+          From: fromNumber,
+          Body: body,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      console.error(
+        "Autopay receipt SMS failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Autopay receipt SMS error:", error);
+    return false;
+  }
+}
+
 async function sendLeadSmsAlert(lead: NewLeadAlert): Promise<void> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
