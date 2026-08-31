@@ -137,6 +137,13 @@ export default async function InvoicesPage({
             >
               Analytics
             </Link>
+
+            <Link
+              href="/invoices/routing"
+              className="rounded-xl border border-[#174734] px-4 py-2 text-center text-sm font-bold transition hover:bg-white"
+            >
+              Stage 7: Invoicing Routing
+            </Link>
           </div>
         </header>
 
