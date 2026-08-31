@@ -186,6 +186,19 @@ export async function createAutopaySetupSession(
       customer: stripeCustomerId,
       success_url: successUrl,
       cancel_url: cancelUrl,
+      // Card only, unlike the payment-mode session in
+      // lib/stripeCheckout.ts (which also offers us_bank_account/ACH).
+      // Two reasons: (1) bank-debit payment methods are currency-scoped
+      // in Stripe's API, so a `setup` mode session that allows them
+      // requires an explicit top-level `currency` param -- with none
+      // specified, Checkout falls back to every payment method enabled
+      // in the Dashboard and errors with "Missing required param:
+      // currency" the moment ACH is one of them. (2) ACH debits need a
+      // micro-deposit/instant verification step and aren't a good fit
+      // for "save now, charge automatically and immediately later"
+      // anyway -- off-session autopay charging is a card-only feature
+      // here.
+      payment_method_types: ["card"],
       // Not copied to the resulting SetupIntent automatically -- same
       // gotcha as payment_intent_data on the payment-mode session in
       // lib/stripeCheckout.ts. Without this, setup_intent.succeeded
