@@ -14,8 +14,82 @@ export const revalidate = 0;
 // how invoices actually get created yet. That's a separate, later step
 // once this list has been reviewed.
 import Link from "next/link";
+import { supabaseServer } from "@/lib/supabase-server";
 import { listInvoicingModeRows } from "@/lib/invoicingMode";
 import ModeToggle from "./ModeToggle";
+
+const ACTIVE_WINDOW_DAYS = 182; // ~6 months
+
+type RecurringRow = { jobber_client_id: string | null };
+type InvoiceDateRow = { jobber_client_id: string | null; issue_date: string | null };
+
+// Same paginated-range-loop pattern used throughout this codebase
+// (customers/intelligence/page.tsx's fetchRecurringServiceRows /
+// fetchInvoices) since a plain .select() caps at Supabase's default
+// 1000-row page.
+async function fetchRecurringClientIds(): Promise<Set<string>> {
+  const ids = new Set<string>();
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseServer
+      .from("job_service_category")
+      .select("jobber_client_id")
+      .eq("is_recurring_service", true)
+      .not("jobber_client_id", "is", null)
+      .range(from, from + pageSize - 1);
+
+    if (error) throw new Error(`Failed reading job_service_category: ${error.message}`);
+
+    const batch = (data ?? []) as RecurringRow[];
+    for (const row of batch) {
+      if (row.jobber_client_id) ids.add(row.jobber_client_id);
+    }
+
+    if (batch.length < pageSize) break;
+  }
+
+  return ids;
+}
+
+// Most recent invoice issue_date per client -- used as a stand-in for
+// "had a service recently" (an invoice only exists because a visit got
+// billed), same proxy the Reactivation/Customer Intelligence pages use
+// for "last service."
+async function fetchLastInvoiceDateByClient(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseServer
+      .from("invoice_financials")
+      .select("jobber_client_id, issue_date")
+      .not("jobber_client_id", "is", null)
+      .not("issue_date", "is", null)
+      .range(from, from + pageSize - 1);
+
+    if (error) throw new Error(`Failed reading invoice_financials: ${error.message}`);
+
+    const batch = (data ?? []) as InvoiceDateRow[];
+    for (const row of batch) {
+      if (!row.jobber_client_id || !row.issue_date) continue;
+      const existing = map.get(row.jobber_client_id);
+      if (!existing || row.issue_date > existing) {
+        map.set(row.jobber_client_id, row.issue_date);
+      }
+    }
+
+    if (batch.length < pageSize) break;
+  }
+
+  return map;
+}
+
+function daysSince(dateStr: string): number {
+  const then = new Date(`${dateStr}T00:00:00Z`).getTime();
+  const now = Date.now();
+  return Math.floor((now - then) / 86_400_000);
+}
 
 function sourceLabel(source: string | null): { text: string; color: string; bg: string } {
   switch (source) {
@@ -30,13 +104,36 @@ function sourceLabel(source: string | null): { text: string; color: string; bg: 
   }
 }
 
-export default async function InvoicingRoutingPage() {
-  const rows = await listInvoicingModeRows();
+type InvoicingRoutingPageProps = {
+  searchParams: Promise<{ filter?: string }>;
+};
 
-  const checked = rows.filter((r) => r.invoicing_mode_source !== null);
+export default async function InvoicingRoutingPage({ searchParams }: InvoicingRoutingPageProps) {
+  const params = await searchParams;
+  // "active" is the default -- it's the whole point of the filter (cut
+  // 1k+ customers down to the ones actually worth reviewing right now).
+  const filter = params.filter === "all" ? "all" : "active";
+
+  const [rows, recurringIds, lastInvoiceByClient] = await Promise.all([
+    listInvoicingModeRows(),
+    fetchRecurringClientIds(),
+    fetchLastInvoiceDateByClient(),
+  ]);
+
+  function isActiveCustomer(jobberClientId: string): boolean {
+    if (recurringIds.has(jobberClientId)) return true;
+    const lastInvoice = lastInvoiceByClient.get(jobberClientId);
+    return lastInvoice !== undefined && daysSince(lastInvoice) <= ACTIVE_WINDOW_DAYS;
+  }
+
+  const activeCount = rows.filter((r) => isActiveCustomer(r.jobber_client_id)).length;
+  const visibleRows =
+    filter === "active" ? rows.filter((r) => isActiveCustomer(r.jobber_client_id)) : rows;
+
+  const checked = visibleRows.filter((r) => r.invoicing_mode_source !== null);
   const nativeCount = checked.filter((r) => r.native_invoicing_enabled).length;
   const jobberCount = checked.filter((r) => !r.native_invoicing_enabled).length;
-  const uncheckedCount = rows.length - checked.length;
+  const uncheckedCount = visibleRows.length - checked.length;
 
   return (
     <div style={{ maxWidth: 900, margin: "0 auto", padding: "28px 20px 60px" }}>
@@ -48,7 +145,7 @@ export default async function InvoicingRoutingPage() {
       <h1 style={{ fontSize: 22, margin: "4px 0 4px", color: "#174734" }}>
         Invoicing routing (Stage 7)
       </h1>
-      <p style={{ fontSize: 13.5, color: "#56655c", margin: "0 0 20px", lineHeight: 1.5, maxWidth: 640 }}>
+      <p style={{ fontSize: 13.5, color: "#56655c", margin: "0 0 16px", lineHeight: 1.5, maxWidth: 640 }}>
         Which customers create invoices natively in this app vs. still through Jobber. Nothing on
         this page changes behavior yet &mdash; it's just the reviewable list before that switch
         gets wired in. Run the backfill at{" "}
@@ -57,6 +154,39 @@ export default async function InvoicingRoutingPage() {
         </code>{" "}
         to auto-check anyone not yet evaluated.
       </p>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+        <Link
+          href="/invoices/routing?filter=active"
+          style={{
+            padding: "7px 14px",
+            borderRadius: 20,
+            fontSize: 13,
+            fontWeight: 700,
+            textDecoration: "none",
+            border: "1px solid #174734",
+            background: filter === "active" ? "#174734" : "#fff",
+            color: filter === "active" ? "#fff" : "#174734",
+          }}
+        >
+          Active only — recurring or serviced in last 6 mo ({activeCount})
+        </Link>
+        <Link
+          href="/invoices/routing?filter=all"
+          style={{
+            padding: "7px 14px",
+            borderRadius: 20,
+            fontSize: 13,
+            fontWeight: 700,
+            textDecoration: "none",
+            border: "1px solid #174734",
+            background: filter === "all" ? "#174734" : "#fff",
+            color: filter === "all" ? "#fff" : "#174734",
+          }}
+        >
+          All customers ({rows.length})
+        </Link>
+      </div>
 
       <div
         style={{
@@ -81,7 +211,7 @@ export default async function InvoicingRoutingPage() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => {
+            {visibleRows.map((row) => {
               const source = sourceLabel(row.invoicing_mode_source);
               return (
                 <tr key={row.jobber_client_id} style={{ borderTop: "1px solid #eef0ec" }}>
@@ -121,8 +251,12 @@ export default async function InvoicingRoutingPage() {
         </table>
       </div>
 
-      {rows.length === 0 && (
-        <p style={{ fontSize: 13.5, color: "#56655c", marginTop: 16 }}>No customers found.</p>
+      {visibleRows.length === 0 && (
+        <p style={{ fontSize: 13.5, color: "#56655c", marginTop: 16 }}>
+          {filter === "active"
+            ? "No active customers (recurring or serviced in the last 6 months) found."
+            : "No customers found."}
+        </p>
       )}
     </div>
   );
