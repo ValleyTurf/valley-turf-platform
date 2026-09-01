@@ -116,7 +116,12 @@ async function handleCheckoutSessionCompleted(
   }
 
   if (paid && invoiceId) {
-    await markInvoicePaid(invoiceId, paidAt);
+    await markInvoicePaid({
+      invoiceId,
+      paidAt,
+      amount,
+      stripePaymentIntentId: paymentIntentId,
+    });
   }
 }
 
@@ -189,7 +194,12 @@ async function handlePaymentIntentSucceeded(
   }
 
   if (invoiceId) {
-    await markInvoicePaid(invoiceId, paidAt);
+    await markInvoicePaid({
+      invoiceId,
+      paidAt,
+      amount,
+      stripePaymentIntentId: paymentIntent.id,
+    });
   } else {
     console.error(
       `payment_intent.succeeded ${paymentIntent.id} has no resolvable invoice -- payment recorded but no invoice was marked paid.`

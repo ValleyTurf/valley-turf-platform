@@ -65,22 +65,162 @@ export async function upsertPaymentByIntentId(
   return { ok: true };
 }
 
+// Stage 7: Revenue, Transactions, Job Costing Analytics, Dashboard, and
+// Reactivation/Customer Intelligence all read jobber_invoices/jobber_payments
+// (and the invoice_financials view built on top of them) -- none of them
+// know the native invoices/payments tables exist. Rather than touch every
+// one of those pages, a native invoice gets mirrored into jobber_invoices
+// under a synthetic id ("native-<uuid>") that can never collide with a
+// real Jobber invoice id, so every existing report keeps working
+// unchanged. invoice_financials computes payment_status by summing
+// jobber_payments joined on jobber_invoice_id -- confirmed via
+// `select pg_get_viewdef('invoice_financials', true)` before building
+// this -- so a mirror payment row is what actually flips a native
+// invoice from "Unpaid" to "Paid" in every report, not the status column
+// (that's written too, but only for anything that reads jobber_invoices
+// directly rather than through the view).
+function nativeMirrorInvoiceId(invoiceId: string): string {
+  return `native-${invoiceId}`;
+}
+
+export async function mirrorNativeInvoiceInJobberTables(params: {
+  invoiceId: string;
+  jobberClientId: string;
+  customerName: string | null;
+  invoiceNumber: string;
+  subject: string | null;
+  status: "draft" | "sent" | "paid";
+  issueDate: string;
+  dueDate: string | null;
+  total: number;
+}): Promise<void> {
+  const { error } = await supabaseServer.from("jobber_invoices").upsert(
+    {
+      jobber_invoice_id: nativeMirrorInvoiceId(params.invoiceId),
+      jobber_client_id: params.jobberClientId,
+      invoice_number: params.invoiceNumber,
+      customer_name: params.customerName,
+      subject: params.subject,
+      status: params.status,
+      issue_date: params.issueDate,
+      due_date: params.dueDate,
+      total: params.total,
+      balance: 0,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "jobber_invoice_id" }
+  );
+
+  if (error) {
+    // Best-effort, matching the existing Jobber-invoice creation path's
+    // own optimistic mirror write (app/(platform)/invoices/actions.ts) --
+    // the real invoice already exists in the native tables regardless,
+    // so a reporting mirror failure shouldn't fail the whole action.
+    console.error(
+      `Failed to mirror native invoice ${params.invoiceId} into jobber_invoices:`,
+      error.message
+    );
+  }
+}
+
+// Called once a native invoice is actually paid (from markInvoicePaid
+// below) -- writes the jobber_payments row invoice_financials needs to
+// compute payment_status, and flips the mirror invoice's own status
+// column too (cosmetic/defensive for anything reading jobber_invoices
+// directly). jobber_payment_id is derived from the Stripe PaymentIntent
+// id, which is itself unique, so a webhook retry for the same PI just
+// re-upserts the same row -- harmless, same at-least-once-delivery
+// reasoning as upsertPaymentByIntentId above.
+//
+// Known gap: a refund on a native invoice (handleChargeRefunded above)
+// updates the native `payments` table but does not currently remove/
+// adjust this mirror row -- Revenue/Transactions would keep showing a
+// refunded native invoice as paid. Native invoices are new and refunds
+// are rare/manual today; revisit if that turns out to matter.
+async function mirrorNativeInvoicePayment(params: {
+  invoiceId: string;
+  jobberClientId: string;
+  stripePaymentIntentId: string;
+  amount: number;
+  paidAt: string;
+}): Promise<void> {
+  const mirrorInvoiceId = nativeMirrorInvoiceId(params.invoiceId);
+
+  const { error: paymentError } = await supabaseServer.from("jobber_payments").upsert(
+    {
+      jobber_payment_id: `native-payment-${params.stripePaymentIntentId}`,
+      jobber_invoice_id: mirrorInvoiceId,
+      jobber_client_id: params.jobberClientId,
+      amount: params.amount,
+      payment_date: params.paidAt.slice(0, 10),
+      payment_method: "Stripe",
+      adjustment_type: null,
+      transaction_status: "succeeded",
+      tip_amount: 0,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "jobber_payment_id" }
+  );
+
+  if (paymentError) {
+    console.error(
+      `Failed to mirror payment for native invoice ${params.invoiceId}:`,
+      paymentError.message
+    );
+  }
+
+  const { error: statusError } = await supabaseServer
+    .from("jobber_invoices")
+    .update({ status: "paid", updated_at: new Date().toISOString() })
+    .eq("jobber_invoice_id", mirrorInvoiceId);
+
+  if (statusError) {
+    console.error(
+      `Failed to update mirror invoice status to paid for ${params.invoiceId}:`,
+      statusError.message
+    );
+  }
+}
+
 // Flips an invoice to paid. Guards against downgrading a voided invoice
 // (e.g. a stale/duplicate webhook arriving for an invoice that's since
 // been voided) -- every other status is fair game to move to paid,
 // including re-marking an already-paid invoice paid again (harmless).
-export async function markInvoicePaid(
-  invoiceId: string,
-  paidAt: string
-): Promise<void> {
-  const { error } = await supabaseServer
+//
+// amount/stripePaymentIntentId are used only for the jobber_payments
+// mirror write below -- the native `payments` row itself is already
+// written by upsertPaymentByIntentId before this is called (see both
+// call sites in lib/stripeWebhookProcessor.ts).
+export async function markInvoicePaid(params: {
+  invoiceId: string;
+  paidAt: string;
+  amount: number;
+  stripePaymentIntentId: string;
+}): Promise<void> {
+  const { invoiceId, paidAt, amount, stripePaymentIntentId } = params;
+
+  const { data: invoiceRow, error } = await supabaseServer
     .from("invoices")
     .update({ status: "paid", paid_at: paidAt })
     .eq("id", invoiceId)
-    .neq("status", "void");
+    .neq("status", "void")
+    .select("id, jobber_client_id")
+    .maybeSingle();
 
   if (error) {
     throw new Error(`Failed to mark invoice ${invoiceId} paid: ${error.message}`);
+  }
+
+  // No row means either the invoice was void (guarded above -- correct
+  // to skip) or doesn't exist. Either way there's nothing to mirror.
+  if (invoiceRow?.jobber_client_id) {
+    await mirrorNativeInvoicePayment({
+      invoiceId,
+      jobberClientId: invoiceRow.jobber_client_id,
+      stripePaymentIntentId,
+      amount,
+      paidAt,
+    });
   }
 }
 

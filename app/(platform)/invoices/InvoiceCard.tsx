@@ -73,6 +73,8 @@ export default function InvoiceCard({
   const [success, setSuccess] = useState<{
     invoiceNumber: string | null;
     jobberWebUri: string | null;
+    autopayCharged?: boolean;
+    delivered?: boolean;
   } | null>(null);
 
   const defaultTitle = visitServiceLabel(visit.title) ?? "Service";
@@ -120,6 +122,8 @@ export default function InvoiceCard({
       setSuccess({
         invoiceNumber: result.invoiceNumber,
         jobberWebUri: result.jobberWebUri,
+        autopayCharged: result.autopayCharged,
+        delivered: result.delivered,
       });
     });
   }
@@ -134,6 +138,21 @@ export default function InvoiceCard({
         <p className="mt-1 text-sm text-green-700">
           {visit.customer_name} — {title}
         </p>
+        {success.autopayCharged && (
+          <p className="mt-2 text-xs font-semibold text-green-800">
+            Charged automatically via autopay — a receipt was sent.
+          </p>
+        )}
+        {!success.autopayCharged && success.delivered && (
+          <p className="mt-2 text-xs font-semibold text-green-800">
+            Sent to the customer by email/text.
+          </p>
+        )}
+        {!success.autopayCharged && success.delivered === false && (
+          <p className="mt-2 text-xs font-semibold text-amber-700">
+            Invoice created, but delivery failed — check the customer&apos;s email/phone on file.
+          </p>
+        )}
         {success.jobberWebUri && (
           <a
             href={success.jobberWebUri}
