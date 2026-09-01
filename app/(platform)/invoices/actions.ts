@@ -24,6 +24,7 @@ import { recordAuditLog } from "@/lib/auditLog";
 import { createJobberInvoice } from "@/lib/jobberInvoice";
 import { createInvoice as createNativeInvoice } from "@/lib/invoices";
 import { mirrorNativeInvoiceInJobberTables } from "@/lib/payments";
+import { pushInvoiceToQuickbooks } from "@/lib/quickbooks";
 import { generateInvoicePdf } from "@/lib/invoicePdf";
 import {
   sendInvoiceEmail,
@@ -143,6 +144,37 @@ async function createNativeInvoiceForVisit(
     dueDate: invoice.dueDate,
     total: invoice.total,
   });
+
+  // Stage 8: push to QuickBooks right away, same timing as the
+  // jobber_invoices mirror above -- best-effort, never blocks invoice
+  // creation. Jobber already syncs its own invoices to QuickBooks, so
+  // this only needs to cover native invoices (the gap Jobber's sync
+  // can't see). Failure just leaves quickbooks_push_error set for
+  // later follow-up rather than failing the whole action.
+  const qbPushResult = await pushInvoiceToQuickbooks({
+    invoiceId: invoice.id,
+    jobberClientId: clientId,
+    customerName,
+    customerEmail,
+    customerPhone,
+    invoiceNumber: invoice.invoiceNumber,
+    issueDate: invoice.issueDate,
+    dueDate: invoice.dueDate,
+    lineItems: [{ description: title, quantity: 1, unitPrice: price }],
+  });
+
+  if (qbPushResult.ok) {
+    await supabaseServer
+      .from("invoices")
+      .update({ quickbooks_invoice_id: qbPushResult.quickbooksInvoiceId, quickbooks_push_error: null })
+      .eq("id", invoice.id);
+  } else {
+    console.error(`QuickBooks push failed for invoice ${invoice.invoiceNumber}:`, qbPushResult.error);
+    await supabaseServer
+      .from("invoices")
+      .update({ quickbooks_push_error: qbPushResult.error })
+      .eq("id", invoice.id);
+  }
 
   let autopayCharged = false;
   // undefined (not false) until a delivery attempt actually happens --

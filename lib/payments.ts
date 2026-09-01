@@ -4,6 +4,7 @@
 // invoice to "paid" outside of a verified Stripe webhook event.
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
+import { pushPaymentToQuickbooks } from "@/lib/quickbooks";
 
 export type PaymentStatus = "processing" | "succeeded" | "failed" | "refunded";
 
@@ -204,7 +205,7 @@ export async function markInvoicePaid(params: {
     .update({ status: "paid", paid_at: paidAt })
     .eq("id", invoiceId)
     .neq("status", "void")
-    .select("id, jobber_client_id")
+    .select("id, jobber_client_id, quickbooks_invoice_id")
     .maybeSingle();
 
   if (error) {
@@ -221,6 +222,34 @@ export async function markInvoicePaid(params: {
       amount,
       paidAt,
     });
+  }
+
+  // Stage 8: record the payment against the QuickBooks invoice pushed
+  // at creation time (lib/quickbooks.ts, called from
+  // app/(platform)/invoices/actions.ts). Only possible if that earlier
+  // push actually succeeded -- if it didn't, quickbooks_invoice_id is
+  // null and there's nothing to link a payment to yet. Best-effort,
+  // same as the jobber_payments mirror above -- never throws.
+  if (invoiceRow?.jobber_client_id && invoiceRow.quickbooks_invoice_id) {
+    const qbResult = await pushPaymentToQuickbooks({
+      jobberClientId: invoiceRow.jobber_client_id,
+      quickbooksInvoiceId: invoiceRow.quickbooks_invoice_id,
+      amount,
+      paidDate: paidAt.slice(0, 10),
+    });
+
+    if (qbResult.ok) {
+      await supabaseServer
+        .from("invoices")
+        .update({ quickbooks_payment_id: qbResult.quickbooksPaymentId, quickbooks_push_error: null })
+        .eq("id", invoiceId);
+    } else {
+      console.error(`QuickBooks payment push failed for invoice ${invoiceId}:`, qbResult.error);
+      await supabaseServer
+        .from("invoices")
+        .update({ quickbooks_push_error: qbResult.error })
+        .eq("id", invoiceId);
+    }
   }
 }
 
