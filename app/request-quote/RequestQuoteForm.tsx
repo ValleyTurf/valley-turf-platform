@@ -202,15 +202,19 @@ export default function RequestQuoteForm() {
 
       <div>
         <label htmlFor="turfSizeRange" className={labelClasses}>
-          Approximate Square Footage (optional)
+          Approximate Square Footage
         </label>
         <select
           id="turfSizeRange"
           name="turfSizeRange"
+          required
           defaultValue=""
           className={`${inputClasses} bg-white`}
         >
-          <option value="">Not sure</option>
+          <option value="" disabled>
+            Select one
+          </option>
+          <option value="Not sure">Not sure</option>
           {SQFT_OPTIONS.map((range) => (
             <option key={range} value={range}>
               {range} sq ft

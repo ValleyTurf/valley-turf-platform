@@ -36,16 +36,18 @@ export async function submitQuoteRequest(
   const zip = input.zip?.trim();
   const state = input.state?.trim() || "AZ";
 
-  if (!fullName || !phone || !street || !city || !zip) {
+  const turfSizeRange = input.turfSizeRange?.trim() || null;
+
+  if (!fullName || !phone || !street || !city || !zip || !turfSizeRange) {
     return {
       ok: false,
-      error: "Name, phone, and service address are required.",
+      error:
+        "Name, phone, service address, and approximate square footage are required.",
     };
   }
 
   const email = input.email?.trim() || null;
   const notes = input.notes?.trim() || null;
-  const turfSizeRange = input.turfSizeRange?.trim() || null;
   const photoPaths = Array.isArray(input.photoPaths) ? input.photoPaths : [];
 
   const { firstName, lastName } = splitName(fullName);

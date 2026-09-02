@@ -17,7 +17,17 @@ export default function RequestQuotePage() {
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-10 text-[#174734] sm:px-6">
       <div className="mx-auto max-w-xl">
-        <p className="text-center text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
+        {/* Plain <img>, not next/image — this SVG doesn't need the image
+            optimizer (nothing to resize/compress on a vector logo), and
+            skipping it avoids next.config.ts needing
+            images.dangerouslyAllowSVG just to render one static asset. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/branding/logo.svg"
+          alt="Valley Turf Revival"
+          className="mx-auto h-16 w-auto"
+        />
+        <p className="mt-3 text-center text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
           Valley Turf Revival
         </p>
         <h1 className="mt-3 text-center text-3xl font-bold">
