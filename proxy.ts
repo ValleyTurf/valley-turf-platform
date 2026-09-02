@@ -139,13 +139,19 @@ export async function proxy(request: NextRequest) {
   // model as /pay/ and /q/ above (customer_payment_methods.enrollment_token,
   // migration 047). Covers both the page and its Server Action.
   const isPublicAutopay = pathname.startsWith("/autopay/");
+  // Public quote-request intake form (app/request-quote) — no token at
+  // all, since this is where NEW leads originate rather than looking up
+  // an existing record. Replaces the Jobber-embedded quote form as the
+  // site's public lead capture (see 050_add_lead_form_fields.sql).
+  const isPublicRequestQuote = pathname.startsWith("/request-quote");
 
   if (
     isPublicPath ||
     isPublicRedirect ||
     isPublicQuote ||
     isPublicInvoicePay ||
-    isPublicAutopay
+    isPublicAutopay ||
+    isPublicRequestQuote
   ) {
     return NextResponse.next();
   }
