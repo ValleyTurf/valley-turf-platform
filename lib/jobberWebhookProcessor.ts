@@ -200,6 +200,7 @@ const VISIT_QUERY = `
       job {
         id
         jobNumber
+        jobStatus
       }
       invoice {
         id
@@ -422,6 +423,26 @@ async function syncSingleJob(jobberJobId: string): Promise<void> {
       `Unable to save Jobber job ${jobberJobId}: ${upsertError.message}`
     );
   }
+
+  // Cascade the new job_status onto every visit under this job. Critical
+  // for the case that motivated adding job_status to jobber_visits at
+  // all: canceling a job from Jobber's OWN web UI (not this app's
+  // /jobs/[id]/edit) only ever fires this JOB_UPDATE webhook — it does
+  // NOT destroy or update the job's individual visits, so without this
+  // cascade their jobber_visits rows would sit forever with a stale
+  // visit_status ("upcoming") and never reflect the cancellation, which
+  // is exactly the bug reported: canceled jobs kept showing up on
+  // /schedule, /my-day, and /crew-status.
+  const { error: cascadeError } = await supabaseServer
+    .from("jobber_visits")
+    .update({ job_status: jobRow.job_status })
+    .eq("jobber_job_id", jobberJobId);
+
+  if (cascadeError) {
+    throw new Error(
+      `Unable to cascade job_status to visits for job ${jobberJobId}: ${cascadeError.message}`
+    );
+  }
 }
 
 async function syncSingleInvoice(jobberInvoiceId: string): Promise<void> {
@@ -495,7 +516,11 @@ async function syncSingleVisit(jobberVisitId: string): Promise<void> {
       duration: number | string | null;
       isLastScheduledVisit: boolean | null;
       client: { id: string; name: string | null } | null;
-      job: { id: string; jobNumber: number | string | null } | null;
+      job: {
+        id: string;
+        jobNumber: number | string | null;
+        jobStatus: string | null;
+      } | null;
       invoice: { id: string } | null;
     } | null;
   }>(VISIT_QUERY, { id: jobberVisitId });
@@ -525,6 +550,7 @@ async function syncSingleVisit(jobberVisitId: string): Promise<void> {
     jobber_invoice_id: visit.invoice?.id ?? null,
     customer_name: cleanText(visit.client?.name),
     job_number: cleanNumericText(visit.job?.jobNumber),
+    job_status: cleanText(visit.job?.jobStatus),
     title: cleanText(visit.title),
     visit_status: cleanText(visit.visitStatus),
     start_at: visit.startAt ?? null,

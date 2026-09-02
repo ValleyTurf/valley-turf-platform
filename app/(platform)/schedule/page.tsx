@@ -24,6 +24,7 @@ type VisitRow = {
   jobber_invoice_id: string | null;
   customer_name: string | null;
   job_number: string | null;
+  job_status: string | null;
   title: string | null;
   visit_status: string | null;
   start_at: string | null;
@@ -540,8 +541,17 @@ export default async function SchedulePage({
     supabaseServer
       .from("jobber_visits")
       .select(
-        "jobber_visit_id, jobber_job_id, jobber_client_id, jobber_invoice_id, customer_name, job_number, title, visit_status, start_at, end_at, duration_minutes"
+        "jobber_visit_id, jobber_job_id, jobber_client_id, jobber_invoice_id, customer_name, job_number, job_status, title, visit_status, start_at, end_at, duration_minutes"
       )
+      // Job canceled directly in Jobber's own UI (not through this app)
+      // only fires a job-level webhook — it never touches the visit rows
+      // themselves, so without this filter a canceled job's visits sit
+      // in jobber_visits forever looking "upcoming." See
+      // 051_add_job_status_to_visits.sql. Written as job_status.is.null
+      // OR job_status.neq.archived (not a plain .neq()) because a bare
+      // <> comparison excludes NULL rows in SQL, which would hide every
+      // visit not yet backfilled/synced with a job_status at all.
+      .or("job_status.is.null,job_status.neq.archived")
       .gte("start_at", queryStart)
       .lte("start_at", queryEnd)
       .order("start_at", { ascending: true }),

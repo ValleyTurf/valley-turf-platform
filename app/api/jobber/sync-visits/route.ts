@@ -43,6 +43,7 @@ const VISITS_QUERY = `
         job {
           id
           jobNumber
+          jobStatus
         }
 
         invoice {
@@ -66,6 +67,7 @@ type JobberClient = {
 type JobberJob = {
   id: string;
   jobNumber: number | string | null;
+  jobStatus: string | null;
 };
 
 type JobberInvoice = {
@@ -110,6 +112,7 @@ type VisitUpsert = {
   jobber_invoice_id: string | null;
   customer_name: string | null;
   job_number: string | null;
+  job_status: string | null;
   title: string | null;
   visit_status: string | null;
   start_at: string | null;
@@ -150,6 +153,7 @@ function formatVisit(visit: JobberVisit): VisitUpsert {
     jobber_invoice_id: visit.invoice?.id ?? null,
     customer_name: cleanText(visit.client?.name),
     job_number: cleanText(visit.job?.jobNumber),
+    job_status: cleanText(visit.job?.jobStatus),
     title: cleanText(visit.title),
     visit_status: cleanText(visit.visitStatus),
     start_at: visit.startAt ?? null,

@@ -156,6 +156,9 @@ export default async function CrewStatusPage() {
       supabaseServer
         .from("jobber_visits")
         .select("jobber_visit_id, customer_name, title, visit_status, start_at")
+        // Exclude visits whose job was canceled/archived directly in
+        // Jobber's own UI — see 051_add_job_status_to_visits.sql.
+        .or("job_status.is.null,job_status.neq.archived")
         .gte("start_at", queryStart)
         .lte("start_at", queryEnd)
         .order("start_at", { ascending: true }),
