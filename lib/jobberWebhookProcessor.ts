@@ -43,6 +43,7 @@ type JobberAddress = {
 };
 
 type JobberProperty = {
+  id: string;
   address: JobberAddress | null;
 };
 
@@ -117,8 +118,9 @@ const CLIENT_QUERY = `
         street2
       }
 
-      clientProperties(first: 1) {
+      clientProperties(first: 10) {
         nodes {
+          id
           address {
             city
             country
@@ -251,8 +253,26 @@ function hasUsableAddress(
   );
 }
 
-function getCustomerAddress(client: JobberClient): JobberAddress | null {
+// preferredPropertyId is the staff-picked "current" property (see
+// migration 052) for customers with more than one property in Jobber --
+// e.g. they moved and the old property is still on file. Null means no
+// override has been set, which falls back to the original behavior of
+// just taking the first usable property.
+function getCustomerAddress(
+  client: JobberClient,
+  preferredPropertyId: string | null
+): JobberAddress | null {
   const properties = client.clientProperties?.nodes ?? [];
+
+  if (preferredPropertyId) {
+    const preferred = properties.find(
+      (property) => property.id === preferredPropertyId
+    );
+
+    if (preferred && hasUsableAddress(preferred.address)) {
+      return preferred.address;
+    }
+  }
 
   const servicePropertyAddress = properties
     .map((property) => property.address)
@@ -269,7 +289,10 @@ function getCustomerAddress(client: JobberClient): JobberAddress | null {
   return null;
 }
 
-function formatCustomer(client: JobberClient): CustomerUpsert {
+function formatCustomer(
+  client: JobberClient,
+  preferredPropertyId: string | null
+): CustomerUpsert {
   const firstName = cleanText(client.firstName);
   const lastName = cleanText(client.lastName);
 
@@ -283,7 +306,7 @@ function formatCustomer(client: JobberClient): CustomerUpsert {
 
   const balance = Number(client.balance ?? 0);
 
-  const address = getCustomerAddress(client);
+  const address = getCustomerAddress(client, preferredPropertyId);
 
   const addressLine1 =
     cleanText(address?.street1) || cleanText(address?.street) || null;
@@ -310,7 +333,7 @@ function formatCustomer(client: JobberClient): CustomerUpsert {
   };
 }
 
-async function syncSingleCustomer(jobberClientId: string): Promise<void> {
+export async function syncSingleCustomer(jobberClientId: string): Promise<void> {
   const response = await jobberGraphQL<ClientQueryResponse>(CLIENT_QUERY, {
     id: jobberClientId,
   });
@@ -332,7 +355,20 @@ async function syncSingleCustomer(jobberClientId: string): Promise<void> {
     throw new Error(`Jobber customer ${jobberClientId} was not found.`);
   }
 
-  const customerRow = formatCustomer(client);
+  // formatCustomer only ever writes address_line_1/city/state/etc -- it
+  // never touches current_property_id itself -- so this lookup just
+  // reads back whatever override staff may have set on the Customer page
+  // and feeds it into address selection below.
+  const { data: existingCustomer } = await supabaseServer
+    .from("customers")
+    .select("current_property_id")
+    .eq("jobber_client_id", jobberClientId)
+    .maybeSingle();
+
+  const customerRow = formatCustomer(
+    client,
+    existingCustomer?.current_property_id ?? null
+  );
 
   const { error: upsertError } = await supabaseServer
     .from("customers")

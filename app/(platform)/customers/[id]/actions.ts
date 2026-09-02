@@ -11,6 +11,7 @@ import {
 } from "@/lib/visitNotes";
 import { removeJobberJobNotePhoto } from "@/lib/jobberJobNotes";
 import { getOrCreateEnrollmentToken, setAutopayEnabled } from "@/lib/autopay";
+import { syncSingleCustomer } from "@/lib/jobberWebhookProcessor";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
@@ -206,6 +207,61 @@ export async function removeVisitPhoto(
   revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
 
   return { error: null };
+}
+
+// Jobber has no concept of a "primary" or "current" property -- when a
+// customer moves and staff add a new property in Jobber instead of
+// editing the old one in place, both stay on the client's record with
+// no signal for which one is current. This lets staff pick, from the
+// property list already rendered on this page (see getCustomer's
+// clientProperties query), which one the customer card and any
+// get-directions link should use. propertyId is null to clear the
+// override and fall back to the default (first usable property).
+export async function setCurrentProperty(
+  jobberClientId: string,
+  propertyId: string | null
+): Promise<void> {
+  const actor = await getCurrentUser();
+
+  const { data: before } = await supabaseServer
+    .from("customers")
+    .select("full_name, current_property_id")
+    .eq("jobber_client_id", jobberClientId)
+    .maybeSingle();
+
+  const { error } = await supabaseServer
+    .from("customers")
+    .update({ current_property_id: propertyId })
+    .eq("jobber_client_id", jobberClientId);
+
+  if (error) {
+    throw new Error(`Failed to update current property: ${error.message}`);
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "customer",
+    entityId: jobberClientId,
+    entityLabel: before?.full_name ?? null,
+    before: { current_property_id: before?.current_property_id ?? null },
+    after: { current_property_id: propertyId },
+  });
+
+  // Re-derive address_line_1/city/state/postal_code/lat/lng from Jobber
+  // right away using the new override, so the schedule/my-day/directions
+  // links reflect the change immediately instead of waiting for the next
+  // scheduled customer sync.
+  try {
+    await syncSingleCustomer(jobberClientId);
+  } catch (syncError) {
+    console.error(
+      `Current property saved, but re-syncing the address failed for ${jobberClientId}:`,
+      syncError
+    );
+  }
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
 }
 
 // Staff-facing counterpart to the portal's self-serve autopay flow

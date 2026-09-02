@@ -35,6 +35,7 @@ type JobberAddress = {
 };
 
 type JobberProperty = {
+  id: string;
   address: JobberAddress | null;
 };
 
@@ -149,8 +150,9 @@ const CLIENTS_QUERY = `
           street2
         }
 
-        clientProperties(first: 1) {
+        clientProperties(first: 10) {
           nodes {
+            id
             address {
               city
               country
@@ -215,11 +217,27 @@ function hasUsableAddress(
   );
 }
 
+// preferredPropertyId is the staff-picked "current" property (see
+// migration 052) for customers with more than one property in Jobber --
+// e.g. they moved and the old property is still on file. Null means no
+// override has been set, which falls back to the original behavior of
+// just taking the first usable property.
 function getCustomerAddress(
-  client: JobberClient
+  client: JobberClient,
+  preferredPropertyId: string | null
 ): JobberAddress | null {
   const properties =
     client.clientProperties?.nodes ?? [];
+
+  if (preferredPropertyId) {
+    const preferred = properties.find(
+      (property) => property.id === preferredPropertyId
+    );
+
+    if (preferred && hasUsableAddress(preferred.address)) {
+      return preferred.address;
+    }
+  }
 
   const servicePropertyAddress = properties
     .map((property) => property.address)
@@ -237,7 +255,8 @@ function getCustomerAddress(
 }
 
 function formatCustomer(
-  client: JobberClient
+  client: JobberClient,
+  preferredPropertyId: string | null
 ): CustomerUpsert {
   const firstName = cleanText(client.firstName);
   const lastName = cleanText(client.lastName);
@@ -254,7 +273,7 @@ function formatCustomer(
 
   const balance = Number(client.balance ?? 0);
 
-  const address = getCustomerAddress(client);
+  const address = getCustomerAddress(client, preferredPropertyId);
 
   const addressLine1 =
     cleanText(address?.street1) ||
@@ -307,7 +326,39 @@ async function getClientsPage(
   );
 }
 
+async function getCurrentPropertyOverrides(): Promise<
+  Map<string, string>
+> {
+  // One query up front rather than a per-customer lookup inside the
+  // paginated loop below -- this sync can touch thousands of clients,
+  // and only a handful will ever have a manual override set.
+  const { data, error } = await supabaseServer
+    .from("customers")
+    .select("jobber_client_id, current_property_id")
+    .not("current_property_id", "is", null);
+
+  if (error) {
+    console.error(
+      "Unable to load current_property_id overrides:",
+      error.message
+    );
+    return new Map();
+  }
+
+  const overrides = new Map<string, string>();
+
+  for (const row of data ?? []) {
+    if (row.jobber_client_id && row.current_property_id) {
+      overrides.set(row.jobber_client_id, row.current_property_id);
+    }
+  }
+
+  return overrides;
+}
+
 async function syncCustomers(): Promise<SyncResult> {
+  const propertyOverrides = await getCurrentPropertyOverrides();
+
   let cursor: string | null = null;
   let hasNextPage = true;
   let pageNumber = 0;
@@ -368,8 +419,12 @@ async function syncCustomers(): Promise<SyncResult> {
     customersReceived += clients.length;
 
     if (clients.length > 0) {
-      const customerRows =
-        clients.map(formatCustomer);
+      const customerRows = clients.map((client) =>
+        formatCustomer(
+          client,
+          propertyOverrides.get(client.id) ?? null
+        )
+      );
 
       for (const customer of customerRows) {
         if (

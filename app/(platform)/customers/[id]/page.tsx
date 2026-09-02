@@ -12,6 +12,7 @@ import {
   removeImportedJobNotePhoto,
   generateAutopayLink,
   toggleAutopay,
+  setCurrentProperty,
 } from "./actions";
 import { getPaymentMethodByClientId } from "@/lib/autopay";
 import { saveVisitCosts } from "../../materials/actions";
@@ -752,6 +753,7 @@ type CustomerProfile = {
   subscription_plan: string | null;
   service_instructions: string | null;
   notes: string | null;
+  current_property_id: string | null;
 };
 
 async function getCustomerProfile(
@@ -769,7 +771,8 @@ async function getCustomerProfile(
         odor_level,
         subscription_plan,
         service_instructions,
-        notes
+        notes,
+        current_property_id
       `
     )
     .eq("jobber_client_id", jobberClientId)
@@ -1257,34 +1260,72 @@ export default async function CustomerDetailPage({
               </div>
 
               <div className="mt-5 space-y-2 border-t border-[#e7e2d5] pt-4">
+                {properties.length > 1 && (
+                  <p className="text-xs text-[#6b705c]">
+                    This customer has multiple properties on file. Mark
+                    which one is current so the customer card and
+                    directions use the right address.
+                  </p>
+                )}
+
                 {properties.length > 0 ? (
                   properties.map((property) => {
+                    // Jobber has no "primary property" concept, so when
+                    // no manual override is saved yet, the first property
+                    // is the one actually used (see getCustomerAddress in
+                    // lib/jobberWebhookProcessor.ts) -- this mirrors that
+                    // default so the badge always matches reality.
+                    const isCurrent = profile?.current_property_id
+                      ? property.id === profile.current_property_id
+                      : property.id === properties[0]?.id;
+
                     const content = (
                       <p className="text-sm font-semibold">
                         {formatAddress(property)}
                       </p>
                     );
 
-                    if (property.jobberWebUri) {
-                      return (
-                        <a
-                          key={property.id}
-                          href={property.jobberWebUri}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="block rounded-xl bg-[#f7f6f1] px-3 py-2 transition hover:bg-[#efeadf]"
-                        >
-                          {content}
-                        </a>
-                      );
-                    }
+                    const addressBlock = property.jobberWebUri ? (
+                      <a
+                        href={property.jobberWebUri}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block min-w-0 flex-1 hover:underline"
+                      >
+                        {content}
+                      </a>
+                    ) : (
+                      <div className="min-w-0 flex-1">{content}</div>
+                    );
 
                     return (
                       <div
                         key={property.id}
-                        className="rounded-xl bg-[#f7f6f1] px-3 py-2"
+                        className="flex items-center justify-between gap-3 rounded-xl bg-[#f7f6f1] px-3 py-2 transition hover:bg-[#efeadf]"
                       >
-                        {content}
+                        {addressBlock}
+
+                        {properties.length > 1 &&
+                          (isCurrent ? (
+                            <span className="shrink-0 rounded-full bg-[#174734] px-2 py-0.5 text-[10px] font-bold text-white">
+                              Current
+                            </span>
+                          ) : (
+                            <form
+                              action={setCurrentProperty.bind(
+                                null,
+                                decodedId,
+                                property.id
+                              )}
+                            >
+                              <button
+                                type="submit"
+                                className="shrink-0 rounded-full border border-[#174734] px-2 py-0.5 text-[10px] font-bold text-[#174734] transition hover:bg-[#174734] hover:text-white"
+                              >
+                                Set current
+                              </button>
+                            </form>
+                          ))}
                       </div>
                     );
                   })
