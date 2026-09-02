@@ -147,7 +147,7 @@ export default async function InvoicingRoutingPage({ searchParams }: InvoicingRo
       </h1>
       <p style={{ fontSize: 13.5, color: "#56655c", margin: "0 0 16px", lineHeight: 1.5, maxWidth: 640 }}>
         Which customers create invoices natively in this app vs. still through Jobber. Nothing on
-        this page changes behavior yet &mdash; it's just the reviewable list before that switch
+        this page changes behavior yet &mdash; it&apos;s just the reviewable list before that switch
         gets wired in. Run the backfill at{" "}
         <code style={{ background: "#f2f4f1", padding: "1px 5px", borderRadius: 4 }}>
           /api/jobber/backfill-invoicing-mode
