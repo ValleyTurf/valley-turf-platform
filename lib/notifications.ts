@@ -501,6 +501,249 @@ export async function sendAutopayReceiptSms(
   }
 }
 
+// Pre-visit reminder text (Tier 3, Jobber Independence Roadmap) --
+// fired by lib/visitReminders.ts's cron-driven send loop at whichever
+// day-offsets are enabled in visit_reminder_rules (Ryan's default: 4
+// days and 2 days before the visit). Same boolean-return pattern as
+// sendOnMyWaySms -- the cron route logs failures per-visit rather than
+// silently losing track of who didn't get reminded.
+export async function sendVisitReminderSms(
+  toPhone: string,
+  customerName: string | null,
+  visitLabel: string,
+  visitDateLabel: string
+): Promise<boolean> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_FROM_NUMBER;
+
+  if (!accountSid || !authToken || !fromNumber) {
+    console.error("Cannot send visit reminder text: Twilio env vars are not set.");
+    return false;
+  }
+
+  const greetingName = customerName?.trim() || "there";
+  const body = `Hi ${greetingName}, this is Valley Turf Revival. Reminder: your ${visitLabel} visit is scheduled for ${visitDateLabel}. Reply to this number if you need to reschedule.`;
+
+  try {
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${accountSid}:${authToken}`
+          ).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          To: toPhone,
+          From: fromNumber,
+          Body: body,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      console.error(
+        "Visit reminder SMS failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Visit reminder SMS error:", error);
+    return false;
+  }
+}
+
+// Email counterpart to sendVisitReminderSms -- same reasoning as
+// sendInvoiceEmail existing alongside sendInvoiceSms, sent independently
+// (not either/or) so a customer with both on file gets both.
+export async function sendVisitReminderEmail(
+  toEmail: string,
+  customerName: string | null,
+  visitLabel: string,
+  visitDateLabel: string
+): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    console.error("Cannot send visit reminder email: RESEND_API_KEY is not set.");
+    return false;
+  }
+
+  const fromAddress = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
+  const greetingName = customerName || "there";
+
+  const html = `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
+      <p>This is a reminder that your <strong>${escapeHtml(
+        visitLabel
+      )}</strong> visit with Valley Turf Revival is scheduled for <strong>${escapeHtml(
+    visitDateLabel
+  )}</strong>.</p>
+      <p style="color: #6b705c; font-size: 12px;">Need to reschedule? Just reply to this email or give us a call.</p>
+    </div>
+  `;
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromAddress,
+        to: toEmail,
+        subject: `Reminder: your ${visitLabel} visit is coming up`,
+        html,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(
+        "Visit reminder email failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Visit reminder email error:", error);
+    return false;
+  }
+}
+
+// Review-request text (Tier 3) -- built and wired per Ryan's request, but
+// review_request_settings.enabled defaults false (migration 055), so
+// lib/reviewRequests.ts never actually calls this in production until
+// Ryan turns it on from Settings. Kept here rather than inline in
+// lib/reviewRequests.ts to match every other outbound message in this
+// file living in one place.
+export async function sendReviewRequestSms(
+  toPhone: string,
+  customerName: string | null,
+  reviewUrl: string
+): Promise<boolean> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_FROM_NUMBER;
+
+  if (!accountSid || !authToken || !fromNumber) {
+    console.error("Cannot send review request text: Twilio env vars are not set.");
+    return false;
+  }
+
+  const greetingName = customerName?.trim() || "there";
+  const body = `Hi ${greetingName}, thanks for choosing Valley Turf Revival! If you have a minute, we'd really appreciate a quick review: ${reviewUrl}`;
+
+  try {
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${accountSid}:${authToken}`
+          ).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          To: toPhone,
+          From: fromNumber,
+          Body: body,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      console.error(
+        "Review request SMS failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Review request SMS error:", error);
+    return false;
+  }
+}
+
+// Email counterpart to sendReviewRequestSms -- same "built, not active"
+// status (see header comment above).
+export async function sendReviewRequestEmail(
+  toEmail: string,
+  customerName: string | null,
+  reviewUrl: string
+): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    console.error("Cannot send review request email: RESEND_API_KEY is not set.");
+    return false;
+  }
+
+  const fromAddress = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
+  const greetingName = customerName || "there";
+
+  const html = `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
+      <p>Thanks for choosing Valley Turf Revival! If you have a minute, we'd really appreciate a quick review.</p>
+      <p style="margin: 24px 0;">
+        <a
+          href="${reviewUrl}"
+          style="background-color: #174734; color: #ffffff; padding: 12px 24px; border-radius: 10px; text-decoration: none; font-weight: bold;"
+        >
+          Leave a Review
+        </a>
+      </p>
+      <p style="color: #6b705c; font-size: 12px;">Thanks for your support -- it means a lot to a local business.</p>
+    </div>
+  `;
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromAddress,
+        to: toEmail,
+        subject: "How did we do?",
+        html,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(
+        "Review request email failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Review request email error:", error);
+    return false;
+  }
+}
+
 async function sendLeadSmsAlert(lead: NewLeadAlert): Promise<void> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;

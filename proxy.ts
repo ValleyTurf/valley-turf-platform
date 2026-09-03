@@ -67,6 +67,12 @@ const CRON_PATHS = [
   // this same CRON_SECRET mechanism since it's the same "Vercel Cron
   // calls this on a schedule with no browser session" situation.
   "/api/jobs/generate-recurring-visits",
+  // Tier 3 (Jobber Independence Roadmap) — daily pre-visit reminder send.
+  // Same reasoning as generate-recurring-visits above.
+  "/api/visits/send-reminders",
+  // Tier 3 — review request send. Wired but inactive until Ryan enables
+  // it from Settings (see lib/reviewRequests.ts's header comment).
+  "/api/visits/send-review-requests",
 ];
 
 // The customer portal is a completely separate auth world from the staff

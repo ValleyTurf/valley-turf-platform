@@ -161,6 +161,11 @@ export const ALWAYS_ADMIN_ONLY_PREFIXES = [
   "/team",
   "/api/backup",
   "/settings/permissions",
+  // Tier 3 (Jobber Independence Roadmap) — controls automated
+  // customer-facing messaging (visit reminders, review requests). Same
+  // "structurally sensitive, not delegable via role_permissions"
+  // reasoning as /settings/permissions above.
+  "/settings/notifications",
 ];
 
 // Manager+ only — staff excluded, but unlike ALWAYS_ADMIN_ONLY_PREFIXES,

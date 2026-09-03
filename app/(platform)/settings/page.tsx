@@ -45,6 +45,15 @@ const settingsSections: SettingsSection[] = [
     status: "Connected",
   },
   {
+    title: "Notifications",
+    description:
+      "Configure automated pre-visit text/email reminders and (once ready) review request messages.",
+    href: "/settings/notifications",
+    icon: "🔔",
+    status: "Manage",
+    adminOnly: true,
+  },
+  {
     title: "System Health",
     description:
       "Diagnostic checks on synced data — subject/status field integrity, cost snapshot accuracy, and sync freshness.",

@@ -27,6 +27,17 @@ type OutstandingSummary = {
   outstanding_balance: number | string | null;
 };
 
+// Native invoices (Tier 1) live in their own table, separate from the
+// Jobber-synced jobber_invoices customer_financials is built from — see
+// app/portal/invoices/page.tsx's header comment for the full gap this
+// closes. No partial-payment concept for native invoices (no `balance`
+// column, just a status), so the open balance is simply the total for
+// any invoice still awaiting payment.
+type NativeInvoiceBalance = {
+  status: string;
+  total: number | string;
+};
+
 function formatVisitTime(value: string | null): string {
   if (!value) return "—";
 
@@ -52,34 +63,45 @@ export default async function PortalDashboardPage() {
 
   const nowIso = new Date().toISOString();
 
-  const [visitsResult, jobsResult, balanceResult] = await Promise.all([
-    supabaseServer
-      .from("jobber_visits")
-      .select("jobber_visit_id, title, visit_status, start_at, end_at")
-      .eq("jobber_client_id", customer.jobberClientId)
-      .gte("start_at", nowIso)
-      .order("start_at", { ascending: true })
-      .limit(5),
+  const [visitsResult, jobsResult, balanceResult, nativeInvoicesResult] =
+    await Promise.all([
+      supabaseServer
+        .from("jobber_visits")
+        .select("jobber_visit_id, title, visit_status, start_at, end_at")
+        .eq("jobber_client_id", customer.jobberClientId)
+        .gte("start_at", nowIso)
+        .order("start_at", { ascending: true })
+        .limit(5),
 
-    supabaseServer
-      .from("jobber_jobs")
-      .select("jobber_job_id, job_number, job_status, total")
-      .eq("jobber_client_id", customer.jobberClientId)
-      .order("jobber_job_id", { ascending: false })
-      .limit(5),
+      supabaseServer
+        .from("jobber_jobs")
+        .select("jobber_job_id, job_number, job_status, total")
+        .eq("jobber_client_id", customer.jobberClientId)
+        .order("jobber_job_id", { ascending: false })
+        .limit(5),
 
-    supabaseServer
-      .from("customer_financials")
-      .select("outstanding_balance")
-      .eq("jobber_client_id", customer.jobberClientId)
-      .maybeSingle(),
-  ]);
+      supabaseServer
+        .from("customer_financials")
+        .select("outstanding_balance")
+        .eq("jobber_client_id", customer.jobberClientId)
+        .maybeSingle(),
+
+      supabaseServer
+        .from("invoices")
+        .select("status, total")
+        .eq("jobber_client_id", customer.jobberClientId)
+        .in("status", ["sent", "overdue"]),
+    ]);
 
   const upcomingVisits = (visitsResult.data ?? []) as UpcomingVisit[];
   const recentJobs = (jobsResult.data ?? []) as RecentJob[];
-  const outstandingBalance = Number(
+  const jobberOutstandingBalance = Number(
     (balanceResult.data as OutstandingSummary | null)?.outstanding_balance ?? 0
   );
+  const nativeOutstandingBalance = (
+    (nativeInvoicesResult.data ?? []) as NativeInvoiceBalance[]
+  ).reduce((sum, invoice) => sum + Number(invoice.total ?? 0), 0);
+  const outstandingBalance = jobberOutstandingBalance + nativeOutstandingBalance;
 
   return (
     <PortalShell activeHref="/portal" customerName={customer.name}>
