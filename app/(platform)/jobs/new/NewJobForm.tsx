@@ -177,8 +177,8 @@ export default function NewJobForm({
         />
         <p className="mt-1 text-xs text-[#6b705c]">
           {isRecurring
-            ? "First visit date — visits then repeat on this cadence for 5 years. Extend or adjust the recurring schedule in Jobber anytime."
-            : "If set, schedules a single visit on this date. Leave blank to schedule it later in Jobber."}
+            ? "First visit date — future visits generate automatically on this cadence. Adjust the schedule anytime from Manage Job."
+            : "If set, schedules a single visit on this date. Leave blank to schedule it later."}
         </p>
       </div>
 
@@ -208,7 +208,7 @@ export default function NewJobForm({
         disabled={isPending || !selected}
         className="rounded-xl bg-[#174734] px-6 py-3 text-sm font-bold text-white transition hover:bg-[#226246] disabled:opacity-60"
       >
-        {isPending ? "Creating…" : "Create Job in Jobber"}
+        {isPending ? "Creating…" : "Create Job"}
       </button>
     </form>
   );

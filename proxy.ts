@@ -62,6 +62,11 @@ const CRON_PATHS = [
   "/api/jobber/sync-payment-fees",
   "/api/jobber/sync-visits",
   "/api/jobber/process-webhooks",
+  // Tier 2 Stage 3 (Jobber Independence Roadmap) — tops up native
+  // recurring jobs' future visits. Not a Jobber route at all, but reuses
+  // this same CRON_SECRET mechanism since it's the same "Vercel Cron
+  // calls this on a schedule with no browser session" situation.
+  "/api/jobs/generate-recurring-visits",
 ];
 
 // The customer portal is a completely separate auth world from the staff

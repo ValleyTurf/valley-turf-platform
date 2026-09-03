@@ -6,6 +6,14 @@
 // real schema (propertyId, not clientId; invoicing is required).
 import "server-only";
 import { jobberGraphQL } from "@/lib/jobber";
+import {
+  isNativeId,
+  fetchNativeJobDetails,
+  editNativeJob,
+  setNativeJobPrice,
+  cancelNativeJob,
+  reopenNativeJob,
+} from "@/lib/nativeJobs";
 
 export type MutationOutcome<T> =
   | { ok: true; value: T }
@@ -255,6 +263,16 @@ const JOB_DETAILS_QUERY = `
 export async function fetchJobDetails(
   jobId: string
 ): Promise<JobDetails | null> {
+  // Tier 2 (Jobber Independence Roadmap) — native jobs (created by
+  // lib/nativeJobs.ts's createNativeJob, id prefixed "native-") never
+  // existed in Jobber, so there's nothing to fetch there. This branch is
+  // the only thing that changed in this whole file's callers (the
+  // Manage Job page, ManageJobForm.tsx) to make native jobs manageable
+  // through the exact same UI as Jobber-sourced ones.
+  if (isNativeId(jobId)) {
+    return fetchNativeJobDetails(jobId);
+  }
+
   try {
     const { data, errors } = await jobberGraphQL<{
       job: {
@@ -315,6 +333,10 @@ export async function editJobberJob(params: {
 }): Promise<MutationOutcome<{ jobId: string }>> {
   const { jobId, title, instructions, startDate, recurrence, updateSchedule } =
     params;
+
+  if (isNativeId(jobId)) {
+    return editNativeJob(params);
+  }
 
   const input: Record<string, unknown> = {};
 
@@ -413,6 +435,10 @@ export async function setJobberJobPrice(
   title: string,
   price: number
 ): Promise<MutationOutcome<null>> {
+  if (isNativeId(jobId)) {
+    return setNativeJobPrice(jobId, price);
+  }
+
   const details = await fetchJobDetails(jobId);
 
   if (!details) {
@@ -513,6 +539,10 @@ const JOB_CLOSE_MUTATION = `
 export async function cancelJobberJob(
   jobId: string
 ): Promise<MutationOutcome<null>> {
+  if (isNativeId(jobId)) {
+    return cancelNativeJob(jobId);
+  }
+
   const { data, errors } = await jobberGraphQL<{
     jobClose: {
       job: { id: string } | null;
@@ -547,6 +577,10 @@ const JOB_REOPEN_MUTATION = `
 export async function reopenJobberJob(
   jobId: string
 ): Promise<MutationOutcome<null>> {
+  if (isNativeId(jobId)) {
+    return reopenNativeJob(jobId);
+  }
+
   const { data, errors } = await jobberGraphQL<{
     jobReopen: {
       job: { id: string } | null;

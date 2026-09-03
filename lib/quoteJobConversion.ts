@@ -1,60 +1,36 @@
-// Turns an accepted quote into a real job in Jobber — the first piece of
-// this app that ever WRITES to Jobber's API rather than just reading from
-// it. Everything here is deliberately defensive about that:
+// Turns an accepted quote into a real job. Everything here is
+// deliberately defensive about that:
 //
 // - Never throws. Every code path either succeeds or records a specific
 //   error message onto the quote row and returns. Callers (the public
 //   accept action and the internal markQuoteStatus action) just call
-//   this and move on — a Jobber outage or a bad field never blocks or
-//   un-accepts the quote itself, which is already true from the
-//   customer's perspective the moment they clicked Accept.
+//   this and move on — a failure never blocks or un-accepts the quote
+//   itself, which is already true from the customer's perspective the
+//   moment they clicked Accept.
 // - Idempotent. If quotes.jobber_job_id is already set, this is a no-op,
 //   so accepting twice (double-click, retry after a partial failure)
 //   can't create two jobs.
 //
-// jobCreate itself (JOB_CREATE_MUTATION, fetchExistingPropertyId,
-// createJobberJob) lives in lib/jobberJob.ts now — shared with the manual
-// "New Job" flow at app/(platform)/jobs/new, which needs the exact same
-// property-resolution + jobCreate call. This file keeps only what's
-// specific to quotes: turning a lead into a real Jobber client (with an
-// initial property) and the retry/error bookkeeping on the quotes row.
+// As of Tier 2 (Jobber Independence Roadmap), the job itself is created
+// natively via lib/nativeJobs.ts's createNativeJob — straight into this
+// app's own jobber_jobs/jobber_visits tables, no Jobber round-trip, no
+// property required. Client records are the one piece of this flow that
+// still goes through Jobber (createJobberClientForQuote below, via
+// Jobber's clientCreate mutation) — Tier 2 only covers job/visit
+// creation, not customer records, which remain Jobber's system of record
+// for now (see lib/nativeJobs.ts's header comment).
 //
-// jobCreate's real requirements (confirmed via live introspection against
-// Jobber's own schema, not docs). JobCreateAttributes needs a propertyId
-// (NOT a clientId — jobs attach to a property) and an invoicing object
-// with two required enums. So this module always resolves a propertyId
-// before calling jobCreate:
-//   - Existing customer (quote.customer_id already a real Jobber client
-//     id): fetch their first existing property via client.clientProperties.
-//   - New client (lead-based quote, no Jobber client yet): create the
-//     client and, in the same clientCreate call, an initial property.
-//     quotes.recipient_address is only ever a flat string (see
-//     013_add_quotes.sql), so it goes into the property's street1 line
-//     as-is — there's no reliable way to split it into
-//     street1/city/province/postalCode here. Staff can clean up the
-//     individual address fields in Jobber afterward, same as pricing and
-//     scheduling already get filled in manually post-creation.
-//   - If neither resolves a property, job creation is skipped and
-//     recorded as a retryable error asking staff to add a property in
-//     Jobber first — never guessed at.
-// invoicing is set to { invoicingType: FIXED_PRICE, invoicingSchedule:
-// NEVER } so Jobber doesn't auto-generate an invoice off incomplete data;
-// staff creates the real invoice in Jobber once pricing/scheduling are
-// filled in, matching how this app already treats those fields.
-//
-// NOTE: this app's Jobber connection is currently configured read-only.
-// None of this will actually succeed until write access is enabled for
-// the Jobber app (Jobber Developer Center) and the connection is
-// reconnected here to pick up a token with that scope — see
-// /settings/jobber.
+// createJobberClientForQuote only runs for a lead-based quote with no
+// Jobber client yet. quotes.recipient_address is only ever a flat string
+// (see 013_add_quotes.sql), so it goes into the new client's property
+// street1 line as-is — there's no reliable way to split it into
+// street1/city/province/postalCode here. Staff can clean up the
+// individual address fields in Jobber afterward, same as this app has
+// always done for lead-sourced addresses elsewhere.
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
 import { jobberGraphQL } from "@/lib/jobber";
-import {
-  createJobberJob,
-  fetchExistingPropertyId,
-  type MutationOutcome,
-} from "@/lib/jobberJob";
+import { createNativeJob, type MutationOutcome } from "@/lib/nativeJobs";
 
 type QuoteForConversion = {
   id: string;
@@ -209,8 +185,12 @@ export async function attemptQuoteJobConversion(
 
     const typedQuote = quote as QuoteForConversion;
     let clientId = typedQuote.customer_id;
-    let propertyId: string | null = null;
 
+    // Client/property creation still goes through Jobber -- Tier 2 of the
+    // Jobber Independence Roadmap only covers job/visit creation, not
+    // customer records (see lib/nativeJobs.ts's header comment). A lead
+    // accepting a quote still needs a real Jobber client to exist, since
+    // that's this app's system of record for customers.
     if (!clientId && typedQuote.lead_id) {
       const clientResult = await createJobberClientForQuote(typedQuote);
 
@@ -223,7 +203,6 @@ export async function attemptQuoteJobConversion(
       }
 
       clientId = clientResult.value.clientId;
-      propertyId = clientResult.value.propertyId;
 
       await supabaseServer
         .from("quotes")
@@ -244,34 +223,25 @@ export async function attemptQuoteJobConversion(
       return;
     }
 
-    if (!propertyId) {
-      propertyId = await fetchExistingPropertyId(clientId);
-    }
-
-    if (!propertyId) {
-      await recordConversionFailure(
-        quoteId,
-        "Couldn't find a Jobber property for this customer. Add a property to their Jobber client record, then retry."
-      );
-      return;
-    }
-
     // Matches the "{Customer} - {Service}" title convention the whole
     // schedule page's service-coloring logic already expects (see
-    // visitServiceLabel in app/(platform)/schedule/page.tsx), so once this
-    // job gets a visit scheduled in Jobber, it shows up correctly colored
-    // on our own schedule automatically. The quote's own price and
-    // description transfer too — the customer already agreed to this
-    // price, no reason to leave the job blank and make staff retype it
-    // in Jobber. No scheduling/recurrence here: quotes are one-off sales
-    // documents, not a recurring-service setup, so this always lands as
-    // a one-time job (staff schedule the visit in Jobber, or set up a
-    // recurring plan there once the customer's cadence is known).
+    // visitServiceLabel in app/(platform)/schedule/page.tsx), so once
+    // this job's visit lands on the schedule it shows up correctly
+    // colored automatically. The quote's own price and description
+    // transfer too — the customer already agreed to this price, no
+    // reason to leave the job blank and make staff retype it. No
+    // scheduling/recurrence here: quotes are one-off sales documents, not
+    // a recurring-service setup, so this always lands as a one-time job
+    // (staff set a recurring schedule from Manage Job once the
+    // customer's cadence is known). Created natively (Tier 2) rather
+    // than via Jobber's jobCreate -- no property needed at all, and the
+    // job/visit exist immediately instead of waiting on a sync.
     const quotePrice =
       typedQuote.price_total !== null ? Number(typedQuote.price_total) : NaN;
 
-    const jobResult = await createJobberJob({
-      propertyId,
+    const jobResult = await createNativeJob({
+      jobberClientId: clientId,
+      customerName: typedQuote.recipient_name,
       title: `${typedQuote.recipient_name} - ${typedQuote.service_category || "Service"}`,
       instructions: typedQuote.description,
       price: Number.isFinite(quotePrice) ? quotePrice : null,

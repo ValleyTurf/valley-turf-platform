@@ -20,6 +20,7 @@
 //     mechanism, and it doesn't touch the job or its other visits.
 import "server-only";
 import { jobberGraphQL } from "@/lib/jobber";
+import { isNativeId } from "@/lib/nativeJobs";
 
 export type MutationOutcome<T> =
   | { ok: true; value: T }
@@ -50,6 +51,18 @@ export async function rescheduleJobberVisit(params: {
   endTime: string | null; // HH:MM, Phoenix-local
 }): Promise<MutationOutcome<null>> {
   const { visitId, date, startTime, endTime } = params;
+
+  // Tier 2 (Jobber Independence Roadmap) — a native visit (see
+  // lib/nativeJobs.ts) never existed in Jobber, so there's no mutation to
+  // call. The action files that call this (schedule/actions.ts's
+  // rescheduleVisit) already write the local jobber_visits row themselves
+  // right after this returns ok — for a Jobber-sourced visit that's a
+  // deliberate "don't make staff wait for the webhook" optimization; for
+  // a native visit it's simply the only place that write happens at all.
+  // Short-circuiting here means that one shared code path handles both.
+  if (isNativeId(visitId)) {
+    return { ok: true, value: null };
+  }
 
   const input: Record<string, unknown> = {};
 
@@ -109,6 +122,14 @@ const VISIT_DELETE_MUTATION = `
 export async function skipJobberVisit(
   visitId: string
 ): Promise<MutationOutcome<null>> {
+  // Same reasoning as rescheduleJobberVisit above — schedule/actions.ts's
+  // skipVisit already deletes the local jobber_visits row (and its
+  // material/equipment usage) itself right after this returns ok, which
+  // is exactly what "skip" means for a native visit too.
+  if (isNativeId(visitId)) {
+    return { ok: true, value: null };
+  }
+
   const { data, errors } = await jobberGraphQL<{
     visitDelete: { userErrors: { message: string }[] } | null;
   }>(VISIT_DELETE_MUTATION, { visitIds: [visitId] });
@@ -150,6 +171,16 @@ const VISIT_COMPLETE_MUTATION = `
 export async function completeJobberVisit(
   visitId: string
 ): Promise<MutationOutcome<{ completedAt: string | null }>> {
+  // Same reasoning as rescheduleJobberVisit/skipJobberVisit above —
+  // my-day/actions.ts's completeVisit already writes visit_status/
+  // completed_at onto the local jobber_visits row itself right after
+  // this returns ok, falling back to "now" when completedAt is null
+  // exactly like it already does for a Jobber-sourced visit whenever
+  // Jobber's response doesn't include one.
+  if (isNativeId(visitId)) {
+    return { ok: true, value: { completedAt: null } };
+  }
+
   const { data, errors } = await jobberGraphQL<{
     visitComplete: {
       visit: { id: string; visitStatus: string | null; completedAt: string | null } | null;

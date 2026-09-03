@@ -47,6 +47,10 @@
     {
       "path": "/api/jobber/sync-payment-fees",
       "schedule": "55 13 * * *"
+    },
+    {
+      "path": "/api/jobs/generate-recurring-visits",
+      "schedule": "0 14 * * *"
     }
   ]
 }

@@ -4,11 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
-import {
-  createJobberJob,
-  fetchExistingPropertyId,
-  type RecurrenceFrequency,
-} from "@/lib/jobberJob";
+import { createNativeJob, type RecurrenceFrequency } from "@/lib/nativeJobs";
 import type { ActionState } from "./actionState";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
@@ -40,11 +36,16 @@ function isRecurrenceFrequency(
   );
 }
 
-// Creates a job directly in Jobber for an existing customer — no local
-// database row for the job itself, this only ever writes to Jobber (the
-// next customer/visit sync pulls it back down as the read-only mirror
-// this app otherwise shows). See lib/jobberJob.ts for exactly which
-// JobCreateAttributes fields get sent and why.
+// Tier 2 (Jobber Independence Roadmap) — creates the job natively,
+// straight into this app's own jobber_jobs/jobber_visits tables (see
+// lib/nativeJobs.ts's createNativeJob). No Jobber round-trip, no waiting
+// on a sync/webhook for the job to become visible, and no dependency on
+// the customer already having a Jobber property (this used to require
+// one via fetchExistingPropertyId — native jobs don't need a property at
+// all, since the customer's address already lives in the customers
+// table). Confirmed with Ryan (2026-09-02): crews use this app
+// exclusively, not Jobber's own mobile app/calendar, so a job existing
+// only here is not a gap for anyone's day-to-day workflow.
 export async function createJob(
   _prevState: ActionState,
   formData: FormData
@@ -81,17 +82,9 @@ export async function createJob(
     return { error: "A start date is required for a recurring job." };
   }
 
-  const propertyId = await fetchExistingPropertyId(clientId);
-
-  if (!propertyId) {
-    return {
-      error:
-        "This customer has no property in Jobber yet. Add one on their Jobber client record, then try again.",
-    };
-  }
-
-  const jobResult = await createJobberJob({
-    propertyId,
+  const jobResult = await createNativeJob({
+    jobberClientId: clientId,
+    customerName: customerName,
     title,
     instructions,
     price,
@@ -102,7 +95,7 @@ export async function createJob(
   });
 
   if (!jobResult.ok) {
-    return { error: `Couldn't create the job in Jobber: ${jobResult.error}` };
+    return { error: `Couldn't create the job: ${jobResult.error}` };
   }
 
   await recordAuditLog({
