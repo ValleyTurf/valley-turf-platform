@@ -20,6 +20,7 @@ export type SubmitQuoteRequestInput = {
   turfSizeRange: string;
   notes: string;
   photoPaths: string[];
+  smsConsent: boolean;
 };
 
 export type SubmitQuoteRequestResult =
@@ -43,6 +44,17 @@ export async function submitQuoteRequest(
       ok: false,
       error:
         "Name, phone, service address, and approximate square footage are required.",
+    };
+  }
+
+  // Twilio's A2P 10DLC review requires clear, affirmative opt-in for
+  // texting — the client-side checkbox is `required`, but that's just
+  // UX; browsers can be worked around, so this is the real gate. Never
+  // trust smsConsent === true without this check.
+  if (!input.smsConsent) {
+    return {
+      ok: false,
+      error: "Please check the box to agree to receive text messages.",
     };
   }
 
@@ -77,6 +89,8 @@ export async function submitQuoteRequest(
       status: "New",
       turf_size_range: turfSizeRange,
       photo_paths: photoPaths,
+      sms_consent: true,
+      sms_consent_at: new Date().toISOString(),
       address_validation_status: validation?.status ?? null,
       address_validated_at: validation ? new Date().toISOString() : null,
       address_formatted: validation?.formattedAddress ?? null,

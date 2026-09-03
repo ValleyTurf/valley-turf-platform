@@ -87,6 +87,7 @@ export default function RequestQuoteForm() {
         turfSizeRange: String(formData.get("turfSizeRange") || ""),
         notes: String(formData.get("notes") || ""),
         photoPaths,
+        smsConsent: formData.get("smsConsent") === "on",
       });
 
       if (!result.ok) {
@@ -151,13 +152,23 @@ export default function RequestQuoteForm() {
           placeholder="(555) 555-5555"
           className={inputClasses}
         />
-        <p className="mt-1.5 text-xs text-[#6b705c]">
-          By providing your phone number, you agree to receive Visit
-          Reminders and other transactional text messages (SMS) from Valley
-          Turf Revival. You can unsubscribe at any time by replying STOP.
+      </div>
+
+      <div className="flex items-start gap-3 rounded-xl border border-[#d8d3c6] bg-[#f7f6f1] px-4 py-3">
+        <input
+          id="smsConsent"
+          name="smsConsent"
+          type="checkbox"
+          required
+          className="mt-0.5 h-4 w-4 shrink-0 rounded border-[#d8d3c6] text-[#174734] focus:ring-2 focus:ring-[#d4af37]/40"
+        />
+        <label htmlFor="smsConsent" className="text-xs text-[#6b705c]">
+          I agree to receive Visit Reminders and other transactional text
+          messages (SMS) from Valley Turf Revival at the phone number
+          provided above. You can unsubscribe at any time by replying STOP.
           Message and data rates may apply. Message frequency varies. Reply
           HELP for help or STOP to cancel.
-        </p>
+        </label>
       </div>
 
       <fieldset>
