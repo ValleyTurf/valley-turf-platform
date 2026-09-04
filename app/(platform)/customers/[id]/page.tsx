@@ -842,6 +842,31 @@ function formatVisitDateTime(value: string | null): string {
   }).format(date);
 }
 
+// Separate from formatVisitDateTime (used everywhere else on this page)
+// specifically to include the year -- Contact History can span well
+// over a year of back-and-forth, and "Sep 4, 4:43 PM" with no year looks
+// deceptively recent for something from a year ago.
+function formatContactHistoryTimestamp(value: string | null): string {
+  if (!value) {
+    return "Unknown date";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Unknown date";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Phoenix",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function contactChannelLabel(channel: ContactHistoryEntry["channel"]): string {
   switch (channel) {
     case "email":
@@ -1782,14 +1807,14 @@ export default async function CustomerDetailPage({
                       )}
 
                       {entry.summary && (
-                        <p className="mt-0.5 text-sm text-[#174734]">
+                        <p className="mt-0.5 whitespace-pre-wrap text-sm text-[#174734]">
                           {entry.summary}
                         </p>
                       )}
 
-                      <p className="mt-1 text-[10px] text-[#9c7a20]">
+                      <p className="mt-1 text-xs font-semibold text-[#9c7a20]">
                         {entry.createdByName ? `${entry.createdByName} · ` : ""}
-                        {formatVisitDateTime(entry.createdAt)}
+                        {formatContactHistoryTimestamp(entry.createdAt)}
                       </p>
                     </div>
                   ))

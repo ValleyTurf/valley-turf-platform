@@ -78,13 +78,43 @@ async function fetchReceivedEmailContent(
 
 // Strips tags for the rare reply that has HTML but no plain-text part --
 // good enough for a Contact History summary line, not meant to be a
-// faithful render.
+// faithful render. Block-level boundaries become newlines (rather than
+// collapsing everything to single spaces) specifically so
+// stripQuotedReplyText below still has line breaks to work with.
 function stripHtml(html: string): string {
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|tr|blockquote)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+// Mail clients prepend the entire quoted thread below a reply (e.g.
+// "On Fri, Sep 4 ... wrote: > ..."). Since every earlier message in the
+// conversation already has its own separate Contact History entry,
+// keeping the quoted copy here would just duplicate what's already
+// shown in an older entry a few rows down -- so only the text before
+// the quote marker (what the customer actually typed this time) is kept.
+function stripQuotedReplyText(text: string): string {
+  const lines = text.split(/\r?\n/);
+
+  const quoteStartIndex = lines.findIndex((line) => {
+    const trimmed = line.trim();
+
+    return (
+      trimmed.startsWith(">") ||
+      /^on .{1,200}\bwrote:\s*$/i.test(trimmed) ||
+      /^-{2,}\s*original message\s*-{2,}$/i.test(trimmed) ||
+      /^from:\s*\S+@\S+/i.test(trimmed)
+    );
+  });
+
+  const kept = quoteStartIndex === -1 ? lines : lines.slice(0, quoteStartIndex);
+
+  return kept.join("\n").trim();
 }
 
 async function handleInboundReply(
@@ -106,10 +136,15 @@ async function handleInboundReply(
   }
 
   const content = await fetchReceivedEmailContent(emailId, apiKey);
-  const summary =
-    content?.text?.trim() ||
-    (content?.html ? stripHtml(content.html) : null) ||
-    "(No message body.)";
+  const rawBody =
+    content?.text?.trim() || (content?.html ? stripHtml(content.html) : null);
+
+  // Falls back to the un-stripped body on the off chance a reply is
+  // somehow ALL quote with nothing new typed -- better to show the
+  // quoted content than an empty "(No message body.)" in that edge case.
+  const summary = rawBody
+    ? stripQuotedReplyText(rawBody) || rawBody
+    : "(No message body.)";
 
   await logContactHistory({
     jobberClientId,
