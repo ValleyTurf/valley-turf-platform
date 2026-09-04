@@ -1,7 +1,10 @@
 // Resend webhook receiver -- feeds email delivered/opened events back
 // into contact_history (lib/contactHistory.ts) so the Customer page can
-// show whether a sent email was actually opened. See migration
-// 056_add_contact_history.sql's header comment for the "why".
+// show whether a sent email was actually opened, and feeds inbound
+// customer replies back in too (see the "email.received" branch below
+// and lib/replyRouting.ts for how a reply gets matched to a customer).
+// See migration 056_add_contact_history.sql's header comment for the
+// "why" behind the table itself.
 //
 // Resend signs webhooks the same way Svix does (Resend's webhook
 // infrastructure IS Svix under the hood) -- HMAC-SHA256 over
@@ -15,11 +18,13 @@
 // Unlike the Stripe webhook (app/api/webhooks/stripe/route.ts), this
 // doesn't queue into a table first -- each event is a single, idempotent
 // column update (markEmailDelivered/markEmailOpened both guard with
-// `.is(..., null)`), so there's no batch of follow-up work worth
-// deferring to a queue processor.
+// `.is(..., null)`) or a single insert (the inbound-reply branch), so
+// there's no batch of follow-up work worth deferring to a queue
+// processor.
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
-import { markEmailDelivered, markEmailOpened } from "@/lib/contactHistory";
+import { logContactHistory, markEmailDelivered, markEmailOpened } from "@/lib/contactHistory";
+import { decodeClientIdFromReplyAddress } from "@/lib/replyRouting";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +32,93 @@ type ResendWebhookEvent = {
   type: string;
   data: {
     email_id?: string;
+    to?: string[];
+    subject?: string;
   };
 };
+
+type ResendReceivedEmail = {
+  subject?: string;
+  text?: string | null;
+  html?: string | null;
+};
+
+// A customer's reply carries no subject/body in the webhook payload
+// itself -- Resend only tells you an inbound email arrived and hands
+// you an id, so the actual content is a separate follow-up call to the
+// Receiving API. See lib/replyRouting.ts's header comment for why
+// matching this to a customer doesn't rely on that content at all
+// (it's keyed off which reply-routing address the customer replied to,
+// not anything about the message itself).
+async function fetchReceivedEmailContent(
+  emailId: string,
+  apiKey: string
+): Promise<ResendReceivedEmail | null> {
+  try {
+    const response = await fetch(
+      `https://api.resend.com/emails/receiving/${emailId}`,
+      { headers: { Authorization: `Bearer ${apiKey}` } }
+    );
+
+    if (!response.ok) {
+      console.error(
+        "Couldn't fetch received email content:",
+        response.status,
+        await response.text()
+      );
+      return null;
+    }
+
+    return (await response.json()) as ResendReceivedEmail;
+  } catch (error) {
+    console.error("Error fetching received email content:", error);
+    return null;
+  }
+}
+
+// Strips tags for the rare reply that has HTML but no plain-text part --
+// good enough for a Contact History summary line, not meant to be a
+// faithful render.
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function handleInboundReply(
+  emailId: string,
+  toAddresses: string[],
+  fallbackSubject: string | undefined,
+  apiKey: string
+): Promise<void> {
+  const jobberClientId = toAddresses
+    .map((address) => decodeClientIdFromReplyAddress(address))
+    .find((decoded): decoded is string => Boolean(decoded));
+
+  if (!jobberClientId) {
+    // Not addressed to one of our reply-routing addresses -- e.g.
+    // RESEND_REPLY_DOMAIN isn't configured yet, or this is some other
+    // mail that landed on the receiving domain. Nothing to attribute
+    // this to, so there's nowhere useful to log it.
+    return;
+  }
+
+  const content = await fetchReceivedEmailContent(emailId, apiKey);
+  const summary =
+    content?.text?.trim() ||
+    (content?.html ? stripHtml(content.html) : null) ||
+    "(No message body.)";
+
+  await logContactHistory({
+    jobberClientId,
+    channel: "email",
+    direction: "inbound",
+    subject: content?.subject || fallbackSubject || "Reply from customer",
+    summary: summary.slice(0, 4000),
+  });
+}
 
 function verifySignature(
   rawBody: string,
@@ -105,10 +195,17 @@ export async function POST(request: NextRequest) {
       await markEmailDelivered(emailId);
     } else if (event.type === "email.opened") {
       await markEmailOpened(emailId);
+    } else if (event.type === "email.received") {
+      const apiKey = process.env.RESEND_API_KEY;
+
+      if (apiKey) {
+        await handleInboundReply(emailId, event.data.to ?? [], event.data.subject, apiKey);
+      } else {
+        console.error("Cannot fetch inbound reply content: RESEND_API_KEY is not set.");
+      }
     }
     // Other event types (sent, bounced, complained, clicked, etc.) are
-    // intentionally ignored for now -- only delivered/opened feed the
-    // Customer page's contact history today.
+    // intentionally ignored for now.
   }
 
   return NextResponse.json({ received: true });

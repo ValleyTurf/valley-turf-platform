@@ -17,6 +17,7 @@
 // can't turn a successful text/email into a reported failure.
 import "server-only";
 import { logContactHistory } from "@/lib/contactHistory";
+import { replyToAddressFor } from "@/lib/replyRouting";
 
 // Overridable via env vars so who gets alerted doesn't require a code
 // change + redeploy. Falls back to the original hardcoded values if unset.
@@ -159,6 +160,7 @@ export async function sendPortalMagicLinkEmail(
       body: JSON.stringify({
         from: fromAddress,
         to: request.toEmail,
+        reply_to: replyToAddressFor(request.jobberClientId),
         subject: "Sign in to your Valley Turf Revival portal",
         html,
       }),
@@ -244,6 +246,7 @@ export async function sendManualEmail(request: ManualEmail): Promise<boolean> {
       body: JSON.stringify({
         from: fromAddress,
         to: request.toEmail,
+        reply_to: replyToAddressFor(request.jobberClientId),
         subject: request.subject,
         html,
       }),
@@ -467,6 +470,7 @@ export async function sendInvoiceEmail(
       body: JSON.stringify({
         from: fromAddress,
         to: request.toEmail,
+        reply_to: replyToAddressFor(request.jobberClientId),
         subject: `Invoice ${request.invoiceNumber} from Valley Turf Revival`,
         html,
         attachments: [
@@ -556,6 +560,7 @@ export async function sendAutopayReceiptEmail(
       body: JSON.stringify({
         from: fromAddress,
         to: request.toEmail,
+        reply_to: replyToAddressFor(request.jobberClientId),
         subject: `Invoice ${request.invoiceNumber} paid automatically -- Valley Turf Revival`,
         html,
         attachments: [
@@ -774,6 +779,7 @@ export async function sendVisitReminderEmail(
       body: JSON.stringify({
         from: fromAddress,
         to: toEmail,
+        reply_to: replyToAddressFor(jobberClientId),
         subject: `Reminder: your ${visitLabel} visit is coming up`,
         html,
       }),
@@ -915,6 +921,7 @@ export async function sendReviewRequestEmail(
       body: JSON.stringify({
         from: fromAddress,
         to: toEmail,
+        reply_to: replyToAddressFor(jobberClientId),
         subject: "How did we do?",
         html,
       }),
