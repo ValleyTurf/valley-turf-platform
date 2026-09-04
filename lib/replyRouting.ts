@@ -24,8 +24,25 @@ import "server-only";
 
 const REPLY_LOCAL_PART = "replies";
 
+// Defensively cleaned up rather than used raw -- a domain env var is a
+// very easy place to accidentally paste in a stray "https://" prefix,
+// trailing slash, surrounding quotes, or trailing whitespace, and any
+// of those turns the resulting reply_to address into something Resend's
+// API will reject outright with a 422 ("Invalid 'reply_to' field").
 function replyDomain(): string | null {
-  return process.env.RESEND_REPLY_DOMAIN || null;
+  const raw = process.env.RESEND_REPLY_DOMAIN;
+
+  if (!raw) {
+    return null;
+  }
+
+  const cleaned = raw
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/+$/, "");
+
+  return cleaned || null;
 }
 
 // Returns undefined (not null) so callers can spread it straight into a
