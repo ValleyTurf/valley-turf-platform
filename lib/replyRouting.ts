@@ -83,7 +83,14 @@ export function replyToAddressFor(
     return undefined;
   }
 
-  return `${localPart}@${domain}`;
+  // Wrapped with a display name so a customer hitting Reply sees "Valley
+  // Turf Revival" rather than the raw replies+<id>@... address -- the
+  // encoded address only needs to be machine-readable (for
+  // decodeClientIdFromReplyAddress below), never human-facing. Mail
+  // clients populate the reply's To field from this display name, same
+  // as they do for the From header (see fromHeader() in
+  // lib/notifications.ts).
+  return `Valley Turf Revival <${localPart}@${domain}>`;
 }
 
 // Given one recipient address from an inbound email.received webhook's
