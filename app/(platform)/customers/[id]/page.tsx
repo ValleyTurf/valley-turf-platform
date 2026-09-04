@@ -26,6 +26,7 @@ import {
 import TurfSizeField from "./TurfSizeField";
 import AddVisitNoteForm from "./AddVisitNoteForm";
 import PhotoGrid from "@/app/components/PhotoGrid";
+import { ComposeEmailForm } from "@/app/components/ComposeEmailForm";
 import {
   toNumber,
   formatCurrency,
@@ -1746,6 +1747,10 @@ export default async function CustomerDetailPage({
                   Save Call
                 </button>
               </form>
+
+              <div className="mt-3">
+                <ComposeEmailForm jobberClientId={decodedId} />
+              </div>
 
               <div className="mt-4 max-h-[500px] space-y-2 overflow-y-auto border-t border-[#e7e2d5] pt-4 pr-1">
                 {contactHistory.length > 0 ? (

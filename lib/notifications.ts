@@ -44,6 +44,16 @@ function escapeHtml(value: string | null): string {
     .replace(/>/g, "&gt;");
 }
 
+// Same escaping as escapeHtml above, minus its "—" fallback for empty
+// input -- used for staff-typed free text (sendManualEmail's body) where
+// an empty paragraph should just render as nothing, not a literal dash.
+function escapeHtmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 async function sendLeadEmailAlert(lead: NewLeadAlert): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
 
@@ -176,6 +186,89 @@ export async function sendPortalMagicLinkEmail(
     return true;
   } catch (error) {
     console.error("Portal magic link email error:", error);
+    return false;
+  }
+}
+
+export type ManualEmail = {
+  toEmail: string;
+  customerName: string | null;
+  subject: string;
+  body: string;
+  jobberClientId: string | null;
+  createdByUserId?: string | null;
+  createdByName?: string | null;
+};
+
+// Staff-composed, one-off email -- unlike every other function in this
+// file (a fixed, pre-written message triggered by some event), this
+// sends whatever subject/body a staff member types into the "Compose
+// Email" form (see lib/composeEmailAction.ts and
+// app/components/ComposeEmailForm.tsx, rendered on the Customer page,
+// the Reactivation Pipeline, and Customer Intelligence). Plain
+// paragraphs, no button/CTA chrome -- staff are writing this themselves,
+// so it should read like a normal email, not an automated notice.
+export async function sendManualEmail(request: ManualEmail): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    console.error("Cannot send manual email: RESEND_API_KEY is not set.");
+    return false;
+  }
+
+  const fromAddress = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
+
+  // Each blank-line-separated chunk of the staff-typed body becomes its
+  // own paragraph; single newlines within a chunk become <br> -- close
+  // enough to how the plain text reads without asking staff to write any
+  // HTML themselves.
+  const html = `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      ${request.body
+        .split(/\n{2,}/)
+        .map(
+          (paragraph) =>
+            `<p>${escapeHtmlText(paragraph).replace(/\n/g, "<br>")}</p>`
+        )
+        .join("")}
+    </div>
+  `;
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromAddress,
+        to: request.toEmail,
+        subject: request.subject,
+        html,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("Manual email failed:", response.status, await response.text());
+      return false;
+    }
+
+    const data = (await response.json()) as { id?: string };
+
+    await logContactHistory({
+      jobberClientId: request.jobberClientId,
+      channel: "email",
+      subject: request.subject,
+      summary: request.body,
+      resendEmailId: data.id ?? null,
+      createdByUserId: request.createdByUserId ?? null,
+      createdByName: request.createdByName ?? null,
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Manual email error:", error);
     return false;
   }
 }

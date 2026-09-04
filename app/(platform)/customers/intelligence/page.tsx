@@ -22,6 +22,7 @@ import {
   type CadenceCategory,
 } from "@/lib/deactivation";
 import { ExclusionSaveForm } from "./ExclusionSaveForm";
+import { ComposeEmailForm } from "@/app/components/ComposeEmailForm";
 
 type Timeframe =
   | "last-7-days"
@@ -1022,12 +1023,17 @@ export default async function CustomerIntelligencePage({
                               </p>
                             </div>
 
-                            <ExclusionSaveForm
-                              jobberClientId={summary.customer.jobber_client_id}
-                              exclusionType="reactivation"
-                              defaultReason="moved"
-                              reasons={CHURN_REASONS}
-                            />
+                            <div className="flex flex-col items-end gap-2">
+                              <ComposeEmailForm
+                                jobberClientId={summary.customer.jobber_client_id}
+                              />
+                              <ExclusionSaveForm
+                                jobberClientId={summary.customer.jobber_client_id}
+                                exclusionType="reactivation"
+                                defaultReason="moved"
+                                reasons={CHURN_REASONS}
+                              />
+                            </div>
                           </div>
                         </div>
                       ))
@@ -1136,12 +1142,17 @@ export default async function CustomerIntelligencePage({
                       </p>
                     </div>
 
-                    <ExclusionSaveForm
-                      jobberClientId={summary.customer.jobber_client_id}
-                      exclusionType="deactivation"
-                      defaultReason="price"
-                      reasons={CHURN_REASONS}
-                    />
+                    <div className="flex flex-col items-end gap-2">
+                      <ComposeEmailForm
+                        jobberClientId={summary.customer.jobber_client_id}
+                      />
+                      <ExclusionSaveForm
+                        jobberClientId={summary.customer.jobber_client_id}
+                        exclusionType="deactivation"
+                        defaultReason="price"
+                        reasons={CHURN_REASONS}
+                      />
+                    </div>
                   </div>
                 </div>
               ))

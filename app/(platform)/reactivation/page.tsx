@@ -24,6 +24,7 @@ import {
   type RecontactInterval,
 } from "@/lib/reactivation";
 import { formatCurrency, formatNumber, formatPercent, toNumber } from "@/lib/format";
+import { ComposeEmailForm } from "@/app/components/ComposeEmailForm";
 
 type Customer = {
   id: string;
@@ -749,6 +750,10 @@ function ReactivationCard({ entry }: { entry: PipelineEntry }) {
           tone="negative"
         />
         <StatusButton customerId={customer.id} status="removed" label="Remove" tone="negative" />
+
+        {customer.jobber_client_id && (
+          <ComposeEmailForm jobberClientId={customer.jobber_client_id} />
+        )}
 
         <Link
           href={`/customers/${customer.jobber_client_id ?? customer.id}`}
