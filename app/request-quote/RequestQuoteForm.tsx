@@ -167,7 +167,25 @@ export default function RequestQuoteForm() {
           messages (SMS) from Valley Turf Revival at the phone number
           provided above. You can unsubscribe at any time by replying STOP.
           Message and data rates may apply. Message frequency varies. Reply
-          HELP for help or STOP to cancel.
+          HELP for help or STOP to cancel. See our{" "}
+          <a
+            href="https://valleyturfrevival.com/privacy-policy"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-semibold text-[#174734] underline"
+          >
+            Privacy Policy
+          </a>{" "}
+          and{" "}
+          <a
+            href="https://valleyturfrevival.com/terms-and-conditions"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-semibold text-[#174734] underline"
+          >
+            Terms &amp; Conditions
+          </a>
+          .
         </label>
       </div>
 
