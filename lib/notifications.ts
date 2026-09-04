@@ -236,6 +236,8 @@ export async function sendManualEmail(request: ManualEmail): Promise<boolean> {
     </div>
   `;
 
+  const replyTo = replyToAddressFor(request.jobberClientId);
+
   try {
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -246,14 +248,25 @@ export async function sendManualEmail(request: ManualEmail): Promise<boolean> {
       body: JSON.stringify({
         from: fromAddress,
         to: request.toEmail,
-        reply_to: replyToAddressFor(request.jobberClientId),
+        reply_to: replyTo,
         subject: request.subject,
         html,
       }),
     });
 
     if (!response.ok) {
-      console.error("Manual email failed:", response.status, await response.text());
+      // Logs the computed reply_to value alongside the failure -- when
+      // this fires as a 422 "Invalid 'reply_to' field", the value here
+      // is the fastest way to see exactly what Resend rejected and why
+      // (a stray character in RESEND_REPLY_DOMAIN, an unexpected
+      // jobberClientId shape, etc.) without guessing.
+      console.error(
+        "Manual email failed:",
+        response.status,
+        await response.text(),
+        "reply_to attempted:",
+        replyTo
+      );
       return false;
     }
 
