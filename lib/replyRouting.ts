@@ -10,19 +10,29 @@
 // (undocumented shape, and not every mail client sets them the same
 // way), this app plus-addresses every outbound reply-to with the
 // customer's own jobber_client_id baked right into the mailbox name:
-// replies+<hex-encoded client id>@RESEND_REPLY_DOMAIN. Whatever a
-// customer's mail client does with threading, the one thing guaranteed
-// to survive a reply is the address they're replying TO -- so decoding
-// that address is what actually identifies the customer, deterministically,
-// no header-sniffing required.
+// replies+<client id>@RESEND_REPLY_DOMAIN. Whatever a customer's mail
+// client does with threading, the one thing guaranteed to survive a
+// reply is the address they're replying TO -- so decoding that address
+// is what actually identifies the customer, deterministically, no
+// header-sniffing required.
 //
-// Hex-encoded (not the raw client id) so the local-part only ever
-// contains [0-9a-f] -- Jobber's opaque base64-style IDs can contain
-// characters like +, /, = that are technically legal in an email
-// local-part but risk being mishandled by some mail server somewhere.
+// Embedded directly, NOT re-encoded -- jobber_client_id is already
+// Jobber's own base64-encoded GraphQL global id (e.g. base64 of
+// "gid://Jobber/Client/12345678"), and every character standard base64
+// can produce (A-Z a-z 0-9 + / =) is valid, unquoted RFC 5322 local-part
+// text. An earlier version of this file hex-encoded the id "to be
+// safe," which quietly doubled its length and pushed the local part
+// (the part before the @) past email's 64-octet limit for anything but
+// the shortest ids -- that's exactly the 422 "Invalid 'reply_to' field"
+// Resend threw in production the first time this shipped. Using the id
+// as-is keeps the address well under that limit and is exactly as
+// reversible.
 import "server-only";
 
 const REPLY_LOCAL_PART = "replies";
+
+// RFC 5321's hard limit on the part of an address before the @ sign.
+const MAX_LOCAL_PART_LENGTH = 64;
 
 // Defensively cleaned up rather than used raw -- a domain env var is a
 // very easy place to accidentally paste in a stray "https://" prefix,
@@ -59,9 +69,21 @@ export function replyToAddressFor(
     return undefined;
   }
 
-  const tag = Buffer.from(jobberClientId, "utf8").toString("hex");
+  // "@" is the one character that would break parsing the address back
+  // apart -- never expected in a base64 id, but checked rather than
+  // assumed. Same for the overall length: rather than assume every
+  // jobber_client_id fits, this falls back to no reply routing at all
+  // for that one send instead of handing Resend an address it'll 422 on.
+  const localPart = `${REPLY_LOCAL_PART}+${jobberClientId}`;
 
-  return `${REPLY_LOCAL_PART}+${tag}@${domain}`;
+  if (jobberClientId.includes("@") || localPart.length > MAX_LOCAL_PART_LENGTH) {
+    console.error(
+      `Skipping reply_to for jobberClientId "${jobberClientId}" -- local part would be ${localPart.length} chars (max ${MAX_LOCAL_PART_LENGTH}) or contains "@".`
+    );
+    return undefined;
+  }
+
+  return `${localPart}@${domain}`;
 }
 
 // Given one recipient address from an inbound email.received webhook's
@@ -79,20 +101,11 @@ export function decodeClientIdFromReplyAddress(
   }
 
   const pattern = new RegExp(
-    `^${REPLY_LOCAL_PART}\\+([0-9a-f]+)@${domain.replace(/\./g, "\\.")}$`,
+    `^${REPLY_LOCAL_PART}\\+(.+)@${domain.replace(/\./g, "\\.")}$`,
     "i"
   );
 
   const match = address.trim().match(pattern);
 
-  if (!match) {
-    return null;
-  }
-
-  try {
-    const decoded = Buffer.from(match[1], "hex").toString("utf8");
-    return decoded || null;
-  } catch {
-    return null;
-  }
+  return match ? match[1] : null;
 }
