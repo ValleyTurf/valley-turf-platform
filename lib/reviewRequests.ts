@@ -181,7 +181,12 @@ export async function sendDueReviewRequests(): Promise<SendReviewRequestsResult>
     let delivered = false;
 
     if (phone) {
-      const sent = await sendReviewRequestSms(phone, visit.customer_name, reviewUrl);
+      const sent = await sendReviewRequestSms(
+        phone,
+        visit.customer_name,
+        reviewUrl,
+        visit.jobber_client_id
+      );
       delivered = delivered || sent;
     }
 
@@ -189,7 +194,8 @@ export async function sendDueReviewRequests(): Promise<SendReviewRequestsResult>
       const sent = await sendReviewRequestEmail(
         email,
         visit.customer_name,
-        reviewUrl
+        reviewUrl,
+        visit.jobber_client_id
       );
       delivered = delivered || sent;
     }

@@ -433,7 +433,7 @@ export async function sendOnWay(
     return { error: "No phone number on file for this customer.", sentAt: null };
   }
 
-  const sent = await sendOnMyWaySms(phone, customerName);
+  const sent = await sendOnMyWaySms(phone, customerName, jobberClientId);
 
   if (!sent) {
     return {

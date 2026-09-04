@@ -159,6 +159,7 @@ export async function createTestInvoiceAndSend(
           total: invoice.total,
           cardLast4: paymentMethod?.cardLast4 ?? null,
           pdfBuffer,
+          jobberClientId: jobberClientId ?? null,
         });
       }
 
@@ -168,7 +169,8 @@ export async function createTestInvoiceAndSend(
           customerName,
           invoice.invoiceNumber,
           invoice.total,
-          paymentMethod?.cardLast4 ?? null
+          paymentMethod?.cardLast4 ?? null,
+          jobberClientId ?? null
         );
       }
     } else {
@@ -180,6 +182,7 @@ export async function createTestInvoiceAndSend(
           total: invoice.total,
           payNowUrl: payUrl,
           pdfBuffer,
+          jobberClientId: jobberClientId ?? null,
         });
       }
 
@@ -188,7 +191,8 @@ export async function createTestInvoiceAndSend(
           customerPhone,
           customerName,
           invoice.invoiceNumber,
-          payUrl
+          payUrl,
+          jobberClientId ?? null
         );
       }
     }

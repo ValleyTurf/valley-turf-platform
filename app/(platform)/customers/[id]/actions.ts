@@ -12,6 +12,7 @@ import {
 import { removeJobberJobNotePhoto } from "@/lib/jobberJobNotes";
 import { getOrCreateEnrollmentToken, setAutopayEnabled } from "@/lib/autopay";
 import { syncSingleCustomer } from "@/lib/jobberWebhookProcessor";
+import { logContactHistory } from "@/lib/contactHistory";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
@@ -121,6 +122,56 @@ export async function updateGeneralNotes(
     entityLabel: before?.full_name ?? null,
     before,
     after: { notes, full_name: before?.full_name ?? null },
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+}
+
+// Manually-logged phone call, added from the customer page's Contact
+// History section (lib/contactHistory.ts) — there's no telephony
+// integration in this app, so a call is only ever recorded after the
+// fact by whoever took/made it, typing up a quick summary. Uses
+// logContactHistory directly rather than going through
+// lib/notifications.ts (which is for actual outbound sends) since a
+// call was already conducted through some other channel entirely
+// (a phone).
+export async function logPhoneCall(
+  jobberClientId: string,
+  formData: FormData
+): Promise<void> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    throw new Error("You must be signed in.");
+  }
+
+  const direction = formData.get("direction") === "inbound" ? "inbound" : "outbound";
+  const summary = cleanText(formData.get("summary"));
+
+  if (!summary) {
+    // Same "just skip it" tolerance as updateGeneralNotes saving an empty
+    // textarea -- a blank submit isn't worth a thrown error on a plain
+    // <form action>, which has nowhere inline to show one anyway.
+    return;
+  }
+
+  await logContactHistory({
+    jobberClientId,
+    channel: "call",
+    direction,
+    subject: direction === "inbound" ? "Incoming Call" : "Outgoing Call",
+    summary,
+    createdByUserId: actor.id,
+    createdByName: actor.name,
+  });
+
+  await recordAuditLog({
+    actor,
+    action: "create",
+    entityType: "contact_history_call",
+    entityId: jobberClientId,
+    entityLabel: summary,
+    after: { direction, summary },
   });
 
   revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);

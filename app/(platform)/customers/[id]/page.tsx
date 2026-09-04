@@ -13,11 +13,16 @@ import {
   generateAutopayLink,
   toggleAutopay,
   setCurrentProperty,
+  logPhoneCall,
 } from "./actions";
 import { getPaymentMethodByClientId } from "@/lib/autopay";
 import { saveVisitCosts } from "../../materials/actions";
 import { getVisitNotesForClient, type VisitNoteGroup } from "@/lib/visitNotes";
 import { getJobberJobNotesForClient, type JobberJobNote } from "@/lib/jobberJobNotes";
+import {
+  getContactHistoryForCustomer,
+  type ContactHistoryEntry,
+} from "@/lib/contactHistory";
 import TurfSizeField from "./TurfSizeField";
 import AddVisitNoteForm from "./AddVisitNoteForm";
 import PhotoGrid from "@/app/components/PhotoGrid";
@@ -836,6 +841,21 @@ function formatVisitDateTime(value: string | null): string {
   }).format(date);
 }
 
+function contactChannelLabel(channel: ContactHistoryEntry["channel"]): string {
+  switch (channel) {
+    case "email":
+      return "Email";
+    case "sms":
+      return "Text";
+    case "call":
+      return "Call";
+    case "chat":
+      return "Chat";
+    default:
+      return channel;
+  }
+}
+
 function visitStatusBadge(status: string | null): string {
   const normalized = (status ?? "").toUpperCase();
 
@@ -1035,6 +1055,7 @@ export default async function CustomerDetailPage({
     jobberJobNotes,
     payments,
     autopayPaymentMethod,
+    contactHistory,
   ] = await Promise.all([
     getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
@@ -1049,6 +1070,7 @@ export default async function CustomerDetailPage({
     getJobberJobNotesForClient(decodedId),
     getCustomerPayments(decodedId),
     getPaymentMethodByClientId(decodedId),
+    getContactHistoryForCustomer(decodedId),
   ]);
 
   if (!client) {
@@ -1671,6 +1693,107 @@ export default async function CustomerDetailPage({
                   </div>
                 </details>
               )}
+            </section>
+
+            <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">Contact History</h2>
+
+              <p className="mt-1 text-xs text-[#6b705c]">
+                Every email and text this app has sent this customer, plus
+                portal chat messages and any phone calls staff have logged.
+                Sorted newest first.
+              </p>
+
+              <form
+                action={logPhoneCall.bind(null, decodedId)}
+                className="mt-4 space-y-2 rounded-xl border border-[#e7e2d5] p-3"
+              >
+                <p className="text-xs font-bold text-[#9c7a20]">Log a Call</p>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <label className="flex items-center gap-1.5 text-xs">
+                    <input
+                      type="radio"
+                      name="direction"
+                      value="outbound"
+                      defaultChecked
+                      className="h-3.5 w-3.5"
+                    />
+                    We called them
+                  </label>
+                  <label className="flex items-center gap-1.5 text-xs">
+                    <input
+                      type="radio"
+                      name="direction"
+                      value="inbound"
+                      className="h-3.5 w-3.5"
+                    />
+                    They called us
+                  </label>
+                </div>
+
+                <textarea
+                  name="summary"
+                  rows={2}
+                  placeholder="Quick summary of what was discussed"
+                  className="w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                />
+
+                <button
+                  type="submit"
+                  className="rounded-lg border border-[#174734] px-3 py-1.5 text-xs font-bold text-[#174734] transition hover:bg-[#f7f6f1]"
+                >
+                  Save Call
+                </button>
+              </form>
+
+              <div className="mt-4 max-h-[500px] space-y-2 overflow-y-auto border-t border-[#e7e2d5] pt-4 pr-1">
+                {contactHistory.length > 0 ? (
+                  contactHistory.map((entry: ContactHistoryEntry) => (
+                    <div
+                      key={entry.id}
+                      className="rounded-xl bg-[#f7f6f1] px-3 py-2"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#9c7a20]">
+                          {contactChannelLabel(entry.channel)}
+                        </span>
+                        {entry.direction === "inbound" && (
+                          <span className="text-[10px] font-bold text-[#6b705c]">
+                            Inbound
+                          </span>
+                        )}
+                        {entry.channel === "email" && entry.openedAt && (
+                          <span className="text-[10px] font-bold text-green-700">
+                            Opened {formatVisitDateTime(entry.openedAt)}
+                          </span>
+                        )}
+                      </div>
+
+                      {entry.subject && (
+                        <p className="mt-1 text-sm font-semibold text-[#174734]">
+                          {entry.subject}
+                        </p>
+                      )}
+
+                      {entry.summary && (
+                        <p className="mt-0.5 text-sm text-[#174734]">
+                          {entry.summary}
+                        </p>
+                      )}
+
+                      <p className="mt-1 text-[10px] text-[#9c7a20]">
+                        {entry.createdByName ? `${entry.createdByName} · ` : ""}
+                        {formatVisitDateTime(entry.createdAt)}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                    No contact history yet.
+                  </p>
+                )}
+              </div>
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">

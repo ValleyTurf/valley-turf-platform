@@ -30,6 +30,7 @@ export async function requestPortalLogin(formData: FormData): Promise<void> {
         toEmail: customer.email,
         customerName: customer.name,
         loginUrl,
+        jobberClientId: customer.jobberClientId,
       });
     } catch (error) {
       console.error("Portal login request failed:", error);

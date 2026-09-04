@@ -21,6 +21,10 @@ const PUBLIC_PATHS = [
   // Guards itself internally via the stripe-signature header check (see
   // route.ts) instead, same as the Jobber webhook above.
   "/api/webhooks/stripe",
+  // Resend POSTs directly to this one too — guards itself internally via
+  // the svix-signature header check (see route.ts), same pattern as the
+  // Stripe webhook above.
+  "/api/webhooks/resend",
   "/api/scan-leads",
   // Called by an external automation (Jobber automation / Zapier), not
   // from inside this app. Guards itself internally with its own

@@ -219,6 +219,7 @@ async function createNativeInvoiceForVisit(
               total: invoice.total,
               cardLast4: paymentMethod?.cardLast4 ?? null,
               pdfBuffer,
+              jobberClientId: clientId,
             })) || delivered;
         }
 
@@ -229,7 +230,8 @@ async function createNativeInvoiceForVisit(
               customerName,
               invoice.invoiceNumber,
               invoice.total,
-              paymentMethod?.cardLast4 ?? null
+              paymentMethod?.cardLast4 ?? null,
+              clientId
             )) || delivered;
         }
       } else if (payUrl) {
@@ -242,6 +244,7 @@ async function createNativeInvoiceForVisit(
               total: invoice.total,
               payNowUrl: payUrl,
               pdfBuffer,
+              jobberClientId: clientId,
             })) || delivered;
         }
 
@@ -251,7 +254,8 @@ async function createNativeInvoiceForVisit(
               customerPhone,
               customerName,
               invoice.invoiceNumber,
-              payUrl
+              payUrl,
+              clientId
             )) || delivered;
         }
       }

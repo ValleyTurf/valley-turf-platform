@@ -214,7 +214,8 @@ export async function sendDueVisitReminders(): Promise<SendRemindersResult> {
           phone,
           visit.customer_name,
           label,
-          dateLabel
+          dateLabel,
+          visit.jobber_client_id
         );
         delivered = delivered || sent;
       }
@@ -224,7 +225,8 @@ export async function sendDueVisitReminders(): Promise<SendRemindersResult> {
           email,
           visit.customer_name,
           label,
-          dateLabel
+          dateLabel,
+          visit.jobber_client_id
         );
         delivered = delivered || sent;
       }

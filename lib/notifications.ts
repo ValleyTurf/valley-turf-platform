@@ -7,7 +7,16 @@
 //
 // See the comment at the top of lib/supabase-server.ts — same guard,
 // same reason. This file reads RESEND_API_KEY/TWILIO_* directly.
+//
+// Every customer-facing send below (not the internal staff alerts at
+// the bottom of this file) takes a jobberClientId and logs itself to
+// contact_history (lib/contactHistory.ts) after a successful send --
+// that's what powers the Customer page's Contact History section. The
+// logging call is fire-and-forget from each send function's
+// perspective: logContactHistory() never throws, so a logging hiccup
+// can't turn a successful text/email into a reported failure.
 import "server-only";
+import { logContactHistory } from "@/lib/contactHistory";
 
 // Overridable via env vars so who gets alerted doesn't require a code
 // change + redeploy. Falls back to the original hardcoded values if unset.
@@ -90,6 +99,7 @@ export type PortalMagicLinkEmail = {
   toEmail: string;
   customerName: string | null;
   loginUrl: string;
+  jobberClientId: string | null;
 };
 
 // Unlike sendNewLeadAlerts (an internal alert to staff), this goes out to
@@ -153,6 +163,16 @@ export async function sendPortalMagicLinkEmail(
       return false;
     }
 
+    const data = (await response.json()) as { id?: string };
+
+    await logContactHistory({
+      jobberClientId: request.jobberClientId,
+      channel: "email",
+      subject: "Portal Sign-In Link",
+      summary: "Sent a magic sign-in link for the customer portal.",
+      resendEmailId: data.id ?? null,
+    });
+
     return true;
   } catch (error) {
     console.error("Portal magic link email error:", error);
@@ -169,7 +189,8 @@ export async function sendPortalMagicLinkEmail(
 // of swallowing the failure.
 export async function sendOnMyWaySms(
   toPhone: string,
-  customerName: string | null
+  customerName: string | null,
+  jobberClientId: string | null
 ): Promise<boolean> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -211,6 +232,13 @@ export async function sendOnMyWaySms(
       return false;
     }
 
+    await logContactHistory({
+      jobberClientId,
+      channel: "sms",
+      subject: "On My Way",
+      summary: body,
+    });
+
     return true;
   } catch (error) {
     console.error("'On my way' SMS error:", error);
@@ -229,7 +257,8 @@ export async function sendInvoiceSms(
   toPhone: string,
   customerName: string | null,
   invoiceNumber: string,
-  payUrl: string
+  payUrl: string,
+  jobberClientId: string | null
 ): Promise<boolean> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -271,6 +300,13 @@ export async function sendInvoiceSms(
       return false;
     }
 
+    await logContactHistory({
+      jobberClientId,
+      channel: "sms",
+      subject: `Invoice ${invoiceNumber} Sent`,
+      summary: body,
+    });
+
     return true;
   } catch (error) {
     console.error("Invoice SMS error:", error);
@@ -289,6 +325,7 @@ export type InvoiceEmail = {
   // actually clicks Pay Now on that page.
   payNowUrl: string;
   pdfBuffer: Buffer;
+  jobberClientId: string | null;
 };
 
 // Customer-facing, like sendPortalMagicLinkEmail -- returns a boolean
@@ -357,6 +394,17 @@ export async function sendInvoiceEmail(
       return false;
     }
 
+    const data = (await response.json()) as { id?: string };
+
+    await logContactHistory({
+      jobberClientId: request.jobberClientId,
+      channel: "email",
+      subject: `Invoice ${request.invoiceNumber} Sent`,
+      summary: `Invoice for $${request.total.toFixed(2)}.`,
+      relatedType: "invoice",
+      resendEmailId: data.id ?? null,
+    });
+
     return true;
   } catch (error) {
     console.error("Invoice email error:", error);
@@ -371,6 +419,7 @@ export type AutopayReceiptEmail = {
   total: number;
   cardLast4: string | null;
   pdfBuffer: Buffer;
+  jobberClientId: string | null;
 };
 
 // Sent instead of sendInvoiceEmail when lib/autopay.ts's
@@ -434,6 +483,19 @@ export async function sendAutopayReceiptEmail(
       return false;
     }
 
+    const data = (await response.json()) as { id?: string };
+
+    await logContactHistory({
+      jobberClientId: request.jobberClientId,
+      channel: "email",
+      subject: `Invoice ${request.invoiceNumber} Autopay Receipt`,
+      summary: `Paid automatically for $${request.total.toFixed(2)}${
+        request.cardLast4 ? ` (card ending in ${request.cardLast4})` : ""
+      }.`,
+      relatedType: "invoice",
+      resendEmailId: data.id ?? null,
+    });
+
     return true;
   } catch (error) {
     console.error("Autopay receipt email error:", error);
@@ -449,7 +511,8 @@ export async function sendAutopayReceiptSms(
   customerName: string | null,
   invoiceNumber: string,
   total: number,
-  cardLast4: string | null
+  cardLast4: string | null,
+  jobberClientId: string | null
 ): Promise<boolean> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -494,6 +557,14 @@ export async function sendAutopayReceiptSms(
       return false;
     }
 
+    await logContactHistory({
+      jobberClientId,
+      channel: "sms",
+      subject: `Invoice ${invoiceNumber} Autopay Receipt`,
+      summary: body,
+      relatedType: "invoice",
+    });
+
     return true;
   } catch (error) {
     console.error("Autopay receipt SMS error:", error);
@@ -511,7 +582,8 @@ export async function sendVisitReminderSms(
   toPhone: string,
   customerName: string | null,
   visitLabel: string,
-  visitDateLabel: string
+  visitDateLabel: string,
+  jobberClientId: string | null
 ): Promise<boolean> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -553,6 +625,13 @@ export async function sendVisitReminderSms(
       return false;
     }
 
+    await logContactHistory({
+      jobberClientId,
+      channel: "sms",
+      subject: "Visit Reminder",
+      summary: body,
+    });
+
     return true;
   } catch (error) {
     console.error("Visit reminder SMS error:", error);
@@ -567,7 +646,8 @@ export async function sendVisitReminderEmail(
   toEmail: string,
   customerName: string | null,
   visitLabel: string,
-  visitDateLabel: string
+  visitDateLabel: string,
+  jobberClientId: string | null
 ): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
 
@@ -615,6 +695,16 @@ export async function sendVisitReminderEmail(
       return false;
     }
 
+    const data = (await response.json()) as { id?: string };
+
+    await logContactHistory({
+      jobberClientId,
+      channel: "email",
+      subject: "Visit Reminder",
+      summary: `Reminder for ${visitLabel} visit on ${visitDateLabel}.`,
+      resendEmailId: data.id ?? null,
+    });
+
     return true;
   } catch (error) {
     console.error("Visit reminder email error:", error);
@@ -631,7 +721,8 @@ export async function sendVisitReminderEmail(
 export async function sendReviewRequestSms(
   toPhone: string,
   customerName: string | null,
-  reviewUrl: string
+  reviewUrl: string,
+  jobberClientId: string | null
 ): Promise<boolean> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -673,6 +764,13 @@ export async function sendReviewRequestSms(
       return false;
     }
 
+    await logContactHistory({
+      jobberClientId,
+      channel: "sms",
+      subject: "Review Request",
+      summary: body,
+    });
+
     return true;
   } catch (error) {
     console.error("Review request SMS error:", error);
@@ -685,7 +783,8 @@ export async function sendReviewRequestSms(
 export async function sendReviewRequestEmail(
   toEmail: string,
   customerName: string | null,
-  reviewUrl: string
+  reviewUrl: string,
+  jobberClientId: string | null
 ): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
 
@@ -736,6 +835,16 @@ export async function sendReviewRequestEmail(
       );
       return false;
     }
+
+    const data = (await response.json()) as { id?: string };
+
+    await logContactHistory({
+      jobberClientId,
+      channel: "email",
+      subject: "Review Request",
+      summary: "Asked for a Google review.",
+      resendEmailId: data.id ?? null,
+    });
 
     return true;
   } catch (error) {
