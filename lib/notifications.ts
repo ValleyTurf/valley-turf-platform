@@ -24,6 +24,18 @@ import { replyToAddressFor } from "@/lib/replyRouting";
 const ALERT_EMAIL = process.env.ALERT_EMAIL || "valleyturfrevival@gmail.com";
 const ALERT_PHONE = process.env.ALERT_PHONE || "+14803314596";
 
+// Every customer-facing send uses this as its From header -- Resend (and
+// email generally) accepts "Display Name <address>" for the from field,
+// but every send in this file was just passing the bare address, so
+// Gmail/Outlook had nothing to show but the address's local part (e.g.
+// "invoices") as the sender name. Centralized here so every send shows
+// "Valley Turf Revival" regardless of which mailbox it's actually sent
+// from (invoices@, no-reply@, etc.).
+function fromHeader(): string {
+  const address = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
+  return `Valley Turf Revival <${address}>`;
+}
+
 export type NewLeadAlert = {
   name: string | null;
   phone: string | null;
@@ -62,8 +74,6 @@ async function sendLeadEmailAlert(lead: NewLeadAlert): Promise<void> {
     return;
   }
 
-  const fromAddress = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
-
   const subject = `New lead: ${lead.name || "Unknown"}${
     lead.campaignName ? ` (${lead.campaignName})` : ""
   }`;
@@ -87,7 +97,7 @@ async function sendLeadEmailAlert(lead: NewLeadAlert): Promise<void> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromAddress,
+        from: fromHeader(),
         to: ALERT_EMAIL,
         subject,
         html,
@@ -131,7 +141,6 @@ export async function sendPortalMagicLinkEmail(
     return false;
   }
 
-  const fromAddress = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
   const greetingName = request.customerName || "there";
 
   const html = `
@@ -158,7 +167,7 @@ export async function sendPortalMagicLinkEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromAddress,
+        from: fromHeader(),
         to: request.toEmail,
         reply_to: replyToAddressFor(request.jobberClientId),
         subject: "Sign in to your Valley Turf Revival portal",
@@ -218,8 +227,6 @@ export async function sendManualEmail(request: ManualEmail): Promise<boolean> {
     return false;
   }
 
-  const fromAddress = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
-
   // Each blank-line-separated chunk of the staff-typed body becomes its
   // own paragraph; single newlines within a chunk become <br> -- close
   // enough to how the plain text reads without asking staff to write any
@@ -246,7 +253,7 @@ export async function sendManualEmail(request: ManualEmail): Promise<boolean> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromAddress,
+        from: fromHeader(),
         to: request.toEmail,
         reply_to: replyTo,
         subject: request.subject,
@@ -450,7 +457,6 @@ export async function sendInvoiceEmail(
     return false;
   }
 
-  const fromAddress = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
   const greetingName = request.customerName || "there";
 
   const html = `
@@ -481,7 +487,7 @@ export async function sendInvoiceEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromAddress,
+        from: fromHeader(),
         to: request.toEmail,
         reply_to: replyToAddressFor(request.jobberClientId),
         subject: `Invoice ${request.invoiceNumber} from Valley Turf Revival`,
@@ -546,7 +552,6 @@ export async function sendAutopayReceiptEmail(
     return false;
   }
 
-  const fromAddress = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
   const greetingName = request.customerName || "there";
   const cardSuffix = request.cardLast4 ? ` (card ending in ${request.cardLast4})` : "";
 
@@ -571,7 +576,7 @@ export async function sendAutopayReceiptEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromAddress,
+        from: fromHeader(),
         to: request.toEmail,
         reply_to: replyToAddressFor(request.jobberClientId),
         subject: `Invoice ${request.invoiceNumber} paid automatically -- Valley Turf Revival`,
@@ -767,7 +772,6 @@ export async function sendVisitReminderEmail(
     return false;
   }
 
-  const fromAddress = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
   const greetingName = customerName || "there";
 
   const html = `
@@ -790,7 +794,7 @@ export async function sendVisitReminderEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromAddress,
+        from: fromHeader(),
         to: toEmail,
         reply_to: replyToAddressFor(jobberClientId),
         subject: `Reminder: your ${visitLabel} visit is coming up`,
@@ -905,7 +909,6 @@ export async function sendReviewRequestEmail(
     return false;
   }
 
-  const fromAddress = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
   const greetingName = customerName || "there";
 
   const html = `
@@ -932,7 +935,7 @@ export async function sendReviewRequestEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromAddress,
+        from: fromHeader(),
         to: toEmail,
         reply_to: replyToAddressFor(jobberClientId),
         subject: "How did we do?",
