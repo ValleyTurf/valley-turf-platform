@@ -169,7 +169,7 @@ export default function RequestQuoteForm() {
           Message and data rates may apply. Message frequency varies. Reply
           HELP for help or STOP to cancel. See our{" "}
           <a
-            href="https://valleyturfrevival.com/privacy-policy"
+            href="/privacy-policy"
             target="_blank"
             rel="noopener noreferrer"
             className="font-semibold text-[#174734] underline"
@@ -178,7 +178,7 @@ export default function RequestQuoteForm() {
           </a>{" "}
           and{" "}
           <a
-            href="https://valleyturfrevival.com/terms-and-conditions"
+            href="/terms-and-conditions"
             target="_blank"
             rel="noopener noreferrer"
             className="font-semibold text-[#174734] underline"

@@ -59,17 +59,12 @@ export default function RequestQuotePage() {
             so they're visible regardless of where on the page a reviewer
             looks. */}
         <p className="mt-3 text-center text-xs text-[#6b705c]">
-          <a
-            href="https://valleyturfrevival.com/privacy-policy"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
+          <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="underline">
             Privacy Policy
           </a>
           {" · "}
           <a
-            href="https://valleyturfrevival.com/terms-and-conditions"
+            href="/terms-and-conditions"
             target="_blank"
             rel="noopener noreferrer"
             className="underline"

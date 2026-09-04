@@ -44,6 +44,19 @@ const PUBLIC_PATHS = [
   // instead of the actual disallow rules, so Googlebot had no way to
   // even find out it wasn't supposed to be here.
   "/robots.txt",
+  // Privacy Policy / Terms & Conditions, hosted here (not just on
+  // valleyturfrevival.com) specifically so Twilio's A2P 10DLC campaign
+  // vetting crawler can read them. That crawler fetches raw HTML and
+  // doesn't execute JavaScript -- valleyturfrevival.com's Jobber-builder
+  // pages render their actual policy text client-side, so a
+  // non-JS-executing fetch of those pages returns an empty shell (no
+  // policy text anywhere in the initial response), which is what
+  // triggered the repeated 30908/30896/30882 rejections even though the
+  // content is genuinely there for a human visitor. These pages mirror
+  // that same approved text, but as plain server-rendered HTML with the
+  // full text present on first load, no session cookie required.
+  "/privacy-policy",
+  "/terms-and-conditions",
 ];
 
 // Routes Vercel Cron calls on a schedule (see vercel.json) that have no
