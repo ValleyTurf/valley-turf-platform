@@ -3,6 +3,7 @@ export const revalidate = 0;
 
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
+import CustomerTypeahead from "@/app/components/CustomerTypeahead";
 
 type CustomersPageProps = {
   searchParams: Promise<{
@@ -419,13 +420,14 @@ export default async function CustomersPage({
               Search customers
             </label>
 
-            <input
+            <CustomerTypeahead
               id="customer-search"
               name="search"
-              type="search"
               defaultValue={search}
               placeholder="Search name, email, phone, company, city..."
-              className="min-w-0 flex-1 rounded-xl border border-[#d9d4c6] bg-white px-4 py-3 text-[#174734] outline-none transition placeholder:text-[#8b8d82] focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+              navigateOnSelect
+              className="min-w-0 flex-1"
+              inputClassName="w-full rounded-xl border border-[#d9d4c6] bg-white px-4 py-3 text-[#174734] outline-none transition placeholder:text-[#8b8d82] focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
             />
 
             {filter !== "all" && (

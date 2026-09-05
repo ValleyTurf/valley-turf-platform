@@ -3,6 +3,7 @@ export const revalidate = 0;
 
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
+import CustomerTypeahead from "@/app/components/CustomerTypeahead";
 import { saveVisitCosts } from "../materials/actions";
 import { parseLaborEmployeeName } from "@/lib/laborMaterialName";
 import {
@@ -514,12 +515,19 @@ export default async function JobCostsPage({
           <>
             <section className="mt-5 rounded-2xl bg-white p-4 shadow">
               <form action="/job-costs" method="GET" className="flex gap-2">
-                <input
+                {/* navigateOnSelect=false: picking a suggested customer
+                    here fills the box with their name and submits this
+                    form, narrowing the visit list below -- it does NOT
+                    jump to their customer page, since the whole point of
+                    this page is the list of visits, not the customer
+                    record. */}
+                <CustomerTypeahead
                   name="q"
-                  type="search"
                   defaultValue={search}
                   placeholder="Search customer or visit title..."
-                  className="min-w-0 flex-1 rounded-xl border border-[#d9d4c6] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                  navigateOnSelect={false}
+                  className="min-w-0 flex-1"
+                  inputClassName="w-full rounded-xl border border-[#d9d4c6] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
                 />
 
                 <button
