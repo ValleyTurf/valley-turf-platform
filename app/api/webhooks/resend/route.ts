@@ -98,23 +98,31 @@ function stripHtml(html: string): string {
 // keeping the quoted copy here would just duplicate what's already
 // shown in an older entry a few rows down -- so only the text before
 // the quote marker (what the customer actually typed this time) is kept.
+//
+// The "On <date> ... wrote:" citation is searched for ANYWHERE in the
+// text, not just as a standalone line -- an earlier version of this
+// required it to be the entire line by itself, which silently never
+// matched in production because Gmail ran it directly onto the end of
+// the customer's typed reply with no line break in between ("Did you
+// get my last message? On Fri, Sep 4, 2026 ... wrote:"). The other
+// markers (">" quote lines, Outlook's separators) are still checked
+// per-line, since those genuinely only ever start a line.
 function stripQuotedReplyText(text: string): string {
-  const lines = text.split(/\r?\n/);
+  const boundaryPattern = new RegExp(
+    [
+      String.raw`\bOn\s.{5,160}?\bwrote:`, // "On Fri, Sep 4, 2026 at 4:36 PM ... wrote:" -- anywhere in the text
+      String.raw`^[ \t]*>`, // a line beginning with the ">" quote marker
+      String.raw`^-{2,}\s*Original Message\s*-{2,}\s*$`, // Outlook-style separator
+      String.raw`^From:\s.+`, // Outlook-style quoted headers block
+    ].join("|"),
+    "im"
+  );
 
-  const quoteStartIndex = lines.findIndex((line) => {
-    const trimmed = line.trim();
+  const match = text.match(boundaryPattern);
 
-    return (
-      trimmed.startsWith(">") ||
-      /^on .{1,200}\bwrote:\s*$/i.test(trimmed) ||
-      /^-{2,}\s*original message\s*-{2,}$/i.test(trimmed) ||
-      /^from:\s*\S+@\S+/i.test(trimmed)
-    );
-  });
-
-  const kept = quoteStartIndex === -1 ? lines : lines.slice(0, quoteStartIndex);
-
-  return kept.join("\n").trim();
+  return match && typeof match.index === "number"
+    ? text.slice(0, match.index).trim()
+    : text.trim();
 }
 
 async function handleInboundReply(
