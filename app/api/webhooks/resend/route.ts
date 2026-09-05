@@ -107,15 +107,24 @@ function stripHtml(html: string): string {
 // get my last message? On Fri, Sep 4, 2026 ... wrote:"). The other
 // markers (">" quote lines, Outlook's separators) are still checked
 // per-line, since those genuinely only ever start a line.
+//
+// "s" (dotAll) flag is required here too -- plain-text emails commonly
+// hard-wrap around 76-78 characters, and this citation line easily runs
+// past that (it wrapped mid-phrase, right before the email address, in
+// the exact production reply that exposed this: "...Valley Turf
+// Revival \n<invoices@...> wrote:"). Without dotAll, "." never matches
+// the newline the wrap introduced, so the whole pattern silently failed
+// on any citation long enough to wrap -- which is most of them, since
+// they always include a full name and email address.
 function stripQuotedReplyText(text: string): string {
   const boundaryPattern = new RegExp(
     [
-      String.raw`\bOn\s.{5,160}?\bwrote:`, // "On Fri, Sep 4, 2026 at 4:36 PM ... wrote:" -- anywhere in the text
+      String.raw`\bOn\s.{5,160}?\bwrote:`, // "On Fri, Sep 4, 2026 at 4:36 PM ... wrote:" -- anywhere in the text, spanning wrapped lines
       String.raw`^[ \t]*>`, // a line beginning with the ">" quote marker
       String.raw`^-{2,}\s*Original Message\s*-{2,}\s*$`, // Outlook-style separator
       String.raw`^From:\s.+`, // Outlook-style quoted headers block
     ].join("|"),
-    "im"
+    "ims"
   );
 
   const match = text.match(boundaryPattern);
