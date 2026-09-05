@@ -18,6 +18,14 @@ type PortalServiceRequestRow = {
   created_at: string;
 };
 
+type InboundEmailRow = {
+  jobber_client_id: string | null;
+  subject: string | null;
+  summary: string | null;
+  read_at: string | null;
+  created_at: string;
+};
+
 type CustomerRow = {
   jobber_client_id: string;
   full_name: string | null;
@@ -33,7 +41,7 @@ type InboxRow = {
 };
 
 export default async function MessagesInboxPage() {
-  const [messagesResult, requestsResult] = await Promise.all([
+  const [messagesResult, requestsResult, inboundEmailsResult] = await Promise.all([
     supabaseServer
       .from("portal_messages")
       .select("jobber_client_id, sender, body, read_at, created_at")
@@ -46,10 +54,24 @@ export default async function MessagesInboxPage() {
       .neq("status", "resolved")
       .order("created_at", { ascending: false })
       .limit(500),
+
+    // Customer replies to any email this app sends (see lib/replyRouting.ts
+    // and app/api/webhooks/resend/route.ts) -- these used to only ever
+    // show up buried on the individual Customer page's Contact History.
+    // Merged into this same inbox below so a new reply is just as visible
+    // as a new portal chat message.
+    supabaseServer
+      .from("contact_history")
+      .select("jobber_client_id, subject, summary, read_at, created_at")
+      .eq("channel", "email")
+      .eq("direction", "inbound")
+      .order("created_at", { ascending: false })
+      .limit(500),
   ]);
 
   const messages = (messagesResult.data ?? []) as PortalMessageRow[];
   const openRequests = (requestsResult.data ?? []) as PortalServiceRequestRow[];
+  const inboundEmails = (inboundEmailsResult.data ?? []) as InboundEmailRow[];
 
   const inboxMap = new Map<string, InboxRow>();
 
@@ -100,6 +122,30 @@ export default async function MessagesInboxPage() {
     }
   }
 
+  // Emails are already ordered newest-first too, so same "first time
+  // seen wins the preview" logic as the portal messages loop above.
+  for (const email of inboundEmails) {
+    if (!email.jobber_client_id) continue;
+
+    const row = getOrCreate(email.jobber_client_id);
+    const preview = email.summary?.trim() || email.subject || "New email reply";
+
+    if (email.created_at > row.lastActivityAt) {
+      row.lastActivityAt = email.created_at;
+
+      // Newest activity overall for this customer -- let the email take
+      // over the preview line even if a portal message was seen first,
+      // so the preview always reflects whatever actually came in last.
+      row.lastMessagePreview = `✉️ ${preview}`;
+    } else if (!row.lastMessagePreview) {
+      row.lastMessagePreview = `✉️ ${preview}`;
+    }
+
+    if (!email.read_at) {
+      row.unreadCount += 1;
+    }
+  }
+
   const jobberClientIds = Array.from(inboxMap.keys());
 
   if (jobberClientIds.length > 0) {
@@ -127,16 +173,16 @@ export default async function MessagesInboxPage() {
         <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
           Valley Turf Revival OS
         </p>
-        <h1 className="mt-2 text-3xl font-bold">Customer Portal Messages</h1>
+        <h1 className="mt-2 text-3xl font-bold">Messages</h1>
         <p className="mt-2 text-[#6b705c]">
-          Service requests and messages submitted through the customer
-          portal.
+          Portal chat, service requests, and email replies from customers,
+          all in one place.
         </p>
 
         <section className="mt-8 rounded-3xl bg-white p-5 shadow sm:p-8">
           {inboxRows.length === 0 ? (
             <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
-              No portal activity yet.
+              No messages yet.
             </p>
           ) : (
             <div className="space-y-3">

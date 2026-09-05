@@ -66,7 +66,7 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
         href: "/customers/intelligence",
         icon: "🧠",
       },
-      { name: "Portal Messages", href: "/messages", icon: "💬" },
+      { name: "Messages", href: "/messages", icon: "💬" },
       { name: "Reactivation", href: "/reactivation", icon: "📞" },
       { name: "Customer Map", href: "/map", icon: "🗺️" },
       { name: "Recurring Services", href: "/recurring-services", icon: "🔁" },
@@ -160,9 +160,11 @@ function groupContainsActiveItem(
 export default function Sidebar({
   user,
   permissions,
+  unreadMessageCount = 0,
 }: {
   user: SessionUser | null;
   permissions: RolePermissionsMap;
+  unreadMessageCount?: number;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -354,6 +356,13 @@ export default function Sidebar({
                   <span className="flex items-center gap-3">
                     <span className="text-xl">{group.icon}</span>
                     <span>{group.title}</span>
+                    {!isOpen &&
+                    unreadMessageCount > 0 &&
+                    group.items.some((item) => item.href === "/messages") ? (
+                      <span className="rounded-full bg-[#d4af37] px-2 py-0.5 text-xs font-bold normal-case tracking-normal text-[#174734]">
+                        {unreadMessageCount > 99 ? "99+" : unreadMessageCount}
+                      </span>
+                    ) : null}
                   </span>
 
                   <span
@@ -377,6 +386,11 @@ export default function Sidebar({
                       >
                         <span className="text-lg">{item.icon}</span>
                         <span className="text-sm">{item.name}</span>
+                        {item.href === "/messages" && unreadMessageCount > 0 ? (
+                          <span className="ml-auto shrink-0 rounded-full bg-[#d4af37] px-2 py-0.5 text-xs font-bold text-[#174734]">
+                            {unreadMessageCount > 99 ? "99+" : unreadMessageCount}
+                          </span>
+                        ) : null}
                       </Link>
                     ))}
                   </div>

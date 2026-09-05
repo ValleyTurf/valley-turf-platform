@@ -6,16 +6,21 @@ import ServiceWorkerRegister from "@/app/components/ServiceWorkerRegister";
 import InstallPrompt from "@/app/components/InstallPrompt";
 import { getCurrentUser } from "@/lib/currentUser";
 import { getRolePermissions, isPathAllowedForRole } from "@/lib/permissions";
+import { getUnreadMessageCount } from "@/lib/contactHistory";
 
 export default async function PlatformLayout({
   children,
 }: {
   children: ReactNode;
 }) {
-  const [user, permissions, headerList] = await Promise.all([
+  const [user, permissions, headerList, unreadMessageCount] = await Promise.all([
     getCurrentUser(),
     getRolePermissions(),
     headers(),
+    // Powers the "Messages" nav badge -- cheap indexed count query (see
+    // migration 057's partial index), fine to run on every platform page
+    // load alongside the permission checks this layout already does.
+    getUnreadMessageCount(),
   ]);
 
   // proxy.ts (Edge-like runtime, can't talk to Supabase) only checks
@@ -40,7 +45,11 @@ export default async function PlatformLayout({
       <ServiceWorkerRegister />
       <InstallPrompt />
 
-      <Sidebar user={user} permissions={permissions} />
+      <Sidebar
+        user={user}
+        permissions={permissions}
+        unreadMessageCount={unreadMessageCount}
+      />
 
       <div className="min-w-0 flex-1">
         {children}
