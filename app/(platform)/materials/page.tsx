@@ -555,15 +555,35 @@ function EquipmentRow({ item }: { item: EquipmentSummary }) {
           </p>
         </div>
 
-        <div className="shrink-0 text-right">
-          {!retired && (
-            <>
-              <p className="text-sm font-bold">
-                {formatCurrency(item.next_use_cost)}
-              </p>
-              <p className="text-xs text-[#6b705c]">next use</p>
-            </>
-          )}
+        <div className="flex shrink-0 items-center gap-4">
+          {/* What the equipment has actually cost per use so far --
+              purchase price divided by uses logged. Separate from
+              next_use_cost (the flat $1 billed to the job for using it):
+              that's a fixed billing amount Ryan wants kept at $1
+              regardless, this is just visibility into the real
+              per-use cost as uses_logged climbs. Blank (no uses
+              logged yet) rather than dividing by zero. */}
+          <div className="text-right">
+            <p className="text-sm font-bold text-[#9c7a20]">
+              {toNumber(item.uses_logged) > 0
+                ? formatCurrency(
+                    toNumber(item.total_cost) / toNumber(item.uses_logged)
+                  )
+                : "—"}
+            </p>
+            <p className="text-xs text-[#6b705c]">actual cost/use</p>
+          </div>
+
+          <div className="text-right">
+            {!retired && (
+              <>
+                <p className="text-sm font-bold">
+                  {formatCurrency(item.next_use_cost)}
+                </p>
+                <p className="text-xs text-[#6b705c]">next use</p>
+              </>
+            )}
+          </div>
         </div>
       </summary>
 
