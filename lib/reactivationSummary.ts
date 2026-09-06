@@ -5,7 +5,10 @@ import {
   daysBetweenDateStrings,
   hasWonBackSince,
   isActiveWorkflowStatus,
+  isDueToday,
+  isOverdue,
   isReactivationCandidate,
+  isUpcoming,
   normalizeReactivationStatus,
   type ReactivationStatus,
 } from "@/lib/reactivation";
@@ -29,6 +32,9 @@ export type ReactivationPipelineSummary = {
   everContacted: number;
   wonBack: number;
   winBackRate: number;
+  overdueFollowUps: number;
+  dueTodayFollowUps: number;
+  upcomingFollowUps: number;
 };
 
 type CustomerRow = {
@@ -36,6 +42,7 @@ type CustomerRow = {
   jobber_client_id: string | null;
   reactivation_status: string | null;
   reactivation_last_contacted_at: string | null;
+  reactivation_next_follow_up_at: string | null;
 };
 
 type InvoiceRow = {
@@ -56,7 +63,7 @@ async function fetchAllCustomers(): Promise<CustomerRow[]> {
     const { data, error } = await supabaseServer
       .from("customers")
       .select(
-        "id, jobber_client_id, reactivation_status, reactivation_last_contacted_at"
+        "id, jobber_client_id, reactivation_status, reactivation_last_contacted_at, reactivation_next_follow_up_at"
       )
       .not("jobber_client_id", "is", null)
       .range(from, from + pageSize - 1);
@@ -149,7 +156,8 @@ export async function getReactivationPipelineSummary(): Promise<ReactivationPipe
     invoicesByClient.set(invoice.jobber_client_id, existing);
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
 
   let totalInPipeline = 0;
   let candidates = 0;
@@ -158,6 +166,9 @@ export async function getReactivationPipelineSummary(): Promise<ReactivationPipe
   let scheduled = 0;
   let everContacted = 0;
   let wonBack = 0;
+  let overdueFollowUps = 0;
+  let dueTodayFollowUps = 0;
+  let upcomingFollowUps = 0;
 
   for (const customer of allCustomers) {
     const clientId = customer.jobber_client_id;
@@ -205,6 +216,11 @@ export async function getReactivationPipelineSummary(): Promise<ReactivationPipe
         wonBack += 1;
       }
     }
+
+    const nextFollowUpAt = customer.reactivation_next_follow_up_at;
+    if (isOverdue(nextFollowUpAt, now)) overdueFollowUps += 1;
+    if (isDueToday(nextFollowUpAt, now)) dueTodayFollowUps += 1;
+    if (isUpcoming(nextFollowUpAt, now)) upcomingFollowUps += 1;
   }
 
   return {
@@ -216,5 +232,8 @@ export async function getReactivationPipelineSummary(): Promise<ReactivationPipe
     everContacted,
     wonBack,
     winBackRate: everContacted > 0 ? wonBack / everContacted : 0,
+    overdueFollowUps,
+    dueTodayFollowUps,
+    upcomingFollowUps,
   };
 }

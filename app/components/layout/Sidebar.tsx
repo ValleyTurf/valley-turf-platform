@@ -101,6 +101,7 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
     title: "Operations",
     icon: "📡",
     items: [
+      { name: "Command Center", href: "/command-center", icon: "🛰️" },
       { name: "Crew Status", href: "/crew-status", icon: "📡" },
       { name: "Task List", href: "/tasks", icon: "✅" },
       { name: "AI Copilot", href: "/copilot", icon: "🤖" },

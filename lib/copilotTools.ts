@@ -5,6 +5,8 @@ import { escapeSearchValue } from "@/lib/searchUtils";
 import { getFinancialMetrics } from "@/lib/financial/metrics";
 import { getJobCostingSummary } from "@/lib/jobCostingSummary";
 import { getReactivationPipelineSummary } from "@/lib/reactivationSummary";
+import { getActiveCrewSnapshot } from "@/lib/crewStatusSummary";
+import { getOutstandingInvoicesSummary } from "@/lib/outstandingInvoicesSummary";
 
 // The curated, read-only tool set for the AI Copilot (Tier 1). Every
 // function here just wraps a query or helper that already exists and
@@ -201,24 +203,7 @@ const outstandingInvoicesSummaryTool: CopilotTool = {
       "Get the total dollar amount and count of currently unpaid/outstanding invoices. Use this for questions about overdue or unpaid invoices, accounts receivable, or who owes money.",
     input_schema: { type: "object", properties: {} },
   },
-  run: async () => {
-    const { data, error } = await supabaseServer
-      .from("outstanding_invoices")
-      .select("outstanding_balance");
-
-    if (error) throw new Error(`Could not load outstanding invoices: ${error.message}`);
-
-    const rows = (data ?? []) as { outstanding_balance: number | string }[];
-    const total = rows.reduce((sum, row) => sum + Number(row.outstanding_balance ?? 0), 0);
-
-    return { totalOutstanding: total, invoiceCount: rows.length };
-  },
-};
-
-type ActiveTimerRow = {
-  jobber_visit_id: string;
-  user_id: string;
-  started_at: string;
+  run: async () => getOutstandingInvoicesSummary(),
 };
 
 const crewStatusSummaryTool: CopilotTool = {
@@ -228,66 +213,7 @@ const crewStatusSummaryTool: CopilotTool = {
       "Get who is currently clocked in and working right now, which job/visit they're on, and since when. Use this for any question about who's working, who's on the clock, or what's happening in the field right now.",
     input_schema: { type: "object", properties: {} },
   },
-  run: async () => {
-    const { data: timersData, error: timersError } = await supabaseServer
-      .from("visit_time_logs")
-      .select("jobber_visit_id, user_id, started_at")
-      .is("stopped_at", null);
-
-    if (timersError) {
-      throw new Error(`Could not load active timers: ${timersError.message}`);
-    }
-
-    const timers = (timersData ?? []) as ActiveTimerRow[];
-
-    if (timers.length === 0) {
-      return { clockedInCount: 0, crew: [] };
-    }
-
-    const userIds = Array.from(new Set(timers.map((t) => t.user_id)));
-    const visitIds = Array.from(new Set(timers.map((t) => t.jobber_visit_id)));
-
-    const [{ data: usersData, error: usersError }, { data: visitsData, error: visitsError }] =
-      await Promise.all([
-        supabaseServer.from("users").select("id, name").in("id", userIds),
-        supabaseServer
-          .from("jobber_visits")
-          .select("jobber_visit_id, customer_name, title")
-          .in("jobber_visit_id", visitIds),
-      ]);
-
-    if (usersError) throw new Error(`Could not load users: ${usersError.message}`);
-    if (visitsError) throw new Error(`Could not load visits: ${visitsError.message}`);
-
-    const userNameById = new Map(
-      ((usersData ?? []) as { id: string; name: string | null }[]).map((u) => [
-        u.id,
-        u.name ?? "Unknown",
-      ])
-    );
-    const visitById = new Map(
-      (
-        (visitsData ?? []) as {
-          jobber_visit_id: string;
-          customer_name: string | null;
-          title: string | null;
-        }[]
-      ).map((v) => [v.jobber_visit_id, v])
-    );
-
-    return {
-      clockedInCount: timers.length,
-      crew: timers.map((t) => {
-        const visit = visitById.get(t.jobber_visit_id);
-        return {
-          employeeName: userNameById.get(t.user_id) ?? "Unknown",
-          customerName: visit?.customer_name ?? "Unknown",
-          jobTitle: visit?.title ?? null,
-          clockedInSince: t.started_at,
-        };
-      }),
-    };
-  },
+  run: async () => getActiveCrewSnapshot(),
 };
 
 type CustomerSearchRow = {

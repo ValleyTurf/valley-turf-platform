@@ -181,6 +181,7 @@ export const MANAGER_PLUS_PREFIXES = [
   "/timecards",
   "/knowledge-base/new",
   "/copilot",
+  "/command-center",
 ];
 
 export type RolePermissionsMap = Record<
