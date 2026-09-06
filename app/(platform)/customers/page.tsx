@@ -4,6 +4,7 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import CustomerTypeahead from "@/app/components/CustomerTypeahead";
+import { escapeSearchValue } from "@/lib/searchUtils";
 
 type CustomersPageProps = {
   searchParams: Promise<{
@@ -156,16 +157,6 @@ function formatDate(value: string | null): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
-}
-
-function escapeSearchValue(value: string): string {
-  return value
-    .replace(/\\/g, "\\\\")
-    .replace(/%/g, "\\%")
-    .replace(/_/g, "\\_")
-    .replace(/,/g, "\\,")
-    .replace(/\(/g, "\\(")
-    .replace(/\)/g, "\\)");
 }
 
 function buildCustomersUrl(

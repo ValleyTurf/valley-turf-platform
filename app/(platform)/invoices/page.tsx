@@ -8,10 +8,12 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { fetchJobDetails } from "@/lib/jobberJob";
+import { escapeSearchValue } from "@/lib/searchUtils";
+import CustomerTypeahead from "@/app/components/CustomerTypeahead";
 import InvoiceCard, { type ReadyToInvoiceVisit } from "./InvoiceCard";
 
 type InvoicesPageProps = {
-  searchParams: Promise<{ page?: string }>;
+  searchParams: Promise<{ page?: string; q?: string }>;
 };
 
 type VisitRow = ReadyToInvoiceVisit & {
@@ -30,14 +32,27 @@ function toNumber(value: number | string | null | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function buildInvoicesUrl(page: number): string {
-  return page > 1 ? `/invoices?page=${page}` : "/invoices";
+function buildInvoicesUrl(page: number, search: string): string {
+  const params = new URLSearchParams();
+
+  if (search) {
+    params.set("q", search);
+  }
+
+  if (page > 1) {
+    params.set("page", String(page));
+  }
+
+  const query = params.toString();
+
+  return query ? `/invoices?${query}` : "/invoices";
 }
 
 export default async function InvoicesPage({
   searchParams,
 }: InvoicesPageProps) {
   const params = await searchParams;
+  const search = String(params.q ?? "").trim();
   const requestedPage = Number.parseInt(params.page ?? "1", 10);
   const currentPage =
     Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
@@ -45,11 +60,7 @@ export default async function InvoicesPage({
   const from = (currentPage - 1) * PAGE_SIZE;
   const to = from + PAGE_SIZE - 1;
 
-  const {
-    data: visitsData,
-    count,
-    error,
-  } = await supabaseServer
+  let visitsQuery = supabaseServer
     .from("jobber_visits")
     .select(
       "jobber_visit_id, jobber_job_id, jobber_client_id, customer_name, job_number, title, start_at, completed_at",
@@ -59,6 +70,20 @@ export default async function InvoicesPage({
     .is("jobber_invoice_id", null)
     .order("completed_at", { ascending: false })
     .range(from, to);
+
+  if (search) {
+    const safeSearch = escapeSearchValue(search);
+
+    visitsQuery = visitsQuery.or(
+      [
+        `customer_name.ilike.%${safeSearch}%`,
+        `title.ilike.%${safeSearch}%`,
+        `job_number.ilike.%${safeSearch}%`,
+      ].join(",")
+    );
+  }
+
+  const { data: visitsData, count, error } = await visitsQuery;
 
   const visits = (visitsData ?? []) as VisitRow[];
   const totalVisits = count ?? 0;
@@ -100,8 +125,11 @@ export default async function InvoicesPage({
     jobPriceMap.set(jobId, price != null && price > 0 ? price : null);
   }
 
-  const previousPageUrl = buildInvoicesUrl(Math.max(1, currentPage - 1));
-  const nextPageUrl = buildInvoicesUrl(Math.min(totalPages, currentPage + 1));
+  const previousPageUrl = buildInvoicesUrl(Math.max(1, currentPage - 1), search);
+  const nextPageUrl = buildInvoicesUrl(
+    Math.min(totalPages, currentPage + 1),
+    search
+  );
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
@@ -147,6 +175,35 @@ export default async function InvoicesPage({
           </div>
         </header>
 
+        <section className="mt-5 rounded-2xl bg-white p-4 shadow">
+          <form action="/invoices" method="GET" className="flex gap-2">
+            <CustomerTypeahead
+              name="q"
+              defaultValue={search}
+              placeholder="Search customer or visit title..."
+              navigateOnSelect={false}
+              className="min-w-0 flex-1"
+              inputClassName="w-full rounded-xl border border-[#d9d4c6] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+            />
+
+            <button
+              type="submit"
+              className="rounded-xl bg-[#174734] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#226246]"
+            >
+              Search
+            </button>
+
+            {search && (
+              <Link
+                href="/invoices"
+                className="rounded-xl border border-[#d9d4c6] px-4 py-2.5 text-sm font-bold transition hover:bg-[#f7f6f1]"
+              >
+                Clear
+              </Link>
+            )}
+          </form>
+        </section>
+
         {error ? (
           <section className="mt-5 rounded-2xl border border-red-200 bg-white p-5 shadow">
             <p className="font-bold text-red-700">Visits could not be loaded</p>
@@ -155,7 +212,9 @@ export default async function InvoicesPage({
         ) : visits.length === 0 ? (
           <section className="mt-5 rounded-2xl bg-white p-5 shadow">
             <p className="text-sm text-[#6b705c]">
-              All caught up — every completed visit has an invoice.
+              {search
+                ? "No visits found for that search."
+                : "All caught up — every completed visit has an invoice."}
             </p>
           </section>
         ) : (

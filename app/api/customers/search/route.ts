@@ -10,6 +10,7 @@
 // surface.
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
+import { escapeSearchValue } from "@/lib/searchUtils";
 
 export const dynamic = "force-dynamic";
 
@@ -28,20 +29,6 @@ export type CustomerSearchResult = {
   name: string;
   detail: string;
 };
-
-// Same escaping the /customers and /job-costs pages already use before
-// dropping a raw search term into a PostgREST .or() filter string --
-// duplicated rather than imported since those live in server page
-// components and this is the one place across all three that isn't one.
-function escapeSearchValue(value: string): string {
-  return value
-    .replace(/\\/g, "\\\\")
-    .replace(/%/g, "\\%")
-    .replace(/_/g, "\\_")
-    .replace(/,/g, "\\,")
-    .replace(/\(/g, "\\(")
-    .replace(/\)/g, "\\)");
-}
 
 // Keep this tiny -- it's a live-as-you-type dropdown, not a results
 // page. Anyone who needs more than a handful of matches already has the

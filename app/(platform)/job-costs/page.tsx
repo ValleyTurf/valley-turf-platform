@@ -10,6 +10,7 @@ import {
   toNumber,
   formatCurrencyPrecise as formatCurrency,
 } from "@/lib/format";
+import { escapeSearchValue } from "@/lib/searchUtils";
 
 type JobCostsPageProps = {
   searchParams: Promise<{
@@ -137,16 +138,6 @@ function decimalHoursToHMM(decimalHours: number): string {
   const minutes = totalMinutes % 60;
 
   return `${hours}:${String(minutes).padStart(2, "0")}`;
-}
-
-function escapeSearchValue(value: string): string {
-  return value
-    .replace(/\\/g, "\\\\")
-    .replace(/%/g, "\\%")
-    .replace(/_/g, "\\_")
-    .replace(/,/g, "\\,")
-    .replace(/\(/g, "\\(")
-    .replace(/\)/g, "\\)");
 }
 
 function buildJobCostsUrl(

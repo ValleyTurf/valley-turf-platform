@@ -4,6 +4,7 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { formatCurrency, formatDateOnly } from "@/lib/format";
+import { escapeSearchValue } from "@/lib/searchUtils";
 import {
   computeDisplayStatus,
   quoteStatusLabel,
@@ -35,14 +36,6 @@ const STATUS_BADGE_CLASSES: Record<QuoteStatus, string> = {
   declined: "bg-red-50 text-red-700",
   expired: "bg-amber-50 text-amber-800",
 };
-
-function escapeSearchValue(value: string): string {
-  return value
-    .replace(/\\/g, "\\\\")
-    .replace(/%/g, "\\%")
-    .replace(/_/g, "\\_")
-    .replace(/,/g, "\\,");
-}
 
 export default async function QuotesPage({ searchParams }: QuotesPageProps) {
   const params = await searchParams;
