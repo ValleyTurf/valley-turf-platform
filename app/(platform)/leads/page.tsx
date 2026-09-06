@@ -1,9 +1,9 @@
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { normalizeEmail, normalizePhone } from "@/lib/matching";
+import LeadsTable, { type LeadRow } from "./LeadsTable";
 
 type Lead = {
   id: string;
@@ -161,6 +161,58 @@ export default async function LeadsPage() {
   const totalLeads = leads.length;
   const matchedCount = leads.filter((lead) => matchCustomer(lead)).length;
 
+  const rows: LeadRow[] = leads.map((lead) => {
+    const campaign = lead.campaign_id ? campaignMap.get(lead.campaign_id) : null;
+    const customer = matchCustomer(lead);
+    const name = [lead.first_name, lead.last_name].filter(Boolean).join(" ");
+    const displayAddress =
+      lead.address_formatted ||
+      [lead.address, lead.city, lead.state, lead.zip]
+        .filter(Boolean)
+        .join(", ") ||
+      null;
+    const campaignLabel = campaign ? campaign.alias || campaign.name : null;
+    const status = lead.status || "New";
+    const customerLabel = customer
+      ? customer.full_name || "View Customer"
+      : null;
+
+    return {
+      id: lead.id,
+      capturedAt: formatArizonaTime(lead.created_at),
+      name: name || "—",
+      phone: lead.phone,
+      email: lead.email,
+      displayAddress,
+      addressBadge: addressValidationBadge(lead.address_validation_status),
+      source: lead.source,
+      campaign:
+        campaign && campaignLabel
+          ? { slug: campaign.slug, label: campaignLabel }
+          : null,
+      status,
+      statusClassName: statusBadge(lead.status),
+      scanCount: lead.scan_count,
+      customerMatch:
+        customer && customerLabel
+          ? { jobberClientId: customer.jobber_client_id, label: customerLabel }
+          : null,
+      searchText: [
+        name,
+        lead.phone,
+        lead.email,
+        displayAddress,
+        lead.source,
+        campaignLabel,
+        status,
+        customerLabel,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase(),
+    };
+  });
+
   return (
     <main className="min-h-screen bg-[#f5f4ef] p-4 text-[#174734] sm:p-8">
       <div className="mx-auto max-w-7xl">
@@ -201,130 +253,18 @@ export default async function LeadsPage() {
         <section className="mt-8 rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
           <h2 className="text-2xl font-bold text-[#174734]">All Leads</h2>
 
-          <div className="mt-5 overflow-x-auto">
-            {error ? (
-              <p className="text-sm text-red-600">
-                Leads could not be loaded: {error.message}
-              </p>
-            ) : leads.length === 0 ? (
-              <p className="text-sm text-[#6b705c]">
-                No leads captured yet. Turn on lead capture for a campaign on
-                the QR Code Library page to start collecting them.
-              </p>
-            ) : (
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-[#e7e2d5] text-[#6b705c]">
-                    <th className="pb-2 pr-4">Captured</th>
-                    <th className="pb-2 pr-4">Name</th>
-                    <th className="pb-2 pr-4">Phone</th>
-                    <th className="pb-2 pr-4">Email</th>
-                    <th className="pb-2 pr-4">Address</th>
-                    <th className="pb-2 pr-4">Source</th>
-                    <th className="pb-2 pr-4">Campaign</th>
-                    <th className="pb-2 pr-4">Status</th>
-                    <th className="pb-2 pr-4">Scans</th>
-                    <th className="pb-2 pr-4">Customer Match</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {leads.map((lead) => {
-                    const campaign = lead.campaign_id
-                      ? campaignMap.get(lead.campaign_id)
-                      : null;
-
-                    const customer = matchCustomer(lead);
-                    const badge = addressValidationBadge(
-                      lead.address_validation_status
-                    );
-                    const displayAddress =
-                      lead.address_formatted ||
-                      [lead.address, lead.city, lead.state, lead.zip]
-                        .filter(Boolean)
-                        .join(", ");
-
-                    return (
-                      <tr key={lead.id} className="border-b border-[#f0eee6]">
-                        <td className="whitespace-nowrap py-2 pr-4">
-                          {formatArizonaTime(lead.created_at)}
-                        </td>
-                        <td className="py-2 pr-4">
-                          {[lead.first_name, lead.last_name]
-                            .filter(Boolean)
-                            .join(" ") || "—"}
-                        </td>
-                        <td className="py-2 pr-4">{lead.phone || "—"}</td>
-                        <td className="py-2 pr-4">{lead.email || "—"}</td>
-                        <td className="py-2 pr-4">
-                          {displayAddress ? (
-                            <div className="flex flex-col gap-1">
-                              <span>{displayAddress}</span>
-                              {badge && (
-                                <span
-                                  className={`w-fit rounded-full px-2 py-0.5 text-xs font-bold ${badge.className}`}
-                                >
-                                  {badge.label}
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="py-2 pr-4">{lead.source || "—"}</td>
-                        <td className="py-2 pr-4">
-                          {campaign ? (
-                            <Link
-                              href={`/campaigns/${campaign.slug}`}
-                              className="font-semibold text-[#174734] hover:underline"
-                            >
-                              {campaign.alias || campaign.name}
-                            </Link>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="py-2 pr-4">
-                          <span
-                            className={`rounded-full px-2 py-1 text-xs font-bold ${statusBadge(
-                              lead.status
-                            )}`}
-                          >
-                            {lead.status || "New"}
-                          </span>
-                        </td>
-                        <td className="py-2 pr-4">
-                          {lead.scan_count && lead.scan_count > 1 ? (
-                            <span className="rounded-full bg-[#f0eee6] px-2 py-1 text-xs font-bold text-[#6b705c]">
-                              {lead.scan_count} scans
-                            </span>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td className="py-2 pr-4">
-                          {customer ? (
-                            <Link
-                              href={`/customers/${encodeURIComponent(
-                                customer.jobber_client_id
-                              )}`}
-                              className="font-semibold text-[#174734] hover:underline"
-                            >
-                              {customer.full_name || "View Customer"}
-                            </Link>
-                          ) : (
-                            <span className="text-[#6b705c]">
-                              Not a customer yet
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </div>
+          {error ? (
+            <p className="mt-5 text-sm text-red-600">
+              Leads could not be loaded: {error.message}
+            </p>
+          ) : leads.length === 0 ? (
+            <p className="mt-5 text-sm text-[#6b705c]">
+              No leads captured yet. Turn on lead capture for a campaign on
+              the QR Code Library page to start collecting them.
+            </p>
+          ) : (
+            <LeadsTable rows={rows} />
+          )}
         </section>
       </div>
     </main>
