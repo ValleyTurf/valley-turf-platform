@@ -180,6 +180,7 @@ export const MANAGER_PLUS_PREFIXES = [
   "/crew-status",
   "/timecards",
   "/knowledge-base/new",
+  "/copilot",
 ];
 
 export type RolePermissionsMap = Record<
