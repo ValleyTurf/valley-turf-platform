@@ -73,8 +73,6 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
       { name: "Recurring Services", href: "/recurring-services", icon: "🔁" },
       { name: "Create Job", href: "/jobs/new", icon: "🆕" },
       { name: "Quotes", href: "/quotes", icon: "📝" },
-      { name: "Test a Payment", href: "/stripe-test", icon: "💳" },
-      { name: "Test an Invoice", href: "/invoice-test", icon: "🧾" },
     ],
   },
   {
