@@ -3,7 +3,6 @@ export const revalidate = 0;
 
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
-import { getAllCampaignRoi, type CampaignRoi } from "@/lib/campaignRoi";
 import { isLaborMaterialName, parseLaborEmployeeName } from "@/lib/laborMaterialName";
 import {
   toNumber,
@@ -690,30 +689,6 @@ function filterRowsByRange(
   });
 }
 
-// Deliberately still sourced from the view's own direct_cost/
-// estimated_profit, NOT costBreakdowns — this runs against allRows
-// (every invoice ever), and fetchCostBreakdownForInvoices's visits query
-// isn't bounded well enough to run over a multi-year range cheaply (see
-// the costBreakdowns comment below, where a first attempt at scoping it
-// to allRows broke the whole page — every row's Labor/Materials/visit
-// count silently went to zero because the query failed and got caught).
-// The all-time True Net Profit banner keeps the old, occasionally-
-// FK-mismatched direct_cost for now rather than risk that again;
-// everything actually visible per-invoice (the drill-down rows and
-// category cards, both scoped to the much smaller selected timeframe)
-// uses the fixed calendar-month numbers.
-function sumInvoiceRows(rows: InvoiceCostRow[]) {
-  return rows.reduce(
-    (acc, row) => ({
-      revenue: acc.revenue + toNumber(row.revenue),
-      directCost: acc.directCost + toNumber(row.direct_cost),
-      overhead: acc.overhead + toNumber(row.overhead_allocated),
-      profit: acc.profit + toNumber(row.estimated_profit),
-    }),
-    { revenue: 0, directCost: 0, overhead: 0, profit: 0 }
-  );
-}
-
 export default async function JobCostingAnalyticsPage({
   searchParams,
 }: JobCostingAnalyticsProps) {
@@ -740,26 +715,9 @@ export default async function JobCostingAnalyticsPage({
 
   let allRows: InvoiceCostRow[] = [];
   let fetchError: string | null = null;
-  let campaignRoi: Map<string, CampaignRoi> = new Map();
-  const campaignNames = new Map<string, string>();
 
   try {
-    const [rowsResult, roiResult, campaignsResult] = await Promise.all([
-      fetchAllInvoiceCosts(),
-      getAllCampaignRoi(),
-      supabaseServer.from("campaigns").select("id, name, alias"),
-    ]);
-
-    allRows = rowsResult;
-    campaignRoi = roiResult;
-
-    for (const campaign of (campaignsResult.data ?? []) as Array<{
-      id: string;
-      name: string | null;
-      alias: string | null;
-    }>) {
-      campaignNames.set(campaign.id, campaign.alias || campaign.name || "Untitled campaign");
-    }
+    allRows = await fetchAllInvoiceCosts();
   } catch (err) {
     fetchError = err instanceof Error ? err.message : "Unknown error";
   }
@@ -817,32 +775,6 @@ export default async function JobCostingAnalyticsPage({
     console.error("Category drill-down lookup failed:", err);
   }
 
-  // Marketing spend has no date dimension in this app today — a campaign's
-  // "spend" is a single lifetime total entered once, not logged per period,
-  // and its attributed revenue (getAllCampaignRoi) counts everything from a
-  // customer's first touch onward with no end bound either. So the only
-  // honest way to fold marketing into a P&L is all-time: mixing a
-  // period-scoped job revenue against a lifetime spend figure would produce
-  // a misleading "true profit" for anything shorter than "all time".
-  const allTimeJobTotals = sumInvoiceRows(allRows);
-  const marketingTotals = Array.from(campaignRoi.values()).reduce(
-    (acc, roi) => ({
-      spend: acc.spend + roi.spend,
-      attributedRevenue: acc.attributedRevenue + roi.revenue,
-    }),
-    { spend: 0, attributedRevenue: 0 }
-  );
-  const trueNetProfit =
-    allTimeJobTotals.profit - marketingTotals.spend;
-  const trueMarginPct =
-    allTimeJobTotals.revenue > 0
-      ? (trueNetProfit / allTimeJobTotals.revenue) * 100
-      : 0;
-  const topCampaigns = Array.from(campaignRoi.entries())
-    .filter(([, roi]) => roi.spend > 0 || roi.revenue > 0)
-    .sort((a, b) => b[1].spend - a[1].spend)
-    .slice(0, 5);
-
   const totals = categories.reduce(
     (acc, category) => ({
       revenue: acc.revenue + category.total_revenue,
@@ -864,9 +796,6 @@ export default async function JobCostingAnalyticsPage({
 
   const overallMargin =
     totals.revenue > 0 ? (totals.profit / totals.revenue) * 100 : 0;
-
-  const unloggedRate =
-    totals.invoices > 0 ? totals.unlogged / totals.invoices : 0;
 
   const maxProfit = Math.max(
     1,
@@ -999,107 +928,6 @@ export default async function JobCostingAnalyticsPage({
           )}
         </section>
 
-        {!fetchError && (
-          <section className="mt-8 rounded-3xl bg-[#174734] p-5 text-white shadow sm:p-8">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#d4af37]">
-                  True Net Profit · All Time
-                </p>
-                <p
-                  className={`mt-2 text-4xl font-bold ${
-                    trueNetProfit >= 0 ? "text-white" : "text-red-300"
-                  }`}
-                >
-                  {formatCurrency(trueNetProfit)}
-                </p>
-                <p className="mt-2 text-sm text-white/70">
-                  {trueMarginPct.toFixed(1)}% true margin — revenue minus
-                  direct cost, overhead, and marketing spend, since day one.
-                  Payroll is already folded into direct cost (employees are
-                  logged as hourly line items against jobs).
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-x-8 gap-y-4 text-sm sm:grid-cols-4">
-                <div>
-                  <p className="text-white/60">Revenue</p>
-                  <p className="mt-1 text-lg font-bold">
-                    {formatCurrency(allTimeJobTotals.revenue)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-white/60">Direct + Overhead</p>
-                  <p className="mt-1 text-lg font-bold">
-                    {formatCurrency(
-                      allTimeJobTotals.directCost + allTimeJobTotals.overhead
-                    )}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-white/60">Job Profit</p>
-                  <p className="mt-1 text-lg font-bold">
-                    {formatCurrency(allTimeJobTotals.profit)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-white/60">Marketing Spend</p>
-                  <p className="mt-1 text-lg font-bold">
-                    {formatCurrency(marketingTotals.spend)}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {topCampaigns.length > 0 && (
-              <div className="mt-6 border-t border-white/15 pt-5">
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#d4af37]">
-                  Top Campaigns by Spend
-                </p>
-
-                <div className="mt-3 space-y-2">
-                  {topCampaigns.map(([campaignId, roi]) => (
-                    <div
-                      key={campaignId}
-                      className="flex flex-col gap-1 rounded-xl bg-white/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <p className="font-semibold">
-                        {campaignNames.get(campaignId) ?? "Untitled campaign"}
-                      </p>
-                      <p className="text-sm text-white/80">
-                        {formatCurrency(roi.spend)} spent ·{" "}
-                        {formatCurrency(roi.revenue)} attributed revenue
-                        {roi.roiPercent !== null && (
-                          <>
-                            {" "}
-                            ·{" "}
-                            <span
-                              className={
-                                roi.roiPercent >= 0
-                                  ? "text-green-300"
-                                  : "text-red-300"
-                              }
-                            >
-                              {roi.roiPercent.toFixed(0)}% ROI
-                            </span>
-                          </>
-                        )}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-
-                <Link
-                  href="/codes"
-                  className="mt-4 inline-block text-sm font-semibold text-[#d4af37] underline"
-                >
-                  See all campaigns →
-                </Link>
-              </div>
-            )}
-          </section>
-        )}
-
         {fetchError ? (
           <section className="mt-6 rounded-2xl border border-red-200 bg-white p-5 shadow">
             <p className="font-bold text-red-700">
@@ -1115,32 +943,10 @@ export default async function JobCostingAnalyticsPage({
           </section>
         ) : (
           <>
-            {unloggedRate > 0.5 && (
-              <section className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-800 shadow-sm">
-                <p className="font-bold">
-                  Heads up — most invoices in this period have no logged
-                  costs yet
-                </p>
-                <p className="mt-1 text-sm">
-                  {formatNumber(totals.unlogged)} of{" "}
-                  {formatNumber(totals.invoices)} invoices (
-                  {(unloggedRate * 100).toFixed(0)}%) have no material,
-                  labor, or fuel logged against them. Profit numbers below
-                  only reflect overhead so far for those — they&apos;ll get more
-                  accurate as you log usage on{" "}
-                  <Link href="/job-costs" className="font-semibold underline">
-                    /job-costs
-                  </Link>
-                  .
-                </p>
-              </section>
-            )}
-
             <p className="mt-6 text-sm text-[#6b705c]">
               The figures below are scoped to {label} and don&apos;t include
               marketing spend — campaign spend is tracked as a lifetime
-              total, not by date, so it only nets out cleanly in the
-              all-time True Net Profit figure above.
+              total, not by date.
             </p>
 
             <section className="mt-4 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
