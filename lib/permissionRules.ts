@@ -242,6 +242,30 @@ function sectionForPath(pathname: string): PermissionSection | null {
   return bestSection;
 }
 
+// Powers the Sidebar's "Reports" nav item specifically -- /reports itself
+// deliberately has no entry in SECTION_PREFIXES (its cards are individually
+// gated by isPathAllowedForRole against their own real hrefs, same as
+// visiting them directly), so without this the generic "no section means
+// universally visible" rule would show the Reports link to every role even
+// when none of the reports inside it are actually reachable for them.
+// Timecards (manager-plus, not a configurable section) is folded in here
+// too, via role !== "staff", instead of via a permissions[role] lookup.
+export function hasAnyReportAccess(
+  role: Role,
+  permissions: RolePermissionsMap
+): boolean {
+  if (role === "admin") {
+    return true;
+  }
+
+  return (
+    permissions[role].financials ||
+    permissions[role].job_costing ||
+    permissions[role].marketing_analytics ||
+    role === "manager"
+  );
+}
+
 export function isPathAllowedForRole(
   pathname: string,
   role: Role,

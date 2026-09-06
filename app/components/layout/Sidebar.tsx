@@ -9,6 +9,7 @@ import { useMemo, useState } from "react";
 // That would ship a Supabase client construction into the browser
 // bundle with SUPABASE_SERVICE_ROLE_KEY undefined, crashing on load.
 import {
+  hasAnyReportAccess,
   isPathAllowedForRole,
   type RolePermissionsMap,
 } from "@/lib/permissionRules";
@@ -71,7 +72,6 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
       { name: "Customer Map", href: "/map", icon: "🗺️" },
       { name: "Recurring Services", href: "/recurring-services", icon: "🔁" },
       { name: "Create Job", href: "/jobs/new", icon: "🆕" },
-      { name: "Create Invoices", href: "/invoices", icon: "💵" },
       { name: "Quotes", href: "/quotes", icon: "📝" },
       { name: "Test a Payment", href: "/stripe-test", icon: "💳" },
       { name: "Test an Invoice", href: "/invoice-test", icon: "🧾" },
@@ -79,28 +79,23 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
   },
   {
     // Combined "Job Costing" and "Financials" into a single Financial
-    // section — Create Job/Create Invoices moved out to Customers above,
-    // the rest of Job Costing's items (Log Job Costs, Job Costing
-    // Analytics, Materials & Costs) live here alongside the former
-    // Financials items.
+    // section — Create Job moved out to Customers above. Transactions,
+    // Visits, Profitability Alerts, Seasonal Trends, Job Costing
+    // Analytics, Invoices, Timecards, and Marketing Analytics used to
+    // each get their own nav line (scattered across this group plus
+    // Customers/Operations/Marketing below) -- they're now consolidated
+    // onto the single Reports page instead, linked from here, so this
+    // sidebar isn't nine lines deep just to list every report. Each is
+    // still gated exactly as before at its own URL (see
+    // lib/permissionRules.ts) -- Reports itself uses hasAnyReportAccess
+    // rather than a section lookup, since it fronts pages from three
+    // different permission sections plus a manager-plus-only one.
     title: "Financial",
     icon: "💰",
     items: [
       { name: "Revenue", href: "/revenue", icon: "💰" },
-      { name: "Transactions", href: "/transactions", icon: "🧾" },
-      { name: "Visits", href: "/visits", icon: "🗓️" },
-      { name: "Profitability Alerts", href: "/alerts", icon: "🚨" },
-      {
-        name: "Seasonal Trends",
-        href: "/job-costing-analytics/trends",
-        icon: "📆",
-      },
+      { name: "Reports", href: "/reports", icon: "📊" },
       { name: "Log Job Costs", href: "/job-costs", icon: "🧾" },
-      {
-        name: "Job Costing Analytics",
-        href: "/job-costing-analytics",
-        icon: "📈",
-      },
       { name: "Materials & Costs", href: "/materials", icon: "🧰" },
     ],
   },
@@ -109,7 +104,6 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
     icon: "📡",
     items: [
       { name: "Crew Status", href: "/crew-status", icon: "📡" },
-      { name: "Timecards", href: "/timecards", icon: "🗓️" },
       { name: "Task List", href: "/tasks", icon: "✅" },
     ],
   },
@@ -119,7 +113,6 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
     items: [
       { name: "Leads", href: "/leads", icon: "🎯" },
       { name: "Links & QR", href: "/codes", icon: "📱" },
-      { name: "Analytics", href: "/analytics", icon: "📊" },
     ],
   },
   {
@@ -207,7 +200,14 @@ export default function Sidebar({
       .map((group) => ({
         ...group,
         items: group.items.filter((item) =>
-          isPathAllowedForRole(item.href, role, permissions)
+          // /reports has no section of its own in permissionRules.ts (its
+          // cards are gated individually, against their real hrefs) --
+          // without this special case the generic "no section means
+          // visible to everyone" rule would show this link even to a role
+          // with zero access to anything inside it.
+          item.href === "/reports"
+            ? hasAnyReportAccess(role, permissions)
+            : isPathAllowedForRole(item.href, role, permissions)
         ),
       }))
       .filter((group) => group.items.length > 0);
