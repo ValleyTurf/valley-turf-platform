@@ -8,6 +8,7 @@ import {
   REACTIVATION_STATUS_LABELS,
   REACTIVATION_STATUS_STYLES,
   daysBetweenDateStrings,
+  hasWonBackSince,
   isActiveWorkflowStatus,
   isDueToday,
   isOverdue,
@@ -64,6 +65,7 @@ type PipelineEntry = {
   latestInvoiceDate: string | null;
   daysSinceLastInvoice: number | null;
   status: ReactivationStatus;
+  wonBack: boolean;
 };
 
 function normalizeInterval(raw: string | null): RecontactInterval | null {
@@ -323,6 +325,10 @@ export default async function ReactivationPage({
         latestInvoiceDate,
         daysSinceLastInvoice,
         status: normalizeReactivationStatus(customer.reactivation_status),
+        wonBack: hasWonBackSince(
+          customer.reactivation_last_contacted_at,
+          clientInvoices.map((invoice) => invoice.issue_date)
+        ),
       };
     })
     .filter((entry) => {
@@ -430,6 +436,23 @@ export default async function ReactivationPage({
     };
   });
 
+  // Data-confirmed win-back: of everyone we've ever actually contacted
+  // (reactivation_last_contacted_at set, regardless of their current
+  // status), how many have a real invoice dated after that contact.
+  // Deliberately separate from "Cleaning Scheduled" above -- that's a
+  // self-reported disposition staff can set without a job ever actually
+  // landing, this is billed proof it did.
+  const everContactedEntries = pipeline.filter(
+    (entry) => entry.customer.reactivation_last_contacted_at !== null
+  );
+
+  const wonBackEntries = everContactedEntries.filter((entry) => entry.wonBack);
+
+  const winBackRate =
+    everContactedEntries.length > 0
+      ? wonBackEntries.length / everContactedEntries.length
+      : 0;
+
   const filters: { value: ReactivationFilter; label: string; count: number }[] =
     [
       { value: "all", label: "All", count: pipeline.length },
@@ -535,6 +558,27 @@ export default async function ReactivationPage({
                 </p>
               </div>
             ))}
+          </div>
+        </section>
+
+        <section className="mt-6 rounded-3xl bg-white p-5 shadow sm:p-8">
+          <h2 className="text-2xl font-bold">Win-Back, Confirmed</h2>
+          <p className="mt-1 text-[#6b705c]">
+            Of everyone we&apos;ve ever contacted, how many have a real
+            invoice dated after that outreach — not just marked Cleaning
+            Scheduled.
+          </p>
+
+          <div className="mt-5 flex flex-wrap items-end gap-6">
+            <div>
+              <p className="text-4xl font-bold text-green-700">
+                {formatPercent(winBackRate)}
+              </p>
+              <p className="mt-1 text-sm text-[#6b705c]">
+                {wonBackEntries.length} won back out of{" "}
+                {everContactedEntries.length} contacted
+              </p>
+            </div>
           </div>
         </section>
 

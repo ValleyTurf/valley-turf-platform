@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addMonthsIso,
   daysBetweenDateStrings,
+  hasWonBackSince,
   isActiveWorkflowStatus,
   isDueToday,
   isOverdue,
@@ -358,5 +359,33 @@ describe("isReactivationCandidate", () => {
     expect(isReactivationCandidate({ ...valid, isExcluded: true })).toBe(
       false
     );
+  });
+});
+
+describe("hasWonBackSince", () => {
+  it("is false when never contacted", () => {
+    expect(hasWonBackSince(null, ["2024-06-01"])).toBe(false);
+  });
+
+  it("is false when contacted but no invoice since", () => {
+    expect(
+      hasWonBackSince("2024-06-01T00:00:00Z", ["2024-01-01", "2024-05-30"])
+    ).toBe(false);
+  });
+
+  it("is true when an invoice landed after the last contact", () => {
+    expect(
+      hasWonBackSince("2024-06-01T00:00:00Z", ["2024-01-01", "2024-06-15"])
+    ).toBe(true);
+  });
+
+  it("ignores null/invalid invoice dates", () => {
+    expect(
+      hasWonBackSince("2024-06-01T00:00:00Z", [null, "not-a-date"])
+    ).toBe(false);
+  });
+
+  it("is false with no invoices at all", () => {
+    expect(hasWonBackSince("2024-06-01T00:00:00Z", [])).toBe(false);
   });
 });

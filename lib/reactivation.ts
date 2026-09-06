@@ -336,3 +336,33 @@ export function isReactivationCandidate(input: {
     !input.isExcluded
   );
 }
+
+// Data-confirmed win-back check for the Reactivation Pipeline's
+// "did this actually work" stat. Ryan explicitly didn't want this based
+// on the self-reported "Cleaning Scheduled" status alone (staff can mark
+// that without a real invoice ever landing) -- this instead checks
+// whether the customer has a real invoice issued strictly after the
+// last time we contacted them, using the same invoice_financials rows
+// (spanning both native and Jobber-synced invoices) already loaded for
+// lifetime revenue on that page.
+//
+// reactivation_last_contacted_at is overwritten on every new contact
+// (see nextReactivationState above) rather than kept as history, so
+// this can only ever answer "since the most recent contact" -- which is
+// also the only question that matters here: did the most recent
+// outreach lead to new business.
+export function hasWonBackSince(
+  lastContactedAt: string | null,
+  invoiceDates: (string | null)[]
+): boolean {
+  if (!lastContactedAt) return false;
+
+  const contactTime = new Date(lastContactedAt).getTime();
+  if (!Number.isFinite(contactTime)) return false;
+
+  return invoiceDates.some((date) => {
+    if (!date) return false;
+    const invoiceTime = new Date(date).getTime();
+    return Number.isFinite(invoiceTime) && invoiceTime > contactTime;
+  });
+}
