@@ -104,7 +104,11 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
       { name: "Command Center", href: "/command-center", icon: "🛰️" },
       { name: "Crew Status", href: "/crew-status", icon: "📡" },
       { name: "Task List", href: "/tasks", icon: "✅" },
-      { name: "AI Copilot", href: "/copilot", icon: "🤖" },
+      // AI Copilot nav link intentionally removed — Ryan decided against
+      // the ongoing Anthropic API cost for now. The page, API route, and
+      // lib/copilotTools.ts are all still in the codebase and still work
+      // (gated to manager+ in lib/permissionRules.ts); turning it back on
+      // later is just re-adding this line plus setting ANTHROPIC_API_KEY.
     ],
   },
   {
