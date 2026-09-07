@@ -36,6 +36,16 @@ function fromHeader(): string {
   return `Valley Turf Revival <${address}>`;
 }
 
+// customers.customer_name is a full name ("Sarah Mendez") -- this pulls
+// just the first word for a shorter, more personal greeting ("Hi
+// Sarah,"). Only used by sendInvoiceSms today (Ryan's request); every
+// other greeting in this file still uses the full name.
+function firstNameOf(name: string | null): string {
+  const trimmed = name?.trim();
+  if (!trimmed) return "there";
+  return trimmed.split(/\s+/)[0];
+}
+
 export type NewLeadAlert = {
   name: string | null;
   phone: string | null;
@@ -385,8 +395,8 @@ export async function sendInvoiceSms(
     return false;
   }
 
-  const greetingName = customerName?.trim() || "there";
-  const body = `Hi ${greetingName}, this is Valley Turf Revival. Your invoice ${invoiceNumber} is ready: ${payUrl}`;
+  const greetingName = firstNameOf(customerName);
+  const body = `Hi ${greetingName}, this is Valley Turf Revival. Your invoice ${invoiceNumber} is ready: ${payUrl} Thank you for your business!`;
 
   try {
     const response = await fetch(
