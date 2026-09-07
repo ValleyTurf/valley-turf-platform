@@ -176,7 +176,12 @@ export async function generateInvoicePdf(
       .fontSize(10)
       .font("Helvetica")
       .text(`Issued: ${formatDate(invoice.issueDate)}`, 50, 144)
-      .text(`Due: ${formatDate(invoice.dueDate)}`, 50, 158);
+      // Always "Upon Receipt" on the PDF regardless of the invoice's
+      // actual due_date/dueNetDays -- Ryan's preference, per his
+      // request. The real due_date still drives payment/reminder logic
+      // elsewhere (autopay, overdue status); this only changes what
+      // prints here.
+      .text("Due: Upon Receipt", 50, 158);
 
     doc
       .fillColor(MUTED_GRAY)
