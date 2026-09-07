@@ -38,6 +38,11 @@ export type CreateInvoiceParams = {
   message?: string | null;
   createdByUserId: string;
   createdByName: string;
+  // Snapshotted display address ("123 Main St\nPhoenix, AZ 85212") --
+  // see migration 059. Resolved by the caller (actions.ts) from
+  // customers.address_line_1/city/state/postal_code so this file
+  // doesn't need to know that table's column layout.
+  serviceAddress?: string | null;
 };
 
 export type MutationOutcome<T> =
@@ -63,6 +68,7 @@ export type Invoice = {
   // pattern as quotes.public_token.
   publicToken: string | null;
   createdAt: string;
+  serviceAddress: string | null;
 };
 
 // Compact, URL-safe token -- identical approach to
@@ -107,6 +113,7 @@ export async function createInvoice(
     message,
     createdByUserId,
     createdByName,
+    serviceAddress,
   } = params;
 
   if (lineItems.length === 0) {
@@ -148,9 +155,10 @@ export async function createInvoice(
       created_by_user_id: createdByUserId,
       created_by_name: createdByName,
       public_token: generatePublicToken(),
+      service_address: serviceAddress?.trim() || null,
     })
     .select(
-      "id, invoice_number, jobber_client_id, customer_name, status, total, issue_date, due_date, message, sent_at, paid_at, stripe_checkout_session_id, public_token, created_at"
+      "id, invoice_number, jobber_client_id, customer_name, status, total, issue_date, due_date, message, sent_at, paid_at, stripe_checkout_session_id, public_token, created_at, service_address"
     )
     .single();
 
@@ -204,6 +212,7 @@ export async function createInvoice(
       stripeCheckoutSessionId: invoiceRow.stripe_checkout_session_id,
       publicToken: invoiceRow.public_token,
       createdAt: invoiceRow.created_at,
+      serviceAddress: invoiceRow.service_address,
     },
   };
 }

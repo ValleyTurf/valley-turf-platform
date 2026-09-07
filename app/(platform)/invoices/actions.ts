@@ -96,7 +96,7 @@ async function createNativeInvoiceForVisit(
 
   const { data: customerRow, error: customerError } = await supabaseServer
     .from("customers")
-    .select("email, phone")
+    .select("email, phone, address_line_1, address_line_2, city, state, postal_code")
     .eq("jobber_client_id", clientId)
     .maybeSingle();
 
@@ -110,6 +110,27 @@ async function createNativeInvoiceForVisit(
 
   const customerEmail = (customerRow?.email as string | null) ?? null;
   const customerPhone = (customerRow?.phone as string | null) ?? null;
+
+  // Snapshotted onto the invoice (migration 059) so it keeps showing
+  // whatever address it was actually billed to, even if the customer's
+  // address or current_property_id override (migration 052) changes
+  // later. Note this reflects whichever property is currently "current"
+  // for the customer -- there's no per-visit property link anywhere in
+  // this app (Jobber doesn't expose one, and neither do jobber_visits),
+  // so for a customer with more than one property, staff need to make
+  // sure the right one is selected on the Customer page before creating
+  // this invoice.
+  const streetLine = [customerRow?.address_line_1, customerRow?.address_line_2]
+    .filter((part): part is string => Boolean(part && part.trim()))
+    .join(", ");
+  const cityStateZip = [customerRow?.city, customerRow?.state]
+    .filter((part): part is string => Boolean(part && part.trim()))
+    .join(", ");
+  const cityStateZipLine = [cityStateZip, customerRow?.postal_code]
+    .filter((part): part is string => Boolean(part && part.trim()))
+    .join(" ");
+  const serviceAddress =
+    [streetLine, cityStateZipLine].filter(Boolean).join("\n") || null;
 
   if (markSent && !customerEmail && !customerPhone) {
     return {
@@ -140,6 +161,7 @@ async function createNativeInvoiceForVisit(
     })),
     dueDate: dueDateIso,
     message: subject || null,
+    serviceAddress,
     createdByUserId: actor.id,
     createdByName: actor.name,
   });

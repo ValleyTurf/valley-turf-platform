@@ -195,8 +195,27 @@ export async function generateInvoicePdf(
       .font("Helvetica")
       .text(invoice.customerName || "Valued customer", 50, 196);
 
-    // Line items table
-    const tableTop = 232;
+    // Service address -- shown under the customer's name so a customer
+    // with more than one property (see migration 059's header comment)
+    // can tell which one this invoice covers. Optional: older invoices
+    // created before this existed, or a customer with no address on
+    // file, just skip the lines.
+    let billToBottom = 196 + 14; // one line for the name, always present
+    const addressLines = detailLines(invoice.serviceAddress);
+    if (addressLines.length > 0) {
+      doc.fillColor(MUTED_GRAY).fontSize(9).font("Helvetica");
+      let addressY = billToBottom + 4;
+      for (const line of addressLines) {
+        doc.text(line, 50, addressY, { width: 280 });
+        addressY += Math.max(doc.heightOfString(line, { width: 280 }), 12) + 2;
+      }
+      billToBottom = addressY;
+    }
+
+    // Line items table -- starts below whichever of the amount-due box
+    // (bottom at 186) or the bill-to block (name + optional address)
+    // needs more room.
+    const tableTop = Math.max(232, billToBottom + 22);
     const columns = { description: 50, qty: 340, price: 410, total: 480 };
 
     doc
