@@ -35,17 +35,37 @@ import {
 import { attemptAutopayCharge, getPaymentMethodByClientId } from "@/lib/autopay";
 import { getBaseUrl } from "@/lib/baseUrl";
 
+export type InvoiceLineItemParam = {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+};
+
 type CreateInvoiceParams = {
   visitId: string;
   clientId: string;
   customerName: string | null;
-  title: string;
-  price: number;
+  lineItems: InvoiceLineItemParam[];
   cost: number | null;
   subject: string;
   dueNetDays: number;
   markSent: boolean;
 };
+
+function lineItemsTotal(lineItems: InvoiceLineItemParam[]): number {
+  return lineItems.reduce(
+    (sum, item) => sum + item.quantity * item.unitPrice,
+    0
+  );
+}
+
+// Default line-item summary used anywhere a single short label is
+// needed (audit log entity labels, the Jobber-mirror `subject` fallback)
+// -- joins descriptions rather than picking just the first, so a
+// multi-service invoice still reads clearly in those single-line spots.
+function summarizeLineItems(lineItems: InvoiceLineItemParam[]): string {
+  return lineItems.map((item) => item.description).join(", ");
+}
 
 type CreateInvoiceResult = {
   error: string | null;
@@ -61,8 +81,10 @@ async function createNativeInvoiceForVisit(
   params: CreateInvoiceParams,
   actor: NonNullable<Awaited<ReturnType<typeof getCurrentUser>>>
 ): Promise<CreateInvoiceResult> {
-  const { visitId, clientId, customerName, title, price, cost, subject, dueNetDays, markSent } =
+  const { visitId, clientId, customerName, lineItems, cost, subject, dueNetDays, markSent } =
     params;
+  const title = summarizeLineItems(lineItems);
+  const price = lineItemsTotal(lineItems);
 
   const { data: customerRow, error: customerError } = await supabaseServer
     .from("customers")
@@ -97,15 +119,16 @@ async function createNativeInvoiceForVisit(
   const invoiceResult = await createNativeInvoice({
     jobberClientId: clientId,
     customerName,
-    lineItems: [
-      {
-        description: title,
-        quantity: 1,
-        unitPrice: price,
-        cost: cost ?? undefined,
-        jobberVisitId: visitId,
-      },
-    ],
+    // Cost (the visit's whole direct-cost figure) is attached to the
+    // first line item only -- same "cost is per-visit, not per-service"
+    // simplification the Jobber-invoicing path uses.
+    lineItems: lineItems.map((item, index) => ({
+      description: item.description,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      cost: index === 0 ? cost ?? undefined : undefined,
+      jobberVisitId: visitId,
+    })),
     dueDate: dueDateIso,
     message: subject || null,
     createdByUserId: actor.id,
@@ -160,7 +183,11 @@ async function createNativeInvoiceForVisit(
     invoiceNumber: invoice.invoiceNumber,
     issueDate: invoice.issueDate,
     dueDate: invoice.dueDate,
-    lineItems: [{ description: title, quantity: 1, unitPrice: price }],
+    lineItems: lineItems.map((item) => ({
+      description: item.description,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+    })),
   });
 
   if (qbPushResult.ok) {
@@ -216,9 +243,15 @@ async function createNativeInvoiceForVisit(
 
       const pdfBuffer =
         customerEmail && payUrl
-          ? await generateInvoicePdf(invoice, [
-              { description: title, quantity: 1, unitPrice: price, lineTotal: price },
-            ])
+          ? await generateInvoicePdf(
+              invoice,
+              lineItems.map((item) => ({
+                description: item.description,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                lineTotal: item.quantity * item.unitPrice,
+              }))
+            )
           : null;
 
       if (autopayCharged) {
@@ -356,8 +389,7 @@ export async function createInvoice(
     visitId,
     clientId,
     customerName,
-    title,
-    price,
+    lineItems,
     cost,
     subject,
     dueNetDays,
@@ -368,15 +400,26 @@ export async function createInvoice(
     return { error: "Missing visit or customer.", invoiceNumber: null, jobberWebUri: null };
   }
 
-  const trimmedTitle = title.trim();
-  if (!trimmedTitle) {
-    return { error: "Enter a line item description.", invoiceNumber: null, jobberWebUri: null };
+  const trimmedLineItems = lineItems
+    .map((item) => ({ ...item, description: item.description.trim() }))
+    .filter((item) => item.description);
+
+  if (trimmedLineItems.length === 0) {
+    return { error: "Enter at least one line item.", invoiceNumber: null, jobberWebUri: null };
   }
 
-  if (!Number.isFinite(price) || price <= 0) {
-    return { error: "Enter a valid price.", invoiceNumber: null, jobberWebUri: null };
+  for (const item of trimmedLineItems) {
+    if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
+      return { error: "Enter a valid quantity for every line item.", invoiceNumber: null, jobberWebUri: null };
+    }
+
+    if (!Number.isFinite(item.unitPrice) || item.unitPrice <= 0) {
+      return { error: "Enter a valid price for every line item.", invoiceNumber: null, jobberWebUri: null };
+    }
   }
 
+  const price = lineItemsTotal(trimmedLineItems);
+  const trimmedTitle = summarizeLineItems(trimmedLineItems);
   const trimmedSubject = subject.trim();
 
   // Stage 7 branch point -- everything below this lookup is unchanged
@@ -403,8 +446,7 @@ export async function createInvoice(
         visitId,
         clientId,
         customerName,
-        title: trimmedTitle,
-        price,
+        lineItems: trimmedLineItems,
         cost,
         subject: trimmedSubject,
         dueNetDays,
@@ -417,8 +459,7 @@ export async function createInvoice(
   const result = await createJobberInvoice({
     clientId,
     visitId,
-    title: trimmedTitle,
-    price,
+    lineItems: trimmedLineItems,
     cost,
     subject: trimmedSubject || null,
     dueNetDays,

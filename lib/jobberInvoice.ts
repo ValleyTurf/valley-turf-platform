@@ -29,12 +29,23 @@
 //     labor, from visit_material_cost) through to it when available, so
 //     Jobber's own cost tracking on the invoice line matches what
 //     job-costing analytics already knows.
+//
+// lineItems is a real array in Jobber's own schema (was just always
+// called with exactly one entry here) -- accepting more than one is what
+// lets an invoice break "type of cleaning" out into separate lines
+// instead of one lump title, same as the native-invoicing path.
 import "server-only";
 import { jobberGraphQL } from "@/lib/jobber";
 
 export type MutationOutcome<T> =
   | { ok: true; value: T }
   | { ok: false; error: string };
+
+export type JobberInvoiceLineItemInput = {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+};
 
 const INVOICE_CREATE_MUTATION = `
   mutation CreateInvoice($input: InvoiceCreateInput!) {
@@ -55,8 +66,11 @@ const INVOICE_CREATE_MUTATION = `
 export async function createJobberInvoice(params: {
   clientId: string;
   visitId: string;
-  title: string;
-  price: number;
+  lineItems: JobberInvoiceLineItemInput[];
+  // Whole-visit direct cost (materials + labor, from
+  // visit_material_cost) -- attached to the first line item only, same
+  // "cost is per-visit, not per-service" simplification the native path
+  // uses. Jobber's own cost tracking doesn't need it split across lines.
   cost?: number | null;
   subject?: string | null;
   message?: string | null;
@@ -73,8 +87,7 @@ export async function createJobberInvoice(params: {
   const {
     clientId,
     visitId,
-    title,
-    price,
+    lineItems,
     cost,
     subject,
     message,
@@ -82,23 +95,32 @@ export async function createJobberInvoice(params: {
     markSent,
   } = params;
 
-  const lineItem: Record<string, unknown> = {
-    name: title,
-    quantity: 1,
-    unitPrice: price,
-    taxable: false,
-  };
+  const jobberLineItems = lineItems.map((item, index) => {
+    const lineItem: Record<string, unknown> = {
+      name: item.description,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      taxable: false,
+    };
 
-  if (typeof cost === "number" && Number.isFinite(cost) && cost > 0) {
-    lineItem.cost = cost;
-  }
+    if (
+      index === 0 &&
+      typeof cost === "number" &&
+      Number.isFinite(cost) &&
+      cost > 0
+    ) {
+      lineItem.cost = cost;
+    }
+
+    return lineItem;
+  });
 
   const input: Record<string, unknown> = {
     clientId,
     visitIds: [visitId],
     dueDetails: { invoiceNet: dueNetDays },
     tax: { taxCalculationMethod: "EXCLUSIVE" },
-    lineItems: [lineItem],
+    lineItems: jobberLineItems,
     markSent,
   };
 

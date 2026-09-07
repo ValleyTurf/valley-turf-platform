@@ -10,6 +10,8 @@
 // minimize surprise, but the first real invoice email should be opened
 // and eyeballed once deployed.
 import "server-only";
+import fs from "fs";
+import path from "path";
 import PDFDocument from "pdfkit";
 import type { Invoice } from "@/lib/invoices";
 
@@ -23,6 +25,39 @@ export type InvoicePdfLineItem = {
 const BRAND_GREEN = "#174734";
 const MUTED_GRAY = "#6b705c";
 const RULE_GRAY = "#d9dad2";
+
+// Same three contact points Ryan asked to see on the PDF (no business
+// address). Phone/website are stable enough to hardcode -- they're
+// already duplicated as literals in privacy-policy.md/terms-of-service.md
+// -- but the email is genuinely unknown to this codebase (nothing sends
+// customer mail from a literal address; lib/notifications.ts reads
+// RESEND_FROM_EMAIL at send time and terms-of-service.md still has an
+// "[insert business email]" placeholder), so it's read from an env var
+// and the line simply omits it until Ryan sets one, same null-safe
+// pattern as the invoice email's reviewUrl.
+const BUSINESS_PHONE = "(480) 331-4596";
+const BUSINESS_WEBSITE = "valleyturfrevival.com";
+
+// Loaded once per cold start rather than per-PDF -- a 300x300 PNG is
+// small, but there's no reason to hit the filesystem on every invoice.
+// Falls back to null (header just skips the image) if the file is ever
+// missing, so a bad deploy can't take down invoice generation entirely.
+let cachedLogoBuffer: Buffer | null | undefined;
+
+function loadLogoBuffer(): Buffer | null {
+  if (cachedLogoBuffer !== undefined) return cachedLogoBuffer;
+
+  try {
+    cachedLogoBuffer = fs.readFileSync(
+      path.join(process.cwd(), "public", "branding", "logo.png")
+    );
+  } catch (error) {
+    console.error("Could not load logo.png for invoice PDF:", error);
+    cachedLogoBuffer = null;
+  }
+
+  return cachedLogoBuffer;
+}
 
 function formatCurrency(amount: number): string {
   return `$${amount.toFixed(2)}`;
@@ -58,47 +93,89 @@ export async function generateInvoicePdf(
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    // Header
+    // Header -- logo + wordmark + contact line on the left, matching the
+    // invoice email's header. No business address per Ryan (phone/
+    // website/email only).
+    const logoBuffer = loadLogoBuffer();
+    const nameX = logoBuffer ? 110 : 50;
+
+    if (logoBuffer) {
+      doc.image(logoBuffer, 50, 45, { height: 50 });
+    }
+
     doc
       .fillColor(BRAND_GREEN)
-      .fontSize(20)
+      .fontSize(18)
       .font("Helvetica-Bold")
-      .text("Valley Turf Revival", 50, 50);
+      .text("Valley Turf Revival", nameX, 50);
+
+    const contactLine = [BUSINESS_PHONE, BUSINESS_WEBSITE, process.env.BUSINESS_CONTACT_EMAIL]
+      .filter((part): part is string => Boolean(part && part.trim()))
+      .join("   ·   ");
 
     doc
       .fillColor(MUTED_GRAY)
-      .fontSize(10)
+      .fontSize(9)
       .font("Helvetica")
-      .text("valleyturfrevival.com", 50, 74);
+      .text(contactLine, nameX, 72);
 
+    doc
+      .moveTo(50, 108)
+      .lineTo(562, 108)
+      .strokeColor(BRAND_GREEN)
+      .lineWidth(2)
+      .stroke();
+
+    // Amount due -- the callout Ryan specifically confirmed as "great" on
+    // the redesigned email, mirrored here so the PDF leads with the same
+    // number rather than burying it at the bottom of the line-items
+    // table (which still gets its own Total row further down, for
+    // anyone who wants the itemized math).
+    doc
+      .roundedRect(380, 122, 182, 64, 8)
+      .fill(BRAND_GREEN);
+
+    doc
+      .fillColor("#ffffff")
+      .fontSize(9)
+      .font("Helvetica-Bold")
+      .text("AMOUNT DUE", 396, 134, { characterSpacing: 1 });
+
+    doc
+      .fillColor("#ffffff")
+      .fontSize(22)
+      .font("Helvetica-Bold")
+      .text(formatCurrency(invoice.total), 396, 150);
+
+    // Invoice number / dates / bill-to, left column alongside the amount
+    // due box.
     doc
       .fillColor(BRAND_GREEN)
       .fontSize(16)
       .font("Helvetica-Bold")
-      .text(invoice.invoiceNumber, 50, 110);
+      .text(invoice.invoiceNumber, 50, 122);
 
     doc
       .fillColor(MUTED_GRAY)
       .fontSize(10)
       .font("Helvetica")
-      .text(`Issued: ${formatDate(invoice.issueDate)}`, 50, 132)
-      .text(`Due: ${formatDate(invoice.dueDate)}`, 50, 146);
+      .text(`Issued: ${formatDate(invoice.issueDate)}`, 50, 144)
+      .text(`Due: ${formatDate(invoice.dueDate)}`, 50, 158);
 
-    // Bill to
     doc
       .fillColor(MUTED_GRAY)
       .fontSize(9)
       .font("Helvetica-Bold")
-      .text("BILL TO", 350, 110);
+      .text("BILL TO", 50, 182);
 
     doc
       .fillColor(BRAND_GREEN)
       .fontSize(11)
       .font("Helvetica")
-      .text(invoice.customerName || "Valued customer", 350, 124);
+      .text(invoice.customerName || "Valued customer", 50, 196);
 
     // Line items table
-    const tableTop = 190;
+    const tableTop = 232;
     const columns = { description: 50, qty: 340, price: 410, total: 480 };
 
     doc

@@ -105,12 +105,15 @@ export default async function InvoicesPage({
     costMap.set(row.jobber_visit_id, toNumber(row.material_cost));
   }
 
-  // Suggested price per visit, pulled from the job's own line item price
-  // in Jobber (this app only ever creates single flat-price line items,
-  // see lib/jobberJob.ts's createJobberJob) — a real head start instead
-  // of a blank field, without guessing at a number ourselves. Fetched
-  // once per distinct job (a recurring job's visits all share one), not
-  // once per visit.
+  // Suggested line items per visit, pulled straight from the job's own
+  // line items in Jobber -- this app's own job-creation flow
+  // (lib/jobberJob.ts's createJobberJob) only ever writes one flat-price
+  // line, but a job entered/edited directly in Jobber can carry several
+  // (e.g. "Turf Cleaning" + "Infill Refresh"), and those used to get
+  // silently collapsed into a single suggested price. Passing the whole
+  // array through lets staff invoice by type of cleaning instead of one
+  // lump sum. Fetched once per distinct job (a recurring job's visits
+  // all share one), not once per visit.
   const jobIds = Array.from(
     new Set(visits.map((v) => v.jobber_job_id).filter((id): id is string => Boolean(id)))
   );
@@ -119,10 +122,19 @@ export default async function InvoicesPage({
     jobIds.map(async (jobId) => [jobId, await fetchJobDetails(jobId)] as const)
   );
 
-  const jobPriceMap = new Map<string, number | null>();
+  const jobLineItemsMap = new Map<
+    string,
+    { description: string; quantity: number; unitPrice: number }[]
+  >();
   for (const [jobId, details] of jobDetailsEntries) {
-    const price = details?.lineItems?.[0]?.unitPrice ?? null;
-    jobPriceMap.set(jobId, price != null && price > 0 ? price : null);
+    const items = (details?.lineItems ?? [])
+      .filter((li) => li.unitPrice != null && li.unitPrice > 0)
+      .map((li) => ({
+        description: li.name?.trim() || "Service",
+        quantity: 1,
+        unitPrice: li.unitPrice as number,
+      }));
+    jobLineItemsMap.set(jobId, items);
   }
 
   const previousPageUrl = buildInvoicesUrl(Math.max(1, currentPage - 1), search);
@@ -224,10 +236,10 @@ export default async function InvoicesPage({
                 key={visit.jobber_visit_id}
                 visit={visit}
                 directCost={costMap.get(visit.jobber_visit_id) ?? 0}
-                suggestedPrice={
+                suggestedLineItems={
                   visit.jobber_job_id
-                    ? jobPriceMap.get(visit.jobber_job_id) ?? null
-                    : null
+                    ? jobLineItemsMap.get(visit.jobber_job_id) ?? []
+                    : []
                 }
               />
             ))}

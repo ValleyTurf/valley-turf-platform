@@ -58,14 +58,27 @@ function visitServiceLabel(title: string | null): string | null {
   return service || trimmed;
 }
 
+type LineItemDraft = {
+  description: string;
+  quantity: string;
+  unitPrice: string;
+};
+
+function formatLineItemsSummary(items: LineItemDraft[]): string {
+  return items
+    .map((item) => item.description.trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
 export default function InvoiceCard({
   visit,
   directCost,
-  suggestedPrice,
+  suggestedLineItems,
 }: {
   visit: ReadyToInvoiceVisit;
   directCost: number;
-  suggestedPrice: number | null;
+  suggestedLineItems: { description: string; quantity: number; unitPrice: number }[];
 }) {
   const [isPending, startTransition] = useTransition();
   const [expanded, setExpanded] = useState(false);
@@ -78,21 +91,66 @@ export default function InvoiceCard({
   } | null>(null);
 
   const defaultTitle = visitServiceLabel(visit.title) ?? "Service";
-  const [title, setTitle] = useState(defaultTitle);
-  const [price, setPrice] = useState(
-    suggestedPrice != null && suggestedPrice > 0 ? String(suggestedPrice) : ""
+
+  // Seeded from the job's own Jobber line items when it has any (so a
+  // job with, say, "Turf Cleaning" + "Infill Refresh" shows up as two
+  // rows instead of one lump price) -- falls back to a single blank row
+  // named after the visit when Jobber only ever had one flat price.
+  const [lineItems, setLineItems] = useState<LineItemDraft[]>(() =>
+    suggestedLineItems.length > 0
+      ? suggestedLineItems.map((item) => ({
+          description: item.description,
+          quantity: String(item.quantity),
+          unitPrice: String(item.unitPrice),
+        }))
+      : [{ description: defaultTitle, quantity: "1", unitPrice: "" }]
   );
   const [subject, setSubject] = useState(
     `${visit.customer_name ?? "Customer"} — ${defaultTitle}`
   );
   const [dueNetDays, setDueNetDays] = useState(15);
 
+  const total = lineItems.reduce((sum, item) => {
+    const qty = Number(item.quantity);
+    const price = Number(item.unitPrice);
+    return sum + (Number.isFinite(qty) && Number.isFinite(price) ? qty * price : 0);
+  }, 0);
+
+  function updateLineItem(index: number, patch: Partial<LineItemDraft>) {
+    setLineItems((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, ...patch } : item))
+    );
+  }
+
+  function addLineItem() {
+    setLineItems((prev) => [...prev, { description: "", quantity: "1", unitPrice: "" }]);
+  }
+
+  function removeLineItem(index: number) {
+    setLineItems((prev) => prev.filter((_, i) => i !== index));
+  }
+
   function submit(markSent: boolean) {
     setError(null);
 
-    const parsedPrice = Number(price);
-    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
-      setError("Enter a valid price.");
+    const parsedLineItems = lineItems.map((item) => ({
+      description: item.description.trim(),
+      quantity: Number(item.quantity),
+      unitPrice: Number(item.unitPrice),
+    }));
+
+    if (parsedLineItems.some((item) => !item.description)) {
+      setError("Every line item needs a description.");
+      return;
+    }
+
+    if (parsedLineItems.some((item) => !Number.isFinite(item.quantity) || item.quantity <= 0)) {
+      setError("Every line item needs a valid quantity.");
+      return;
+    }
+
+    if (parsedLineItems.some((item) => !Number.isFinite(item.unitPrice) || item.unitPrice <= 0)) {
+      setError("Enter a valid price for every line item.");
       return;
     }
 
@@ -106,8 +164,7 @@ export default function InvoiceCard({
         visitId: visit.jobber_visit_id,
         clientId: visit.jobber_client_id!,
         customerName: visit.customer_name,
-        title,
-        price: parsedPrice,
+        lineItems: parsedLineItems,
         cost: directCost > 0 ? directCost : null,
         subject,
         dueNetDays,
@@ -136,7 +193,7 @@ export default function InvoiceCard({
           created
         </p>
         <p className="mt-1 text-sm text-green-700">
-          {visit.customer_name} — {title}
+          {visit.customer_name} — {formatLineItemsSummary(lineItems) || defaultTitle}
         </p>
         {success.autopayCharged && (
           <p className="mt-2 text-xs font-semibold text-green-800">
@@ -200,36 +257,65 @@ export default function InvoiceCard({
         </button>
       ) : (
         <div className="mt-3 space-y-3 border-t border-[#f0eee6] pt-3">
-          <label className="block">
+          <div>
             <span className="text-xs font-bold text-[#9c7a20]">
-              Line item
+              Line items — by type of cleaning
             </span>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2.5 text-base outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-            />
-          </label>
 
-          <label className="block">
-            <span className="text-xs font-bold text-[#9c7a20]">Price</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              step="0.01"
-              min="0"
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              placeholder="0.00"
-              className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2.5 text-base outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-            />
-            {suggestedPrice != null && suggestedPrice > 0 && (
-              <span className="mt-1 block text-[10px] text-[#6b705c]">
-                Suggested from the job&apos;s price: {formatCurrency(suggestedPrice)}
-              </span>
-            )}
-          </label>
+            <div className="mt-1 space-y-2">
+              {lineItems.map((item, index) => (
+                <div key={index} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={item.description}
+                    onChange={(e) => updateLineItem(index, { description: e.target.value })}
+                    placeholder="Service"
+                    className="min-w-0 flex-1 rounded-lg border border-[#d9d4c6] px-3 py-2.5 text-base outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                  />
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    value={item.quantity}
+                    onChange={(e) => updateLineItem(index, { quantity: e.target.value })}
+                    className="w-14 shrink-0 rounded-lg border border-[#d9d4c6] px-2 py-2.5 text-center text-base outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                  />
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min="0"
+                    value={item.unitPrice}
+                    onChange={(e) => updateLineItem(index, { unitPrice: e.target.value })}
+                    placeholder="0.00"
+                    className="w-24 shrink-0 rounded-lg border border-[#d9d4c6] px-2 py-2.5 text-base outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                  />
+                  {lineItems.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeLineItem(index)}
+                      aria-label="Remove line item"
+                      className="shrink-0 rounded-lg px-2 text-lg font-bold text-[#9c7a20] hover:bg-[#f7f6f1]"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={addLineItem}
+              className="mt-2 text-xs font-semibold text-[#9c7a20] hover:underline"
+            >
+              + Add line item
+            </button>
+
+            <p className="mt-2 text-sm font-bold">
+              Total: {formatCurrency(total)}
+            </p>
+          </div>
 
           <label className="block">
             <span className="text-xs font-bold text-[#9c7a20]">Subject</span>
