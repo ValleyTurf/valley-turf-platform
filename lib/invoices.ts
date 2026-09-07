@@ -23,6 +23,11 @@ export type InvoiceLineItemInput = {
   // point at a Jobber-synced visit today, a native visit once Tier 2
   // exists, or nothing at all (a one-off charge).
   jobberVisitId?: string | null;
+  // Free-text sub-list shown under the description on the PDF -- e.g.
+  // Jobber's "Quarterly Cleaning 1000-1250" line item carries a
+  // description listing the included services (Turf Fluff Up, Debris
+  // Removal, ...). Migration 058.
+  details?: string | null;
 };
 
 export type CreateInvoiceParams = {
@@ -167,6 +172,7 @@ export async function createInvoice(
         line_total: lineTotal(item),
         cost: item.cost ?? null,
         jobber_visit_id: item.jobberVisitId ?? null,
+        details: item.details?.trim() || null,
       }))
     );
 

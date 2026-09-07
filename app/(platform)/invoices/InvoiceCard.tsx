@@ -62,6 +62,11 @@ type LineItemDraft = {
   description: string;
   quantity: string;
   unitPrice: string;
+  // Free-text sub-list (one included service per line) shown as bullets
+  // under the description on the PDF -- e.g. a "Quarterly Cleaning
+  // 1000-1250" line item's Turf Fluff Up / Debris Removal / ... list.
+  // Seeded from Jobber's own line-item description when the job has one.
+  details: string;
 };
 
 function formatLineItemsSummary(items: LineItemDraft[]): string {
@@ -78,7 +83,12 @@ export default function InvoiceCard({
 }: {
   visit: ReadyToInvoiceVisit;
   directCost: number;
-  suggestedLineItems: { description: string; quantity: number; unitPrice: number }[];
+  suggestedLineItems: {
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    details: string | null;
+  }[];
 }) {
   const [isPending, startTransition] = useTransition();
   const [expanded, setExpanded] = useState(false);
@@ -102,8 +112,9 @@ export default function InvoiceCard({
           description: item.description,
           quantity: String(item.quantity),
           unitPrice: String(item.unitPrice),
+          details: item.details ?? "",
         }))
-      : [{ description: defaultTitle, quantity: "1", unitPrice: "" }]
+      : [{ description: defaultTitle, quantity: "1", unitPrice: "", details: "" }]
   );
   const [subject, setSubject] = useState(
     `${visit.customer_name ?? "Customer"} — ${defaultTitle}`
@@ -123,7 +134,10 @@ export default function InvoiceCard({
   }
 
   function addLineItem() {
-    setLineItems((prev) => [...prev, { description: "", quantity: "1", unitPrice: "" }]);
+    setLineItems((prev) => [
+      ...prev,
+      { description: "", quantity: "1", unitPrice: "", details: "" },
+    ]);
   }
 
   function removeLineItem(index: number) {
@@ -137,6 +151,7 @@ export default function InvoiceCard({
       description: item.description.trim(),
       quantity: Number(item.quantity),
       unitPrice: Number(item.unitPrice),
+      details: item.details.trim() || null,
     }));
 
     if (parsedLineItems.some((item) => !item.description)) {
@@ -262,44 +277,54 @@ export default function InvoiceCard({
               Line items — by type of cleaning
             </span>
 
-            <div className="mt-1 space-y-2">
+            <div className="mt-1 space-y-3">
               {lineItems.map((item, index) => (
-                <div key={index} className="flex gap-2">
-                  <input
-                    type="text"
-                    value={item.description}
-                    onChange={(e) => updateLineItem(index, { description: e.target.value })}
-                    placeholder="Service"
-                    className="min-w-0 flex-1 rounded-lg border border-[#d9d4c6] px-3 py-2.5 text-base outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                <div key={index} className="space-y-1">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={item.description}
+                      onChange={(e) => updateLineItem(index, { description: e.target.value })}
+                      placeholder="Service"
+                      className="min-w-0 flex-1 rounded-lg border border-[#d9d4c6] px-3 py-2.5 text-base outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                    />
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min="1"
+                      value={item.quantity}
+                      onChange={(e) => updateLineItem(index, { quantity: e.target.value })}
+                      className="w-14 shrink-0 rounded-lg border border-[#d9d4c6] px-2 py-2.5 text-center text-base outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                    />
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.01"
+                      min="0"
+                      value={item.unitPrice}
+                      onChange={(e) => updateLineItem(index, { unitPrice: e.target.value })}
+                      placeholder="0.00"
+                      className="w-24 shrink-0 rounded-lg border border-[#d9d4c6] px-2 py-2.5 text-base outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                    />
+                    {lineItems.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeLineItem(index)}
+                        aria-label="Remove line item"
+                        className="shrink-0 rounded-lg px-2 text-lg font-bold text-[#9c7a20] hover:bg-[#f7f6f1]"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+
+                  <textarea
+                    value={item.details}
+                    onChange={(e) => updateLineItem(index, { details: e.target.value })}
+                    placeholder="Included services shown as bullets on the invoice (optional) — one per line, e.g. Turf Fluff Up"
+                    rows={2}
+                    className="w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
                   />
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min="1"
-                    value={item.quantity}
-                    onChange={(e) => updateLineItem(index, { quantity: e.target.value })}
-                    className="w-14 shrink-0 rounded-lg border border-[#d9d4c6] px-2 py-2.5 text-center text-base outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-                  />
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step="0.01"
-                    min="0"
-                    value={item.unitPrice}
-                    onChange={(e) => updateLineItem(index, { unitPrice: e.target.value })}
-                    placeholder="0.00"
-                    className="w-24 shrink-0 rounded-lg border border-[#d9d4c6] px-2 py-2.5 text-base outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-                  />
-                  {lineItems.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removeLineItem(index)}
-                      aria-label="Remove line item"
-                      className="shrink-0 rounded-lg px-2 text-lg font-bold text-[#9c7a20] hover:bg-[#f7f6f1]"
-                    >
-                      ×
-                    </button>
-                  )}
                 </div>
               ))}
             </div>

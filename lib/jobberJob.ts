@@ -238,10 +238,66 @@ export type JobDetails = {
   title: string | null;
   instructions: string | null;
   jobStatus: string | null;
-  lineItems: { id: string; name: string | null; unitPrice: number | null }[];
+  lineItems: {
+    id: string;
+    name: string | null;
+    unitPrice: number | null;
+    // Jobber's own line-item "description" field -- for a line item like
+    // "Quarterly Cleaning 1000-1250", this is where the included-services
+    // sub-list Ryan sees in Jobber's UI (Turf Fluff Up, Debris Removal,
+    // etc) actually lives. Unconfirmed against Jobber's real schema (no
+    // way to introspect live from this sandbox) -- fetchJobDetails falls
+    // back to a query without this field if Jobber rejects it, so a
+    // wrong guess here degrades to today's behavior instead of breaking
+    // suggested-line-item population entirely.
+    details: string | null;
+  }[];
+};
+
+type RawLineItemNode = {
+  id: string;
+  name: string | null;
+  unitPrice: number | string | null;
+  description?: string | null;
+};
+
+type JobDetailsResponse = {
+  job: {
+    id: string;
+    jobNumber: string | number | null;
+    title: string | null;
+    instructions: string | null;
+    jobStatus: string | null;
+    lineItems: { nodes: RawLineItemNode[] } | null;
+  } | null;
 };
 
 const JOB_DETAILS_QUERY = `
+  query GetJobDetails($id: EncodedId!) {
+    job(id: $id) {
+      id
+      jobNumber
+      title
+      instructions
+      jobStatus
+      lineItems(first: 5) {
+        nodes {
+          id
+          name
+          description
+          unitPrice
+        }
+      }
+    }
+  }
+`;
+
+// Same query, minus `description` -- the exact query this app ran
+// before Ryan asked for the included-services sub-list, kept as a
+// fallback in case Jobber's schema doesn't actually have a `description`
+// field on this line-item type (see the JobDetails.lineItems comment
+// above).
+const JOB_DETAILS_QUERY_WITHOUT_DESCRIPTION = `
   query GetJobDetails($id: EncodedId!) {
     job(id: $id) {
       id
@@ -260,6 +316,24 @@ const JOB_DETAILS_QUERY = `
   }
 `;
 
+function mapJobDetails(data: JobDetailsResponse): JobDetails | null {
+  if (!data.job) return null;
+
+  return {
+    id: data.job.id,
+    jobNumber: data.job.jobNumber != null ? String(data.job.jobNumber) : null,
+    title: data.job.title,
+    instructions: data.job.instructions,
+    jobStatus: data.job.jobStatus,
+    lineItems: (data.job.lineItems?.nodes ?? []).map((li) => ({
+      id: li.id,
+      name: li.name,
+      unitPrice: li.unitPrice != null ? Number(li.unitPrice) : null,
+      details: li.description?.trim() || null,
+    })),
+  };
+}
+
 export async function fetchJobDetails(
   jobId: string
 ): Promise<JobDetails | null> {
@@ -274,33 +348,32 @@ export async function fetchJobDetails(
   }
 
   try {
-    const { data, errors } = await jobberGraphQL<{
-      job: {
-        id: string;
-        jobNumber: string | number | null;
-        title: string | null;
-        instructions: string | null;
-        jobStatus: string | null;
-        lineItems: {
-          nodes: { id: string; name: string | null; unitPrice: number | string | null }[];
-        } | null;
-      } | null;
-    }>(JOB_DETAILS_QUERY, { id: jobId });
+    const { data, errors } = await jobberGraphQL<JobDetailsResponse>(
+      JOB_DETAILS_QUERY,
+      { id: jobId }
+    );
 
-    if (errors?.length || !data?.job) return null;
+    if (errors?.length) {
+      // Retry with the plain query (the exact one this app ran before
+      // Ryan asked for the description sub-list) on ANY error rather
+      // than trying to pattern-match the message -- worst case this
+      // just repeats a real failure (expired token, throttling) once
+      // more before giving up, same end result as before; best case a
+      // wrong guess about the `description` field degrades gracefully
+      // instead of breaking suggested-line-item population outright.
+      const fallback = await jobberGraphQL<JobDetailsResponse>(
+        JOB_DETAILS_QUERY_WITHOUT_DESCRIPTION,
+        { id: jobId }
+      );
 
-    return {
-      id: data.job.id,
-      jobNumber: data.job.jobNumber != null ? String(data.job.jobNumber) : null,
-      title: data.job.title,
-      instructions: data.job.instructions,
-      jobStatus: data.job.jobStatus,
-      lineItems: (data.job.lineItems?.nodes ?? []).map((li) => ({
-        id: li.id,
-        name: li.name,
-        unitPrice: li.unitPrice != null ? Number(li.unitPrice) : null,
-      })),
-    };
+      if (fallback.errors?.length || !fallback.data) return null;
+
+      return mapJobDetails(fallback.data);
+    }
+
+    if (!data) return null;
+
+    return mapJobDetails(data);
   } catch (error) {
     console.error("fetchJobDetails failed:", error);
     return null;

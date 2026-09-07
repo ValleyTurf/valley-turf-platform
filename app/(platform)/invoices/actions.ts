@@ -39,6 +39,14 @@ export type InvoiceLineItemParam = {
   description: string;
   quantity: number;
   unitPrice: number;
+  // Free-text sub-list (one included service per line), shown as
+  // bullets under the description on the native-invoice PDF -- e.g. a
+  // "Quarterly Cleaning 1000-1250" line item's Turf Fluff Up / Debris
+  // Removal / ... breakdown. Not sent to Jobber's own invoiceCreate
+  // mutation (that line-item type has no description field per
+  // lib/jobberInvoice.ts's schema notes), so this only shows up on
+  // native invoices, which use this app's own PDF renderer.
+  details?: string | null;
 };
 
 type CreateInvoiceParams = {
@@ -128,6 +136,7 @@ async function createNativeInvoiceForVisit(
       unitPrice: item.unitPrice,
       cost: index === 0 ? cost ?? undefined : undefined,
       jobberVisitId: visitId,
+      details: item.details ?? undefined,
     })),
     dueDate: dueDateIso,
     message: subject || null,
@@ -250,6 +259,7 @@ async function createNativeInvoiceForVisit(
                 quantity: item.quantity,
                 unitPrice: item.unitPrice,
                 lineTotal: item.quantity * item.unitPrice,
+                details: item.details,
               }))
             )
           : null;
@@ -401,7 +411,11 @@ export async function createInvoice(
   }
 
   const trimmedLineItems = lineItems
-    .map((item) => ({ ...item, description: item.description.trim() }))
+    .map((item) => ({
+      ...item,
+      description: item.description.trim(),
+      details: item.details?.trim() || null,
+    }))
     .filter((item) => item.description);
 
   if (trimmedLineItems.length === 0) {

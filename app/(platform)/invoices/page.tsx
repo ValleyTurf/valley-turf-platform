@@ -124,7 +124,7 @@ export default async function InvoicesPage({
 
   const jobLineItemsMap = new Map<
     string,
-    { description: string; quantity: number; unitPrice: number }[]
+    { description: string; quantity: number; unitPrice: number; details: string | null }[]
   >();
   for (const [jobId, details] of jobDetailsEntries) {
     const items = (details?.lineItems ?? [])
@@ -133,6 +133,7 @@ export default async function InvoicesPage({
         description: li.name?.trim() || "Service",
         quantity: 1,
         unitPrice: li.unitPrice as number,
+        details: li.details,
       }));
     jobLineItemsMap.set(jobId, items);
   }

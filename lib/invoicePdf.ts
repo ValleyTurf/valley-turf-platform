@@ -20,7 +20,23 @@ export type InvoicePdfLineItem = {
   quantity: number;
   unitPrice: number;
   lineTotal: number;
+  // Free-text sub-list rendered as bullets under the description -- e.g.
+  // a "Quarterly Cleaning 1000-1250" line item's included services
+  // (Turf Fluff Up, Debris Removal, ...), pulled from Jobber's own
+  // line-item description when available (lib/jobberJob.ts). Each
+  // non-empty line becomes its own bullet; a line already starting with
+  // "-" or "•" has that stripped so it isn't double-bulleted.
+  details?: string | null;
 };
+
+function detailLines(details: string | null | undefined): string[] {
+  if (!details) return [];
+
+  return details
+    .split("\n")
+    .map((line) => line.trim().replace(/^[-•]\s*/, ""))
+    .filter(Boolean);
+}
 
 const BRAND_GREEN = "#174734";
 const MUTED_GRAY = "#6b705c";
@@ -198,6 +214,7 @@ export async function generateInvoicePdf(
     doc.font("Helvetica").fontSize(10).fillColor(BRAND_GREEN);
 
     for (const item of lineItems) {
+      doc.font("Helvetica").fontSize(10).fillColor(BRAND_GREEN);
       doc.text(item.description, columns.description, y, { width: 280 });
       doc.text(String(item.quantity), columns.qty, y);
       doc.text(formatCurrency(item.unitPrice), columns.price, y);
@@ -207,7 +224,23 @@ export async function generateInvoicePdf(
       // description's actual rendered height rather than assuming one
       // line, so rows never overlap.
       const rowHeight = doc.heightOfString(item.description, { width: 280 });
-      y += Math.max(rowHeight, 14) + 10;
+      y += Math.max(rowHeight, 14) + 4;
+
+      // Included-services sub-list (e.g. a "Quarterly Cleaning
+      // 1000-1250" line item's Turf Fluff Up / Debris Removal / ...
+      // breakdown) -- smaller, muted, indented slightly under the
+      // description so it visually nests under its parent line.
+      const bullets = detailLines(item.details);
+      if (bullets.length > 0) {
+        doc.font("Helvetica").fontSize(9).fillColor(MUTED_GRAY);
+        for (const bullet of bullets) {
+          doc.text(`•  ${bullet}`, columns.description + 8, y, { width: 272 });
+          y += Math.max(doc.heightOfString(`•  ${bullet}`, { width: 272 }), 12) + 2;
+        }
+        doc.font("Helvetica").fontSize(10).fillColor(BRAND_GREEN);
+      }
+
+      y += 6;
     }
 
     doc

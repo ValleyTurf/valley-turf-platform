@@ -388,7 +388,12 @@ export type NativeJobDetails = {
   title: string | null;
   instructions: string | null;
   jobStatus: string | null;
-  lineItems: { id: string; name: string | null; unitPrice: number | null }[];
+  lineItems: {
+    id: string;
+    name: string | null;
+    unitPrice: number | null;
+    details: string | null;
+  }[];
 };
 
 export async function fetchNativeJobDetails(
@@ -418,7 +423,14 @@ export async function fetchNativeJobDetails(
     // is enough for that form to keep working unmodified.
     lineItems:
       data.total != null
-        ? [{ id: `${data.jobber_job_id}-price`, name: data.title, unitPrice: Number(data.total) }]
+        ? [
+            {
+              id: `${data.jobber_job_id}-price`,
+              name: data.title,
+              unitPrice: Number(data.total),
+              details: null,
+            },
+          ]
         : [],
   };
 }
