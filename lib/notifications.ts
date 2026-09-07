@@ -442,6 +442,19 @@ export type InvoiceEmail = {
   payNowUrl: string;
   pdfBuffer: Buffer;
   jobberClientId: string | null;
+  // Absolute URL to public/branding/logo.png -- built by the caller from
+  // getBaseUrl() (lib/baseUrl.ts) since this file has no request context
+  // of its own to derive a host from. Gmail/Outlook/Apple Mail don't
+  // render inline SVG in emails, which is why this points at the PNG
+  // export rather than the site's logo.svg.
+  logoUrl: string;
+  // review_request_settings.google_review_url (lib/reviewRequests.ts's
+  // table) -- read by the caller so this file doesn't need its own
+  // Supabase client. Deliberately NOT gated on that table's `enabled`
+  // flag, which only controls the separate post-visit review-request
+  // nudge; the invoice review ask is independent and just needs a URL to
+  // point at. null skips the block entirely (nothing to link to yet).
+  reviewUrl: string | null;
 };
 
 // Customer-facing, like sendPortalMagicLinkEmail -- returns a boolean
@@ -459,23 +472,54 @@ export async function sendInvoiceEmail(
 
   const greetingName = request.customerName || "there";
 
+  // Ryan's Sept 2026 redesign: logo + "Valley Turf Revival Invoice"
+  // header, amount due + Pay Now button up top (before the greeting),
+  // then the note, then a 5-star Google review ask at the very bottom --
+  // on every invoice that needs to be paid (not gated on recurring
+  // status; that turned out to be more complexity than it was worth).
+  const reviewBlock = request.reviewUrl
+    ? `
+      <div style="background: #f7f6f1; border-radius: 12px; padding: 16px 18px; text-align: center; margin-top: 20px;">
+        <p style="margin: 0 0 6px; font-size: 16px; color: #e8a721; letter-spacing: 2px;">&#9733;&#9733;&#9733;&#9733;&#9733;</p>
+        <p style="margin: 0 0 4px; font-weight: bold;">Did we do a great job?</p>
+        <p style="margin: 0 0 14px;">We would love a 5 star review from you! Please leave a review for us.</p>
+        <a
+          href="${request.reviewUrl}"
+          style="background-color: #174734; color: #ffffff; padding: 10px 22px; border-radius: 10px; text-decoration: none; font-weight: bold; font-size: 13px; display: inline-block;"
+        >
+          Leave a review
+        </a>
+      </div>
+    `
+    : "";
+
   const html = `
     <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
-      <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
-      <p>Your invoice <strong>${escapeHtml(
-        request.invoiceNumber
-      )}</strong> from Valley Turf Revival is attached, for <strong>$${request.total.toFixed(
-    2
-  )}</strong>.</p>
-      <p style="margin: 24px 0;">
-        <a
-          href="${request.payNowUrl}"
-          style="background-color: #174734; color: #ffffff; padding: 12px 24px; border-radius: 10px; text-decoration: none; font-weight: bold;"
-        >
-          Pay Now
-        </a>
-      </p>
-      <p style="color: #6b705c; font-size: 12px;">Questions about this invoice? Just reply to this email.</p>
+      <div style="padding: 20px; text-align: center; border-bottom: 2px solid #174734;">
+        <img src="${request.logoUrl}" alt="Valley Turf Revival" style="height: 56px; width: auto; margin-bottom: 8px;" />
+        <p style="font-size: 17px; font-weight: bold; margin: 0; letter-spacing: 0.02em;">Valley Turf Revival Invoice</p>
+      </div>
+      <div style="padding: 24px 20px;">
+        <div style="text-align: center; margin: 0 0 20px;">
+          <p style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #6b705c; margin: 0 0 4px;">Amount due</p>
+          <p style="font-size: 32px; font-weight: bold; margin: 0 0 16px;">$${request.total.toFixed(2)}</p>
+          <a
+            href="${request.payNowUrl}"
+            style="background-color: #174734; color: #ffffff; padding: 12px 28px; border-radius: 10px; text-decoration: none; font-weight: bold; display: inline-block;"
+          >
+            Pay Now
+          </a>
+        </div>
+        <div style="border-top: 0.5px solid #e7e2d5; margin: 20px 0; padding-top: 20px;">
+          <p style="font-size: 16px; margin: 0 0 14px;">Hi ${escapeHtml(greetingName)},</p>
+          <p style="margin: 0 0 14px;">Thank you for your recent business with Valley Turf Revival. Your invoice <strong>${escapeHtml(
+            request.invoiceNumber
+          )}</strong> is attached, for <strong>$${request.total.toFixed(2)}</strong>.</p>
+          <p style="margin: 0 0 20px;">Questions about this invoice? Just reply to this email.</p>
+          <p style="margin: 0;">Thank you,<br>Valley Turf Revival</p>
+          ${reviewBlock}
+        </div>
+      </div>
     </div>
   `;
 

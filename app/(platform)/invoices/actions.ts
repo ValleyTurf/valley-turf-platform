@@ -199,6 +199,20 @@ async function createNativeInvoiceForVisit(
     try {
       const baseUrl = await getBaseUrl();
       const payUrl = invoice.publicToken ? `${baseUrl}/pay/${invoice.publicToken}` : null;
+      const logoUrl = `${baseUrl}/branding/logo.png`;
+
+      // Same review_request_settings row the (currently inactive)
+      // post-visit review-request nudge reads from (lib/reviewRequests.ts)
+      // -- one place for Ryan to manage the Google review link. Read
+      // directly rather than importing that file's `enabled`-gated
+      // sendDueReviewRequests(), since the invoice review ask is on
+      // unconditionally and only needs the URL itself.
+      const { data: reviewSettingsRow } = await supabaseServer
+        .from("review_request_settings")
+        .select("google_review_url")
+        .eq("id", 1)
+        .maybeSingle();
+      const reviewUrl = reviewSettingsRow?.google_review_url ?? null;
 
       const pdfBuffer =
         customerEmail && payUrl
@@ -245,6 +259,8 @@ async function createNativeInvoiceForVisit(
               payNowUrl: payUrl,
               pdfBuffer,
               jobberClientId: clientId,
+              logoUrl,
+              reviewUrl,
             })) || delivered;
         }
 
