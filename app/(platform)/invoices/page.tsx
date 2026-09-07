@@ -180,6 +180,13 @@ export default async function InvoicesPage({
             </Link>
 
             <Link
+              href="/invoices/history"
+              className="rounded-xl border border-[#174734] px-4 py-2 text-center text-sm font-bold transition hover:bg-white"
+            >
+              Invoiced History
+            </Link>
+
+            <Link
               href="/invoices/routing"
               className="rounded-xl border border-[#174734] px-4 py-2 text-center text-sm font-bold transition hover:bg-white"
             >
