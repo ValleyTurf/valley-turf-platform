@@ -7,6 +7,7 @@ import { recordAuditLog } from "@/lib/auditLog";
 import { completeJobberVisit } from "@/lib/jobberVisit";
 import { insertVisitNote, parsePhotoPathsField } from "@/lib/visitNotes";
 import { sendOnMyWaySms } from "@/lib/notifications";
+import { getNotificationRecipients } from "@/lib/customerContacts";
 
 // Kept as a private, file-local copy of the same list rendered on the My
 // Day page (QUICK_ENTRY_MATERIALS/QUICK_ENTRY_EQUIPMENT in page.tsx) —
@@ -438,7 +439,16 @@ export async function sendOnWay(
     return { error: "No phone number on file for this customer.", sentAt: null };
   }
 
-  const sent = await sendOnMyWaySms(phone, customerName, jobberClientId, Math.round(etaMinutes));
+  // Fans out to any additional customer_contacts numbers flagged
+  // receives_notifications (migration 060), alongside the primary phone
+  // looked up above -- same helper the invoice send path uses.
+  const { phones } = await getNotificationRecipients(jobberClientId, null, phone);
+  const roundedEta = Math.round(etaMinutes);
+
+  const results = await Promise.all(
+    phones.map((toPhone) => sendOnMyWaySms(toPhone, customerName, jobberClientId, roundedEta))
+  );
+  const sent = results.some(Boolean);
 
   if (!sent) {
     return {

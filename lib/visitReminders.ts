@@ -11,6 +11,7 @@ import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
 import { sendVisitReminderSms, sendVisitReminderEmail } from "@/lib/notifications";
+import { getNotificationRecipients } from "@/lib/customerContacts";
 
 // Same fixed-offset assumption made throughout this app (lib/nativeJobs.ts's
 // BUSINESS_UTC_OFFSET, lib/payPeriods.ts) -- Phoenix doesn't observe DST,
@@ -204,14 +205,21 @@ export async function sendDueVisitReminders(): Promise<SendRemindersResult> {
         continue;
       }
 
+      // Fans out to any additional customer_contacts flagged
+      // receives_notifications (migration 060), alongside the primary
+      // phone/email looked up above.
+      const recipients = visit.jobber_client_id
+        ? await getNotificationRecipients(visit.jobber_client_id, email, phone)
+        : { emails: email ? [email] : [], phones: phone ? [phone] : [] };
+
       const label = visitLabel(visit.title, visit.customer_name);
       const dateLabel = formatVisitDateLabel(visit.start_at);
 
       let delivered = false;
 
-      if (phone) {
+      for (const toPhone of recipients.phones) {
         const sent = await sendVisitReminderSms(
-          phone,
+          toPhone,
           visit.customer_name,
           label,
           dateLabel,
@@ -220,9 +228,9 @@ export async function sendDueVisitReminders(): Promise<SendRemindersResult> {
         delivered = delivered || sent;
       }
 
-      if (email) {
+      for (const toEmail of recipients.emails) {
         const sent = await sendVisitReminderEmail(
-          email,
+          toEmail,
           visit.customer_name,
           label,
           dateLabel,

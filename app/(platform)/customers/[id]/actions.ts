@@ -13,6 +13,11 @@ import { removeJobberJobNotePhoto } from "@/lib/jobberJobNotes";
 import { getOrCreateEnrollmentToken, setAutopayEnabled } from "@/lib/autopay";
 import { syncSingleCustomer } from "@/lib/jobberWebhookProcessor";
 import { logContactHistory } from "@/lib/contactHistory";
+import {
+  addContact,
+  deleteContact,
+  updateContact,
+} from "@/lib/customerContacts";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
@@ -364,6 +369,105 @@ export async function toggleAutopay(
   });
 
   revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+}
+
+// Additional contacts (migration 060_add_customer_contacts.sql) --
+// Ryan's request for customers with a second cell number, a spouse, or a
+// property manager the single customers.email/phone columns had no room
+// for. Called from CustomerContactsSection.tsx, a client component (not
+// a plain <form action>) so a bad submit or delete has somewhere inline
+// to show an error rather than a silent no-op.
+export async function addCustomerContact(
+  jobberClientId: string,
+  params: {
+    label: string | null;
+    contactName: string | null;
+    email: string | null;
+    phone: string | null;
+    receivesNotifications: boolean;
+  }
+): Promise<{ error: string | null }> {
+  const actor = await getCurrentUser();
+  const result = await addContact({ jobberClientId, ...params });
+
+  if (!result.ok) {
+    return { error: result.error };
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "create",
+    entityType: "customer_contact",
+    entityId: jobberClientId,
+    entityLabel: params.contactName || params.label || params.email || params.phone,
+    after: params,
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+
+  return { error: null };
+}
+
+// receivesNotifications is the only field a saved contact needs to
+// change after the fact today -- fixing a mistyped phone/email is a
+// delete-and-re-add (see CustomerContactsSection.tsx), which keeps this
+// action, and the UI driving it, simple.
+export async function toggleCustomerContactNotifications(
+  jobberClientId: string,
+  contactId: string,
+  current: {
+    label: string | null;
+    contactName: string | null;
+    email: string | null;
+    phone: string | null;
+  },
+  receivesNotifications: boolean
+): Promise<{ error: string | null }> {
+  const actor = await getCurrentUser();
+  const result = await updateContact(contactId, {
+    ...current,
+    receivesNotifications,
+  });
+
+  if (!result.ok) {
+    return { error: result.error };
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "customer_contact",
+    entityId: contactId,
+    entityLabel: current.contactName || current.label,
+    after: { receives_notifications: receivesNotifications },
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+
+  return { error: null };
+}
+
+export async function deleteCustomerContact(
+  jobberClientId: string,
+  contactId: string
+): Promise<{ error: string | null }> {
+  const actor = await getCurrentUser();
+  const result = await deleteContact(contactId);
+
+  if (!result.ok) {
+    return { error: result.error };
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "delete",
+    entityType: "customer_contact",
+    entityId: contactId,
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+
+  return { error: null };
 }
 
 // Same idea as removeVisitPhoto above, for a photo in the "Imported from

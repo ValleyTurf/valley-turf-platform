@@ -27,6 +27,8 @@ import TurfSizeField from "./TurfSizeField";
 import AddVisitNoteForm from "./AddVisitNoteForm";
 import PhotoGrid from "@/app/components/PhotoGrid";
 import { ComposeEmailForm } from "@/app/components/ComposeEmailForm";
+import CustomerContactsSection from "./CustomerContactsSection";
+import { listContactsForCustomer } from "@/lib/customerContacts";
 import {
   toNumber,
   formatCurrency,
@@ -1082,6 +1084,7 @@ export default async function CustomerDetailPage({
     payments,
     autopayPaymentMethod,
     contactHistory,
+    additionalContacts,
   ] = await Promise.all([
     getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
@@ -1097,6 +1100,7 @@ export default async function CustomerDetailPage({
     getCustomerPayments(decodedId),
     getPaymentMethodByClientId(decodedId),
     getContactHistoryForCustomer(decodedId),
+    listContactsForCustomer(decodedId),
   ]);
 
   if (!client) {
@@ -1384,6 +1388,11 @@ export default async function CustomerDetailPage({
                 )}
               </div>
             </section>
+
+            <CustomerContactsSection
+              jobberClientId={decodedId}
+              contacts={additionalContacts}
+            />
 
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">Next Visit</h2>

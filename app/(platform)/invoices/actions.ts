@@ -34,6 +34,7 @@ import {
 } from "@/lib/notifications";
 import { attemptAutopayCharge, getPaymentMethodByClientId } from "@/lib/autopay";
 import { getBaseUrl } from "@/lib/baseUrl";
+import { getNotificationRecipients } from "@/lib/customerContacts";
 
 export type InvoiceLineItemParam = {
   description: string;
@@ -272,8 +273,19 @@ async function createNativeInvoiceForVisit(
         .maybeSingle();
       const reviewUrl = reviewSettingsRow?.google_review_url ?? null;
 
+      // Fans out to any additional customer_contacts rows (migration 060)
+      // explicitly flagged receives_notifications, alongside the primary
+      // email/phone -- always includes the primary even if it's null (the
+      // helper just drops empties), so this is a straight swap-in for the
+      // old customerEmail/customerPhone singulars below.
+      const recipients = await getNotificationRecipients(
+        clientId,
+        customerEmail,
+        customerPhone
+      );
+
       const pdfBuffer =
-        customerEmail && payUrl
+        recipients.emails.length > 0 && payUrl
           ? await generateInvoicePdf(
               invoice,
               lineItems.map((item) => ({
@@ -289,23 +301,25 @@ async function createNativeInvoiceForVisit(
       if (autopayCharged) {
         const paymentMethod = await getPaymentMethodByClientId(clientId);
 
-        if (customerEmail && pdfBuffer) {
-          delivered =
-            (await sendAutopayReceiptEmail({
-              toEmail: customerEmail,
-              customerName,
-              invoiceNumber: invoice.invoiceNumber,
-              total: invoice.total,
-              cardLast4: paymentMethod?.cardLast4 ?? null,
-              pdfBuffer,
-              jobberClientId: clientId,
-            })) || delivered;
+        if (pdfBuffer) {
+          for (const toEmail of recipients.emails) {
+            delivered =
+              (await sendAutopayReceiptEmail({
+                toEmail,
+                customerName,
+                invoiceNumber: invoice.invoiceNumber,
+                total: invoice.total,
+                cardLast4: paymentMethod?.cardLast4 ?? null,
+                pdfBuffer,
+                jobberClientId: clientId,
+              })) || delivered;
+          }
         }
 
-        if (customerPhone) {
+        for (const toPhone of recipients.phones) {
           delivered =
             (await sendAutopayReceiptSms(
-              customerPhone,
+              toPhone,
               customerName,
               invoice.invoiceNumber,
               invoice.total,
@@ -314,25 +328,27 @@ async function createNativeInvoiceForVisit(
             )) || delivered;
         }
       } else if (payUrl) {
-        if (customerEmail && pdfBuffer) {
-          delivered =
-            (await sendInvoiceEmail({
-              toEmail: customerEmail,
-              customerName,
-              invoiceNumber: invoice.invoiceNumber,
-              total: invoice.total,
-              payNowUrl: payUrl,
-              pdfBuffer,
-              jobberClientId: clientId,
-              logoUrl,
-              reviewUrl,
-            })) || delivered;
+        if (pdfBuffer) {
+          for (const toEmail of recipients.emails) {
+            delivered =
+              (await sendInvoiceEmail({
+                toEmail,
+                customerName,
+                invoiceNumber: invoice.invoiceNumber,
+                total: invoice.total,
+                payNowUrl: payUrl,
+                pdfBuffer,
+                jobberClientId: clientId,
+                logoUrl,
+                reviewUrl,
+              })) || delivered;
+          }
         }
 
-        if (customerPhone) {
+        for (const toPhone of recipients.phones) {
           delivered =
             (await sendInvoiceSms(
-              customerPhone,
+              toPhone,
               customerName,
               invoice.invoiceNumber,
               payUrl,
