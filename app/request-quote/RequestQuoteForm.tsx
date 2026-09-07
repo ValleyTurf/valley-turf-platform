@@ -159,15 +159,15 @@ export default function RequestQuoteForm() {
           id="smsConsent"
           name="smsConsent"
           type="checkbox"
-          required
           className="mt-0.5 h-4 w-4 shrink-0 rounded border-[#d8d3c6] text-[#174734] focus:ring-2 focus:ring-[#d4af37]/40"
         />
         <label htmlFor="smsConsent" className="text-xs text-[#6b705c]">
-          I agree to receive Visit Reminders and other transactional text
-          messages (SMS) from Valley Turf Revival at the phone number
-          provided above. You can unsubscribe at any time by replying STOP.
-          Message and data rates may apply. Message frequency varies. Reply
-          HELP for help or STOP to cancel. See our{" "}
+          (Optional) I agree to receive Visit Reminders and other
+          transactional text messages (SMS) from Valley Turf Revival at the
+          phone number provided above. You can unsubscribe at any time by
+          replying STOP. Message and data rates may apply. Message
+          frequency varies. Reply HELP for help or STOP to cancel. See
+          our{" "}
           <a
             href="/privacy-policy"
             target="_blank"

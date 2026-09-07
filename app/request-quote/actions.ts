@@ -47,17 +47,11 @@ export async function submitQuoteRequest(
     };
   }
 
-  // Twilio's A2P 10DLC review requires clear, affirmative opt-in for
-  // texting — the client-side checkbox is `required`, but that's just
-  // UX; browsers can be worked around, so this is the real gate. Never
-  // trust smsConsent === true without this check.
-  if (!input.smsConsent) {
-    return {
-      ok: false,
-      error: "Please check the box to agree to receive text messages.",
-    };
-  }
-
+  // SMS consent is optional, not a condition of submitting the request --
+  // Twilio's A2P 10DLC review (error 30923) rejected an earlier version of
+  // this flow specifically because checking the box was required to get a
+  // quote. The checkbox's real value is recorded below either way; it just
+  // never blocks the submission.
   const email = input.email?.trim() || null;
   const notes = input.notes?.trim() || null;
   const photoPaths = Array.isArray(input.photoPaths) ? input.photoPaths : [];
@@ -89,8 +83,8 @@ export async function submitQuoteRequest(
       status: "New",
       turf_size_range: turfSizeRange,
       photo_paths: photoPaths,
-      sms_consent: true,
-      sms_consent_at: new Date().toISOString(),
+      sms_consent: input.smsConsent,
+      sms_consent_at: input.smsConsent ? new Date().toISOString() : null,
       address_validation_status: validation?.status ?? null,
       address_validated_at: validation ? new Date().toISOString() : null,
       address_formatted: validation?.formattedAddress ?? null,
