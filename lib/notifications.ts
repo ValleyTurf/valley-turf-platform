@@ -316,7 +316,11 @@ export async function sendManualEmail(request: ManualEmail): Promise<boolean> {
 export async function sendOnMyWaySms(
   toPhone: string,
   customerName: string | null,
-  jobberClientId: string | null
+  jobberClientId: string | null,
+  // Crew-entered ETA (see OnWayButton.tsx) -- always a positive integer
+  // by the time it gets here, validated in my-day/actions.ts's
+  // sendOnWay() before this is ever called.
+  etaMinutes: number
 ): Promise<boolean> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -327,8 +331,8 @@ export async function sendOnMyWaySms(
     return false;
   }
 
-  const greetingName = customerName?.trim() || "there";
-  const body = `Hi ${greetingName}, this is Valley Turf Revival — we're on our way to your property now!`;
+  const greetingName = firstNameOf(customerName);
+  const body = `Hi ${greetingName}, this is Valley Turf Revival — we're on our way to your property now for your turf cleaning! We will be there in about ${etaMinutes} minutes.`;
 
   try {
     const response = await fetch(

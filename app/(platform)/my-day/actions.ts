@@ -405,7 +405,8 @@ export async function addVisitNoteFromMyDay(
 export async function sendOnWay(
   visitId: string,
   jobberClientId: string,
-  customerName: string | null
+  customerName: string | null,
+  etaMinutes: number
 ): Promise<{ error: string | null; sentAt: string | null }> {
   const actor = await getCurrentUser();
 
@@ -415,6 +416,10 @@ export async function sendOnWay(
 
   if (!visitId || !jobberClientId) {
     return { error: "Missing visit or customer.", sentAt: null };
+  }
+
+  if (!Number.isFinite(etaMinutes) || etaMinutes <= 0) {
+    return { error: "Enter how many minutes away you are.", sentAt: null };
   }
 
   const { data: customer, error: lookupError } = await supabaseServer
@@ -433,7 +438,7 @@ export async function sendOnWay(
     return { error: "No phone number on file for this customer.", sentAt: null };
   }
 
-  const sent = await sendOnMyWaySms(phone, customerName, jobberClientId);
+  const sent = await sendOnMyWaySms(phone, customerName, jobberClientId, Math.round(etaMinutes));
 
   if (!sent) {
     return {
@@ -459,7 +464,7 @@ export async function sendOnWay(
     entityType: "visit_on_way_sms",
     entityId: visitId,
     entityLabel: customerName ?? "Customer",
-    after: { phone, sent_at: sentAt },
+    after: { phone, sent_at: sentAt, eta_minutes: Math.round(etaMinutes) },
   });
 
   revalidatePath("/my-day");
