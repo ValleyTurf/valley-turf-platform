@@ -5,11 +5,22 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/currentUser";
 import { supabaseServer } from "@/lib/supabase-server";
-import { updateReminderRule, updateReviewRequestSettings } from "./actions";
+import {
+  updateReminderRule,
+  updateReviewRequestSettings,
+  updateInvoiceReminderRule,
+  updateQuoteFollowupRule,
+} from "./actions";
 
 type ReminderRule = {
   id: string;
   days_before: number;
+  enabled: boolean;
+};
+
+type DaysAfterRule = {
+  id: string;
+  days_after: number;
   enabled: boolean;
 };
 
@@ -26,21 +37,34 @@ export default async function NotificationsSettingsPage() {
     redirect("/my-day");
   }
 
-  const [rulesResult, reviewSettingsResult] = await Promise.all([
-    supabaseServer
-      .from("visit_reminder_rules")
-      .select("id, days_before, enabled")
-      .order("days_before", { ascending: false }),
+  const [rulesResult, reviewSettingsResult, invoiceRulesResult, quoteRulesResult] =
+    await Promise.all([
+      supabaseServer
+        .from("visit_reminder_rules")
+        .select("id, days_before, enabled")
+        .order("days_before", { ascending: false }),
 
-    supabaseServer
-      .from("review_request_settings")
-      .select("enabled, days_after_visit, google_review_url")
-      .eq("id", 1)
-      .maybeSingle(),
-  ]);
+      supabaseServer
+        .from("review_request_settings")
+        .select("enabled, days_after_visit, google_review_url")
+        .eq("id", 1)
+        .maybeSingle(),
+
+      supabaseServer
+        .from("invoice_reminder_rules")
+        .select("id, days_after, enabled")
+        .order("days_after", { ascending: true }),
+
+      supabaseServer
+        .from("quote_followup_rules")
+        .select("id, days_after, enabled")
+        .order("days_after", { ascending: true }),
+    ]);
 
   const rules = (rulesResult.data ?? []) as ReminderRule[];
   const reviewSettings = reviewSettingsResult.data as ReviewRequestSettings | null;
+  const invoiceRules = (invoiceRulesResult.data ?? []) as DaysAfterRule[];
+  const quoteRules = (quoteRulesResult.data ?? []) as DaysAfterRule[];
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
@@ -111,6 +135,114 @@ export default async function NotificationsSettingsPage() {
                       className="w-20 rounded-lg border border-[#d9d4c6] px-2 py-1.5 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
                     />
                     days before the visit
+                  </label>
+
+                  <button
+                    type="submit"
+                    className="ml-auto rounded-xl bg-[#174734] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#226246]"
+                  >
+                    Save
+                  </button>
+                </form>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="mt-6 rounded-2xl bg-white p-5 shadow">
+          <h2 className="text-lg font-bold">Overdue Invoice Reminders</h2>
+          <p className="mt-1 text-sm text-[#6b705c]">
+            Sent automatically once a day for every rule below that&apos;s
+            turned on, to any unpaid invoice past its due date — native or
+            Jobber-synced. Each rule fires once per invoice.
+          </p>
+
+          <div className="mt-4 space-y-3">
+            {invoiceRules.length === 0 ? (
+              <p className="rounded-xl bg-[#f7f6f1] p-4 text-sm text-[#6b705c]">
+                No reminder rules found — run the migration to seed the
+                defaults.
+              </p>
+            ) : (
+              invoiceRules.map((rule) => (
+                <form
+                  key={rule.id}
+                  action={updateInvoiceReminderRule.bind(null, rule.id)}
+                  className="flex flex-wrap items-center gap-3 rounded-xl border border-[#e7e2d5] p-4"
+                >
+                  <label className="flex items-center gap-2 text-sm font-bold">
+                    <input
+                      type="checkbox"
+                      name="enabled"
+                      defaultChecked={rule.enabled}
+                      className="h-4 w-4 rounded border-[#d9d4c6] text-[#174734] focus:ring-[#d4af37]"
+                    />
+                    On
+                  </label>
+
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="number"
+                      name="days_after"
+                      min={1}
+                      defaultValue={rule.days_after}
+                      className="w-20 rounded-lg border border-[#d9d4c6] px-2 py-1.5 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                    />
+                    days past due
+                  </label>
+
+                  <button
+                    type="submit"
+                    className="ml-auto rounded-xl bg-[#174734] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#226246]"
+                  >
+                    Save
+                  </button>
+                </form>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="mt-6 rounded-2xl bg-white p-5 shadow">
+          <h2 className="text-lg font-bold">Quote Follow-Ups</h2>
+          <p className="mt-1 text-sm text-[#6b705c]">
+            Sent automatically once a day for every rule below that&apos;s
+            turned on, to any quote still sitting in &ldquo;Sent&rdquo;
+            with no response. Each rule fires once per quote.
+          </p>
+
+          <div className="mt-4 space-y-3">
+            {quoteRules.length === 0 ? (
+              <p className="rounded-xl bg-[#f7f6f1] p-4 text-sm text-[#6b705c]">
+                No follow-up rules found — run the migration to seed the
+                defaults.
+              </p>
+            ) : (
+              quoteRules.map((rule) => (
+                <form
+                  key={rule.id}
+                  action={updateQuoteFollowupRule.bind(null, rule.id)}
+                  className="flex flex-wrap items-center gap-3 rounded-xl border border-[#e7e2d5] p-4"
+                >
+                  <label className="flex items-center gap-2 text-sm font-bold">
+                    <input
+                      type="checkbox"
+                      name="enabled"
+                      defaultChecked={rule.enabled}
+                      className="h-4 w-4 rounded border-[#d9d4c6] text-[#174734] focus:ring-[#d4af37]"
+                    />
+                    On
+                  </label>
+
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="number"
+                      name="days_after"
+                      min={1}
+                      defaultValue={rule.days_after}
+                      className="w-20 rounded-lg border border-[#d9d4c6] px-2 py-1.5 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                    />
+                    days after sent
                   </label>
 
                   <button

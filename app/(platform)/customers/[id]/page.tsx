@@ -29,6 +29,7 @@ import PhotoGrid from "@/app/components/PhotoGrid";
 import { ComposeEmailForm } from "@/app/components/ComposeEmailForm";
 import CustomerContactsSection from "./CustomerContactsSection";
 import { listContactsForCustomer } from "@/lib/customerContacts";
+import ResendInvoiceButton from "./ResendInvoiceButton";
 import {
   toNumber,
   formatCurrency,
@@ -751,6 +752,47 @@ async function getInvoiceCostBreakdowns(
   return new Map(rows.map((row) => [row.jobber_invoice_id, row]));
 }
 
+export type NativeInvoiceSummary = {
+  invoiceId: string;
+  invoiceNumber: string | null;
+  status: string | null;
+  total: number | null;
+  dueDate: string | null;
+};
+
+// Recent Invoices above only shows what's live in Jobber (client.invoices
+// -- see getJobberClient), which never includes native invoices (see
+// Invoiced History's own header comment for the full explanation). Ryan
+// asked to be able to resend an invoice from the customer's own page,
+// which only makes sense for native ones (a real Jobber invoice is
+// resent from within Jobber itself) -- so this reads the same
+// jobber_invoices mirror Invoiced History uses, filtered to this
+// customer's synthetic "native-<uuid>" rows, and unwraps the uuid back
+// out for the Resend button below.
+async function getNativeInvoicesForCustomer(
+  jobberClientId: string
+): Promise<NativeInvoiceSummary[]> {
+  const { data, error } = await supabaseServer
+    .from("jobber_invoices")
+    .select("jobber_invoice_id, invoice_number, status, total, due_date")
+    .eq("jobber_client_id", jobberClientId)
+    .like("jobber_invoice_id", "native-%")
+    .order("due_date", { ascending: false, nullsFirst: false });
+
+  if (error) {
+    console.error("Native invoices query failed:", error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row) => ({
+    invoiceId: (row.jobber_invoice_id as string).slice("native-".length),
+    invoiceNumber: row.invoice_number as string | null,
+    status: row.status as string | null,
+    total: row.total === null ? null : Number(row.total),
+    dueDate: row.due_date as string | null,
+  }));
+}
+
 type CustomerProfile = {
   turf_size_sqft: number | string | null;
   turf_size_range: string | null;
@@ -1085,6 +1127,7 @@ export default async function CustomerDetailPage({
     autopayPaymentMethod,
     contactHistory,
     additionalContacts,
+    nativeInvoices,
   ] = await Promise.all([
     getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
@@ -1101,6 +1144,7 @@ export default async function CustomerDetailPage({
     getPaymentMethodByClientId(decodedId),
     getContactHistoryForCustomer(decodedId),
     listContactsForCustomer(decodedId),
+    getNativeInvoicesForCustomer(decodedId),
   ]);
 
   if (!client) {
@@ -2192,6 +2236,63 @@ export default async function CustomerDetailPage({
                 )}
               </div>
             </section>
+
+            {nativeInvoices.length > 0 && (
+              <section className="rounded-2xl bg-white p-5 shadow">
+                <h2 className="text-lg font-bold">Native Invoices</h2>
+                <p className="mt-1 text-xs text-[#6b705c]">
+                  Invoices created directly in this app. Resend if a
+                  customer says they never got it -- this doesn&apos;t
+                  attempt another autopay charge.
+                </p>
+
+                <div className="mt-3 space-y-2">
+                  {nativeInvoices.map((invoice) => (
+                    <div
+                      key={invoice.invoiceId}
+                      className="rounded-xl border border-[#e7e2d5] px-3 py-2"
+                    >
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold">
+                            Invoice #{invoice.invoiceNumber ?? "—"}
+                          </p>
+
+                          <p className="text-xs text-[#6b705c]">
+                            {invoice.dueDate
+                              ? `Due ${formatDate(invoice.dueDate)}`
+                              : "No due date"}
+                          </p>
+                        </div>
+
+                        <div className="flex shrink-0 items-center gap-3">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
+                                invoice.status
+                              )}`}
+                            >
+                              {formatStatus(invoice.status)}
+                            </span>
+
+                            <p className="text-sm font-bold">
+                              {invoice.total !== null
+                                ? formatCurrency(invoice.total)
+                                : "—"}
+                            </p>
+                          </div>
+
+                          <ResendInvoiceButton
+                            jobberClientId={decodedId}
+                            invoiceId={invoice.invoiceId}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">

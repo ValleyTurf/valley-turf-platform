@@ -510,6 +510,307 @@ export async function sendInvoiceSms(
   }
 }
 
+// Overdue-invoice payment reminder (lib/invoiceReminders.ts's cron-driven
+// send loop, at whichever day-offsets are enabled in
+// invoice_reminder_rules -- Ryan's default: 3 and 10 days past due).
+// Draft wording -- same spirit as the visit-reminder text Ryan reviewed
+// and rewrote; flag if this needs adjusting.
+export type OverdueInvoiceEmail = {
+  toEmail: string;
+  customerName: string | null;
+  invoiceNumber: string;
+  total: number;
+  dueDateLabel: string;
+  payUrl: string;
+  jobberClientId: string | null;
+};
+
+export async function sendOverdueInvoiceEmail(
+  request: OverdueInvoiceEmail
+): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    console.error("Cannot send overdue invoice email: RESEND_API_KEY is not set.");
+    return false;
+  }
+
+  const greetingName = firstNameOf(request.customerName);
+
+  const html = `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
+      <p>This is a friendly reminder that invoice <strong>${escapeHtml(
+        request.invoiceNumber
+      )}</strong> from Valley Turf Revival, for <strong>$${request.total.toFixed(
+    2
+  )}</strong>, was due on ${escapeHtml(request.dueDateLabel)} and hasn't been paid yet.</p>
+      <p style="margin: 20px 0;">
+        <a
+          href="${request.payUrl}"
+          style="background-color: #174734; color: #ffffff; padding: 12px 24px; border-radius: 10px; text-decoration: none; font-weight: bold;"
+        >
+          Pay Now
+        </a>
+      </p>
+      <p style="color: #6b705c; font-size: 12px;">Already paid this? Just reply and let us know. Questions about the invoice? Reply here too.</p>
+    </div>
+  `;
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromHeader(),
+        to: request.toEmail,
+        reply_to: replyToAddressFor(request.jobberClientId),
+        subject: `Invoice ${request.invoiceNumber} is past due -- Valley Turf Revival`,
+        html,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(
+        "Overdue invoice email failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    const data = (await response.json()) as { id?: string };
+
+    await logContactHistory({
+      jobberClientId: request.jobberClientId,
+      channel: "email",
+      subject: `Invoice ${request.invoiceNumber} Overdue Reminder`,
+      summary: `Past-due reminder for $${request.total.toFixed(2)}, due ${request.dueDateLabel}.`,
+      relatedType: "invoice",
+      resendEmailId: data.id ?? null,
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Overdue invoice email error:", error);
+    return false;
+  }
+}
+
+// Text counterpart to sendOverdueInvoiceEmail -- same reasoning as
+// sendInvoiceSms alongside sendInvoiceEmail.
+export async function sendOverdueInvoiceSms(
+  toPhone: string,
+  customerName: string | null,
+  invoiceNumber: string,
+  total: number,
+  dueDateLabel: string,
+  payUrl: string,
+  jobberClientId: string | null
+): Promise<boolean> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_FROM_NUMBER;
+
+  if (!accountSid || !authToken || !fromNumber) {
+    console.error("Cannot send overdue invoice text: Twilio env vars are not set.");
+    return false;
+  }
+
+  const greetingName = firstNameOf(customerName);
+  const body = `Hi ${greetingName}, this is Valley Turf Revival. Invoice ${invoiceNumber} ($${total.toFixed(
+    2
+  )}) was due ${dueDateLabel} and is still unpaid. Pay here: ${payUrl}`;
+
+  try {
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${accountSid}:${authToken}`
+          ).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          To: toPhone,
+          From: fromNumber,
+          Body: body,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      console.error(
+        "Overdue invoice SMS failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    await logContactHistory({
+      jobberClientId,
+      channel: "sms",
+      subject: `Invoice ${invoiceNumber} Overdue Reminder`,
+      summary: body,
+      relatedType: "invoice",
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Overdue invoice SMS error:", error);
+    return false;
+  }
+}
+
+// Quote follow-up nudge (lib/quoteFollowups.ts's cron-driven send loop,
+// at whichever day-offsets are enabled in quote_followup_rules -- Ryan's
+// requested defaults: 2 and 5 days after a quote is marked sent). Draft
+// wording, same as the overdue-invoice reminder above -- flag if this
+// needs adjusting.
+export type QuoteFollowupEmail = {
+  toEmail: string;
+  recipientName: string | null;
+  quoteUrl: string;
+  jobberClientId: string | null;
+};
+
+export async function sendQuoteFollowupEmail(
+  request: QuoteFollowupEmail
+): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    console.error("Cannot send quote follow-up email: RESEND_API_KEY is not set.");
+    return false;
+  }
+
+  const greetingName = firstNameOf(request.recipientName);
+
+  const html = `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
+      <p>Just checking in on the quote we sent from Valley Turf Revival -- it's still available whenever you're ready.</p>
+      <p style="margin: 20px 0;">
+        <a
+          href="${request.quoteUrl}"
+          style="background-color: #174734; color: #ffffff; padding: 12px 24px; border-radius: 10px; text-decoration: none; font-weight: bold;"
+        >
+          View Your Quote
+        </a>
+      </p>
+      <p style="color: #6b705c; font-size: 12px;">Questions, or want to talk through it? Just reply to this email.</p>
+    </div>
+  `;
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromHeader(),
+        to: request.toEmail,
+        reply_to: replyToAddressFor(request.jobberClientId),
+        subject: "Still interested? Your quote from Valley Turf Revival",
+        html,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(
+        "Quote follow-up email failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    const data = (await response.json()) as { id?: string };
+
+    await logContactHistory({
+      jobberClientId: request.jobberClientId,
+      channel: "email",
+      subject: "Quote Follow-Up",
+      summary: "Sent a follow-up nudge for an unaccepted quote.",
+      resendEmailId: data.id ?? null,
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Quote follow-up email error:", error);
+    return false;
+  }
+}
+
+// Text counterpart to sendQuoteFollowupEmail.
+export async function sendQuoteFollowupSms(
+  toPhone: string,
+  recipientName: string | null,
+  quoteUrl: string,
+  jobberClientId: string | null
+): Promise<boolean> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_FROM_NUMBER;
+
+  if (!accountSid || !authToken || !fromNumber) {
+    console.error("Cannot send quote follow-up text: Twilio env vars are not set.");
+    return false;
+  }
+
+  const greetingName = firstNameOf(recipientName);
+  const body = `Hi ${greetingName}, this is Valley Turf Revival. Just checking in on the quote we sent -- still available whenever you're ready: ${quoteUrl}`;
+
+  try {
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${accountSid}:${authToken}`
+          ).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          To: toPhone,
+          From: fromNumber,
+          Body: body,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      console.error(
+        "Quote follow-up SMS failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    await logContactHistory({
+      jobberClientId,
+      channel: "sms",
+      subject: "Quote Follow-Up",
+      summary: body,
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Quote follow-up SMS error:", error);
+    return false;
+  }
+}
+
 export type InvoiceEmail = {
   toEmail: string;
   customerName: string | null;

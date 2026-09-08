@@ -254,6 +254,13 @@ export async function markQuoteStatus(
     update.responded_at = new Date().toISOString();
   }
 
+  // Anchor for the quote follow-up nudges (lib/quoteFollowups.ts) --
+  // set once, the first time a quote moves to "sent", same "lazy,
+  // written once" reasoning as visit confirmation tokens.
+  if (nextStatus === "sent") {
+    update.sent_at = new Date().toISOString();
+  }
+
   const { error } = await supabaseServer
     .from("quotes")
     .update(update)

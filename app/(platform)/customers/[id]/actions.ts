@@ -18,6 +18,7 @@ import {
   deleteContact,
   updateContact,
 } from "@/lib/customerContacts";
+import { resendInvoice, type ResendInvoiceResult } from "../../invoices/actions";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
@@ -496,4 +497,23 @@ export async function removeImportedJobNotePhoto(
   revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
 
   return { error: null };
+}
+
+// Thin wrapper around invoices/actions.ts's resendInvoice -- Ryan's
+// request to be able to resend a native invoice right from the
+// customer's own page, rather than only from /invoices. Re-sending
+// itself lives in that file since it needs the same PDF/email/SMS
+// machinery createNativeInvoiceForVisit already has; this just adds the
+// customer-page revalidation so the "Resent" state shows up immediately.
+export async function resendCustomerInvoice(
+  jobberClientId: string,
+  invoiceId: string
+): Promise<ResendInvoiceResult> {
+  const result = await resendInvoice(invoiceId);
+
+  if (!result.error) {
+    revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+  }
+
+  return result;
 }

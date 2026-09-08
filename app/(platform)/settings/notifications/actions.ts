@@ -68,6 +68,83 @@ export async function updateReminderRule(
   revalidatePath("/settings/notifications");
 }
 
+// Shared by the two new rule tables below (invoice_reminder_rules,
+// quote_followup_rules) -- both are the exact same shape as
+// visit_reminder_rules (a days_after integer + enabled boolean), just
+// anchored on a different event, so one generic updater covers both
+// instead of copy-pasting updateReminderRule twice more.
+async function updateDaysAfterRule(
+  table: "invoice_reminder_rules" | "quote_followup_rules",
+  entityType: string,
+  ruleId: string,
+  formData: FormData
+): Promise<void> {
+  const actor = await requireAdmin();
+
+  const daysAfterRaw = formData.get("days_after");
+  const daysAfter = typeof daysAfterRaw === "string" ? Number(daysAfterRaw) : NaN;
+  const enabled = formData.get("enabled") === "on";
+
+  if (!Number.isFinite(daysAfter) || daysAfter < 1) {
+    throw new Error("Days must be a positive number.");
+  }
+
+  const { data: before } = await supabaseServer
+    .from(table)
+    .select("days_after, enabled")
+    .eq("id", ruleId)
+    .maybeSingle();
+
+  const { error } = await supabaseServer
+    .from(table)
+    .update({
+      days_after: daysAfter,
+      enabled,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", ruleId);
+
+  if (error) {
+    throw new Error(`Failed to update rule: ${error.message}`);
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType,
+    entityId: ruleId,
+    entityLabel: `${daysAfter}-day rule`,
+    before,
+    after: { days_after: daysAfter, enabled },
+  });
+
+  revalidatePath("/settings/notifications");
+}
+
+export async function updateInvoiceReminderRule(
+  ruleId: string,
+  formData: FormData
+): Promise<void> {
+  return updateDaysAfterRule(
+    "invoice_reminder_rules",
+    "invoice_reminder_rule",
+    ruleId,
+    formData
+  );
+}
+
+export async function updateQuoteFollowupRule(
+  ruleId: string,
+  formData: FormData
+): Promise<void> {
+  return updateDaysAfterRule(
+    "quote_followup_rules",
+    "quote_followup_rule",
+    ruleId,
+    formData
+  );
+}
+
 export async function updateReviewRequestSettings(formData: FormData): Promise<void> {
   const actor = await requireAdmin();
 

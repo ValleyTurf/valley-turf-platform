@@ -22,7 +22,11 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
 import { createJobberInvoice } from "@/lib/jobberInvoice";
-import { createInvoice as createNativeInvoice } from "@/lib/invoices";
+import {
+  createInvoice as createNativeInvoice,
+  getInvoiceById,
+  getInvoiceLineItems,
+} from "@/lib/invoices";
 import { mirrorNativeInvoiceInJobberTables } from "@/lib/payments";
 import { pushInvoiceToQuickbooks } from "@/lib/quickbooks";
 import { generateInvoicePdf } from "@/lib/invoicePdf";
@@ -586,4 +590,150 @@ export async function createInvoice(
     invoiceNumber: result.value.invoiceNumber,
     jobberWebUri: result.value.jobberWebUri,
   };
+}
+
+export type ResendInvoiceResult = {
+  error: string | null;
+  delivered?: boolean;
+};
+
+// Re-sends an already-created NATIVE invoice's email/text -- Ryan's
+// request, surfaced as a "Resend" button on the Customer page (see
+// customers/[id]/actions.ts's resendCustomerInvoice wrapper). Native
+// only: a real Jobber invoice is sent through Jobber's own system, which
+// already has its own resend built in from within Jobber itself, so
+// there's nothing for this app to re-trigger there.
+//
+// Deliberately does NOT touch status/sent_at or attempt another autopay
+// charge -- this is "send the same invoice again," not "process it
+// again." A paid or voided invoice has nothing left to resend.
+export async function resendInvoice(invoiceId: string): Promise<ResendInvoiceResult> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    return { error: "You must be signed in." };
+  }
+
+  const invoice = await getInvoiceById(invoiceId);
+
+  if (!invoice) {
+    return { error: "Invoice not found." };
+  }
+
+  if (invoice.status === "paid") {
+    return { error: "This invoice has already been paid -- nothing to resend." };
+  }
+
+  if (invoice.status === "void") {
+    return { error: "This invoice has been voided -- nothing to resend." };
+  }
+
+  if (!invoice.jobberClientId) {
+    return { error: "This invoice has no linked customer to resend to." };
+  }
+
+  if (!invoice.publicToken) {
+    return { error: "This invoice has no payment link to send." };
+  }
+
+  const lineItems = await getInvoiceLineItems(invoiceId);
+
+  if (lineItems.length === 0) {
+    return { error: "Couldn't load this invoice's line items." };
+  }
+
+  const { data: customerRow, error: customerError } = await supabaseServer
+    .from("customers")
+    .select("email, phone")
+    .eq("jobber_client_id", invoice.jobberClientId)
+    .maybeSingle();
+
+  if (customerError) {
+    return { error: `Could not look up customer contact info: ${customerError.message}` };
+  }
+
+  const customerEmail = (customerRow?.email as string | null) ?? null;
+  const customerPhone = (customerRow?.phone as string | null) ?? null;
+
+  const recipients = await getNotificationRecipients(
+    invoice.jobberClientId,
+    customerEmail,
+    customerPhone
+  );
+
+  if (recipients.emails.length === 0 && recipients.phones.length === 0) {
+    return {
+      error:
+        "This customer has no email or phone on file. Add contact info on their Customer page first.",
+    };
+  }
+
+  const baseUrl = await getBaseUrl();
+  const payUrl = `${baseUrl}/pay/${invoice.publicToken}`;
+  const logoUrl = `${baseUrl}/branding/logo.png`;
+
+  const { data: reviewSettingsRow } = await supabaseServer
+    .from("review_request_settings")
+    .select("google_review_url")
+    .eq("id", 1)
+    .maybeSingle();
+  const reviewUrl = reviewSettingsRow?.google_review_url ?? null;
+
+  let delivered = false;
+
+  try {
+    const pdfBuffer =
+      recipients.emails.length > 0
+        ? await generateInvoicePdf(invoice, lineItems)
+        : null;
+
+    if (pdfBuffer) {
+      for (const toEmail of recipients.emails) {
+        delivered =
+          (await sendInvoiceEmail({
+            toEmail,
+            customerName: invoice.customerName,
+            invoiceNumber: invoice.invoiceNumber,
+            total: invoice.total,
+            payNowUrl: payUrl,
+            pdfBuffer,
+            jobberClientId: invoice.jobberClientId,
+            logoUrl,
+            reviewUrl,
+          })) || delivered;
+      }
+    }
+
+    for (const toPhone of recipients.phones) {
+      delivered =
+        (await sendInvoiceSms(
+          toPhone,
+          invoice.customerName,
+          invoice.invoiceNumber,
+          payUrl,
+          invoice.jobberClientId
+        )) || delivered;
+    }
+  } catch (deliveryError) {
+    console.error(
+      `Resend failed for invoice ${invoice.invoiceNumber}:`,
+      deliveryError
+    );
+    return { error: "Something went wrong generating or sending the invoice." };
+  }
+
+  if (!delivered) {
+    return { error: "Couldn't deliver the invoice on any channel. Check the logs." };
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "invoice",
+    entityId: invoice.id,
+    entityLabel: `${invoice.customerName ?? "Customer"} — Invoice ${invoice.invoiceNumber}`,
+    after: { resent: true },
+  });
+
+  return { error: null, delivered: true };
 }

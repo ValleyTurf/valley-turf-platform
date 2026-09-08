@@ -90,6 +90,10 @@ const CRON_PATHS = [
   // Tier 3 — review request send. Wired but inactive until Ryan enables
   // it from Settings (see lib/reviewRequests.ts's header comment).
   "/api/visits/send-review-requests",
+  // Overdue invoice payment reminders + quote follow-up nudges (Ryan's
+  // request) -- same reasoning as send-reminders above.
+  "/api/invoices/send-overdue-reminders",
+  "/api/quotes/send-followups",
 ];
 
 // The customer portal is a completely separate auth world from the staff

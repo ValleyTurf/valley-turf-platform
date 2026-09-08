@@ -102,6 +102,74 @@ function lineTotal(item: InvoiceLineItemInput): number {
   return Math.round(item.quantity * item.unitPrice * 100) / 100;
 }
 
+const INVOICE_SELECT_COLUMNS =
+  "id, invoice_number, jobber_client_id, customer_name, status, total, issue_date, due_date, message, sent_at, paid_at, stripe_checkout_session_id, public_token, created_at, service_address";
+
+function mapInvoiceRow(row: Record<string, unknown>): Invoice {
+  return {
+    id: row.id as string,
+    invoiceNumber: row.invoice_number as string,
+    jobberClientId: row.jobber_client_id as string | null,
+    customerName: row.customer_name as string | null,
+    status: row.status as InvoiceStatus,
+    total: Number(row.total),
+    issueDate: row.issue_date as string,
+    dueDate: row.due_date as string | null,
+    message: row.message as string | null,
+    sentAt: row.sent_at as string | null,
+    paidAt: row.paid_at as string | null,
+    stripeCheckoutSessionId: row.stripe_checkout_session_id as string | null,
+    publicToken: row.public_token as string | null,
+    createdAt: row.created_at as string,
+    serviceAddress: row.service_address as string | null,
+  };
+}
+
+// Used by the "resend" action (app/(platform)/invoices/actions.ts's
+// resendInvoice, surfaced from the Customer page) -- re-sending needs
+// the exact same Invoice/line-item shapes createInvoice() already
+// produces at creation time, so generateInvoicePdf()/sendInvoiceEmail()
+// can be called again unchanged.
+export async function getInvoiceById(id: string): Promise<Invoice | null> {
+  const { data, error } = await supabaseServer
+    .from("invoices")
+    .select(INVOICE_SELECT_COLUMNS)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error || !data) return null;
+
+  return mapInvoiceRow(data);
+}
+
+export type InvoiceLineItemRow = {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+  details: string | null;
+};
+
+export async function getInvoiceLineItems(
+  invoiceId: string
+): Promise<InvoiceLineItemRow[]> {
+  const { data, error } = await supabaseServer
+    .from("invoice_line_items")
+    .select("description, quantity, unit_price, line_total, details")
+    .eq("invoice_id", invoiceId)
+    .order("created_at", { ascending: true });
+
+  if (error || !data) return [];
+
+  return data.map((row) => ({
+    description: row.description as string,
+    quantity: Number(row.quantity),
+    unitPrice: Number(row.unit_price),
+    lineTotal: Number(row.line_total),
+    details: row.details as string | null,
+  }));
+}
+
 export async function createInvoice(
   params: CreateInvoiceParams
 ): Promise<MutationOutcome<Invoice>> {
