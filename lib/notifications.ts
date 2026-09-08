@@ -126,6 +126,131 @@ async function sendLeadEmailAlert(lead: NewLeadAlert): Promise<void> {
   }
 }
 
+// Ops digest, once a day (lib/dailyDigest.ts) -- an internal alert like
+// sendNewLeadAlerts above, not a customer-facing send, so no
+// logContactHistory call and no reply-routing address. Draft wording
+// pending Ryan's review, same as the other new templates this week.
+export type DailyDigestSection = {
+  count: number;
+  sample: string[];
+};
+
+export type DailyDigestData = {
+  unloggedJobCosts: DailyDigestSection;
+  visitsMissingPhotos: DailyDigestSection;
+  quotesApprovedNotScheduled: DailyDigestSection;
+  openShifts: DailyDigestSection;
+  openTimers: DailyDigestSection;
+};
+
+function digestSectionHtml(title: string, section: DailyDigestSection, emptyLabel: string): string {
+  if (section.count === 0) {
+    return `
+      <div style="margin-bottom: 20px;">
+        <p style="font-size: 15px; font-weight: bold; margin-bottom: 4px;">${escapeHtml(title)}</p>
+        <p style="color: #6b705c; font-size: 13px; margin: 0;">${escapeHtml(emptyLabel)}</p>
+      </div>
+    `;
+  }
+
+  const items = section.sample
+    .map((line) => `<li style="margin-bottom: 2px;">${escapeHtmlText(line)}</li>`)
+    .join("");
+  const overflow = section.count > section.sample.length
+    ? `<li style="color: #6b705c;">+ ${section.count - section.sample.length} more</li>`
+    : "";
+
+  return `
+    <div style="margin-bottom: 20px;">
+      <p style="font-size: 15px; font-weight: bold; margin-bottom: 4px;">${escapeHtml(title)} (${section.count})</p>
+      <ul style="margin: 0; padding-left: 20px; font-size: 13px;">
+        ${items}${overflow}
+      </ul>
+    </div>
+  `;
+}
+
+export async function sendDailyDigestEmail(
+  toEmail: string,
+  data: DailyDigestData
+): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    console.error("Cannot send daily digest email: RESEND_API_KEY is not set.");
+    return false;
+  }
+
+  const dateLabel = new Date().toLocaleDateString("en-US", {
+    timeZone: "America/Phoenix",
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+
+  const html = `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 18px; font-weight: bold;">Daily Ops Digest -- ${escapeHtml(dateLabel)}</p>
+      ${digestSectionHtml(
+        "Unlogged job costs",
+        data.unloggedJobCosts,
+        "Nothing outstanding."
+      )}
+      ${digestSectionHtml(
+        "Visits from yesterday missing photos",
+        data.visitsMissingPhotos,
+        "All good."
+      )}
+      ${digestSectionHtml(
+        "Quotes approved but not yet scheduled",
+        data.quotesApprovedNotScheduled,
+        "None."
+      )}
+      ${digestSectionHtml(
+        "Still clocked in (timeclock)",
+        data.openShifts,
+        "No open shifts."
+      )}
+      ${digestSectionHtml(
+        "Job timers left running",
+        data.openTimers,
+        "No stuck timers."
+      )}
+      <p style="color: #6b705c; font-size: 12px; margin-top: 20px;">This is an automated summary -- no action needed unless something above looks off.</p>
+    </div>
+  `;
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromHeader(),
+        to: toEmail,
+        subject: `Daily Ops Digest -- ${dateLabel}`,
+        html,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(
+        "Daily digest email failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Daily digest email error:", error);
+    return false;
+  }
+}
+
 export type PortalMagicLinkEmail = {
   toEmail: string;
   customerName: string | null;

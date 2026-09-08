@@ -145,6 +145,52 @@ export async function updateQuoteFollowupRule(
   );
 }
 
+export async function updateDailyDigestSettings(formData: FormData): Promise<void> {
+  const actor = await requireAdmin();
+
+  const enabled = formData.get("enabled") === "on";
+  const recipientsRaw = (formData.get("recipient_emails") as string | null) ?? "";
+  const recipientEmails = recipientsRaw
+    .split(/[,\n]/)
+    .map((email) => email.trim())
+    .filter(Boolean);
+
+  if (enabled && recipientEmails.length === 0) {
+    throw new Error("Add at least one recipient email before turning the digest on.");
+  }
+
+  const { data: before } = await supabaseServer
+    .from("daily_digest_settings")
+    .select("enabled, recipient_emails")
+    .eq("id", 1)
+    .maybeSingle();
+
+  const { error } = await supabaseServer
+    .from("daily_digest_settings")
+    .update({
+      enabled,
+      recipient_emails: recipientEmails,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", 1);
+
+  if (error) {
+    throw new Error(`Failed to update daily digest settings: ${error.message}`);
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "daily_digest_settings",
+    entityId: "singleton",
+    entityLabel: "Daily digest settings",
+    before,
+    after: { enabled, recipient_emails: recipientEmails },
+  });
+
+  revalidatePath("/settings/notifications");
+}
+
 export async function updateReviewRequestSettings(formData: FormData): Promise<void> {
   const actor = await requireAdmin();
 

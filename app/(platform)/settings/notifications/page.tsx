@@ -10,6 +10,7 @@ import {
   updateReviewRequestSettings,
   updateInvoiceReminderRule,
   updateQuoteFollowupRule,
+  updateDailyDigestSettings,
 } from "./actions";
 
 type ReminderRule = {
@@ -30,6 +31,11 @@ type ReviewRequestSettings = {
   google_review_url: string | null;
 };
 
+type DailyDigestSettings = {
+  enabled: boolean;
+  recipient_emails: string[] | null;
+};
+
 export default async function NotificationsSettingsPage() {
   const user = await getCurrentUser();
 
@@ -37,8 +43,13 @@ export default async function NotificationsSettingsPage() {
     redirect("/my-day");
   }
 
-  const [rulesResult, reviewSettingsResult, invoiceRulesResult, quoteRulesResult] =
-    await Promise.all([
+  const [
+    rulesResult,
+    reviewSettingsResult,
+    invoiceRulesResult,
+    quoteRulesResult,
+    digestSettingsResult,
+  ] = await Promise.all([
       supabaseServer
         .from("visit_reminder_rules")
         .select("id, days_before, enabled")
@@ -59,12 +70,19 @@ export default async function NotificationsSettingsPage() {
         .from("quote_followup_rules")
         .select("id, days_after, enabled")
         .order("days_after", { ascending: true }),
+
+      supabaseServer
+        .from("daily_digest_settings")
+        .select("enabled, recipient_emails")
+        .eq("id", 1)
+        .maybeSingle(),
     ]);
 
   const rules = (rulesResult.data ?? []) as ReminderRule[];
   const reviewSettings = reviewSettingsResult.data as ReviewRequestSettings | null;
   const invoiceRules = (invoiceRulesResult.data ?? []) as DaysAfterRule[];
   const quoteRules = (quoteRulesResult.data ?? []) as DaysAfterRule[];
+  const digestSettings = digestSettingsResult.data as DailyDigestSettings | null;
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
@@ -255,6 +273,55 @@ export default async function NotificationsSettingsPage() {
               ))
             )}
           </div>
+        </section>
+
+        <section className="mt-6 rounded-2xl bg-white p-5 shadow">
+          <h2 className="text-lg font-bold">Daily Ops Digest</h2>
+          <p className="mt-1 text-sm text-[#6b705c]">
+            One internal email each morning flagging unlogged job costs,
+            visits missing photos, quotes approved but not yet scheduled,
+            and any timeclock/job-timer entries left running. Skipped
+            entirely on days there&apos;s nothing to flag.
+          </p>
+
+          <form
+            action={updateDailyDigestSettings}
+            className="mt-4 space-y-4 rounded-xl border border-[#e7e2d5] p-4"
+          >
+            <label className="flex items-center gap-2 text-sm font-bold">
+              <input
+                type="checkbox"
+                name="enabled"
+                defaultChecked={digestSettings?.enabled ?? false}
+                className="h-4 w-4 rounded border-[#d9d4c6] text-[#174734] focus:ring-[#d4af37]"
+              />
+              On
+            </label>
+
+            <div>
+              <label
+                htmlFor="recipient_emails"
+                className="text-xs font-bold text-[#9c7a20]"
+              >
+                Recipient emails
+              </label>
+              <textarea
+                id="recipient_emails"
+                name="recipient_emails"
+                rows={2}
+                placeholder="one per line, or comma-separated"
+                defaultValue={(digestSettings?.recipient_emails ?? []).join("\n")}
+                className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="rounded-xl bg-[#174734] px-6 py-2.5 text-sm font-bold text-white transition hover:bg-[#226246]"
+            >
+              Save
+            </button>
+          </form>
         </section>
 
         <section className="mt-6 rounded-2xl bg-white p-5 shadow">

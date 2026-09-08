@@ -94,6 +94,10 @@ const CRON_PATHS = [
   // request) -- same reasoning as send-reminders above.
   "/api/invoices/send-overdue-reminders",
   "/api/quotes/send-followups",
+  // Daily ops digest (Ryan's request) -- unlogged job costs, visits
+  // missing photos, quotes approved but not scheduled, stuck
+  // timeclock/job-timer entries.
+  "/api/ops/send-daily-digest",
 ];
 
 // The customer portal is a completely separate auth world from the staff

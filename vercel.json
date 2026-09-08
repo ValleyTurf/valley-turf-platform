@@ -67,6 +67,10 @@
     {
       "path": "/api/quotes/send-followups",
       "schedule": "20 16 * * *"
+    },
+    {
+      "path": "/api/ops/send-daily-digest",
+      "schedule": "10 14 * * *"
     }
   ]
 }
