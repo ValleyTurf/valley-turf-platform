@@ -1117,6 +1117,164 @@ export async function sendAutopayReceiptSms(
   }
 }
 
+// Sent when a customer completes a manual "Pay Now" payment (Stripe
+// Checkout, /pay/[token]) -- the counterpart to sendAutopayReceiptEmail
+// above, which only covers autopay's off-session charge. Fired from
+// lib/stripeWebhookProcessor.ts's payment_intent.succeeded handler
+// (the same event autopay's off-session charge also produces -- that
+// handler checks metadata.source === "autopay" first and skips this
+// send when it's set, since attemptAutopayCharge() already sent the
+// autopay receipt synchronously). Draft wording pending Ryan's review,
+// same as the overdue-invoice/quote-followup templates.
+export type ManualPaymentReceiptEmail = {
+  toEmail: string;
+  customerName: string | null;
+  invoiceNumber: string;
+  total: number;
+  pdfBuffer: Buffer;
+  jobberClientId: string | null;
+};
+
+export async function sendManualPaymentReceiptEmail(
+  request: ManualPaymentReceiptEmail
+): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    console.error("Cannot send manual payment receipt email: RESEND_API_KEY is not set.");
+    return false;
+  }
+
+  const greetingName = firstNameOf(request.customerName);
+
+  const html = `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
+      <p>Thanks -- we've received your payment of <strong>$${request.total.toFixed(
+        2
+      )}</strong> for invoice <strong>${escapeHtml(
+    request.invoiceNumber
+  )}</strong> from Valley Turf Revival.</p>
+      <p>Your receipt is attached.</p>
+      <p style="color: #6b705c; font-size: 12px;">Questions about this payment? Just reply to this email.</p>
+    </div>
+  `;
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromHeader(),
+        to: request.toEmail,
+        reply_to: replyToAddressFor(request.jobberClientId),
+        subject: `Invoice ${request.invoiceNumber} paid -- Valley Turf Revival`,
+        html,
+        attachments: [
+          {
+            filename: `${request.invoiceNumber}.pdf`,
+            content: request.pdfBuffer.toString("base64"),
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(
+        "Manual payment receipt email failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    const data = (await response.json()) as { id?: string };
+
+    await logContactHistory({
+      jobberClientId: request.jobberClientId,
+      channel: "email",
+      subject: `Invoice ${request.invoiceNumber} Payment Receipt`,
+      summary: `Payment received for $${request.total.toFixed(2)}.`,
+      relatedType: "invoice",
+      resendEmailId: data.id ?? null,
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Manual payment receipt email error:", error);
+    return false;
+  }
+}
+
+// Text counterpart to sendManualPaymentReceiptEmail -- same reasoning as
+// sendInvoiceSms alongside sendInvoiceEmail.
+export async function sendManualPaymentReceiptSms(
+  toPhone: string,
+  customerName: string | null,
+  invoiceNumber: string,
+  total: number,
+  jobberClientId: string | null
+): Promise<boolean> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_FROM_NUMBER;
+
+  if (!accountSid || !authToken || !fromNumber) {
+    console.error("Cannot send manual payment receipt text: Twilio env vars are not set.");
+    return false;
+  }
+
+  const greetingName = firstNameOf(customerName);
+  const body = `Hi ${greetingName}, this is Valley Turf Revival. We've received your payment of $${total.toFixed(
+    2
+  )} for invoice ${invoiceNumber}. Thank you!`;
+
+  try {
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${accountSid}:${authToken}`
+          ).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          To: toPhone,
+          From: fromNumber,
+          Body: body,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      console.error(
+        "Manual payment receipt SMS failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    await logContactHistory({
+      jobberClientId,
+      channel: "sms",
+      subject: `Invoice ${invoiceNumber} Payment Receipt`,
+      summary: body,
+      relatedType: "invoice",
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Manual payment receipt SMS error:", error);
+    return false;
+  }
+}
+
 // Pre-visit reminder text (Tier 3, Jobber Independence Roadmap) --
 // fired by lib/visitReminders.ts's cron-driven send loop at whichever
 // day-offsets are enabled in visit_reminder_rules (Ryan's default: 4

@@ -20,6 +20,13 @@ import {
   findInvoiceIdByPaymentIntentId,
 } from "@/lib/payments";
 import { attachPaymentMethodFromSetupIntent } from "@/lib/autopay";
+import { getInvoiceById, getInvoiceLineItems } from "@/lib/invoices";
+import { generateInvoicePdf } from "@/lib/invoicePdf";
+import { getNotificationRecipients } from "@/lib/customerContacts";
+import {
+  sendManualPaymentReceiptEmail,
+  sendManualPaymentReceiptSms,
+} from "@/lib/notifications";
 
 type StripeWebhookEventRow = {
   id: string;
@@ -125,6 +132,74 @@ async function handleCheckoutSessionCompleted(
   }
 }
 
+// Best-effort: sends the manual-payment receipt (Ryan's request -- there
+// was previously no confirmation at all for a customer paying via the
+// /pay/[token] Pay Now link, only for autopay). Wrapped so a failure here
+// never fails the webhook processing itself -- the payment is already
+// recorded and the invoice already marked paid by the time this runs;
+// losing a receipt send shouldn't put either of those into a retry loop.
+async function sendManualPaymentReceipt(invoiceId: string): Promise<void> {
+  try {
+    const invoice = await getInvoiceById(invoiceId);
+
+    if (!invoice || !invoice.jobberClientId) return;
+
+    const lineItems = await getInvoiceLineItems(invoiceId);
+
+    if (lineItems.length === 0) return;
+
+    const { data: customerRow } = await supabaseServer
+      .from("customers")
+      .select("email, phone")
+      .eq("jobber_client_id", invoice.jobberClientId)
+      .maybeSingle();
+
+    const customerEmail = (customerRow?.email as string | null) ?? null;
+    const customerPhone = (customerRow?.phone as string | null) ?? null;
+
+    const recipients = await getNotificationRecipients(
+      invoice.jobberClientId,
+      customerEmail,
+      customerPhone
+    );
+
+    if (recipients.emails.length === 0 && recipients.phones.length === 0) return;
+
+    const pdfBuffer =
+      recipients.emails.length > 0
+        ? await generateInvoicePdf(invoice, lineItems)
+        : null;
+
+    if (pdfBuffer) {
+      for (const toEmail of recipients.emails) {
+        await sendManualPaymentReceiptEmail({
+          toEmail,
+          customerName: invoice.customerName,
+          invoiceNumber: invoice.invoiceNumber,
+          total: invoice.total,
+          pdfBuffer,
+          jobberClientId: invoice.jobberClientId,
+        });
+      }
+    }
+
+    for (const toPhone of recipients.phones) {
+      await sendManualPaymentReceiptSms(
+        toPhone,
+        invoice.customerName,
+        invoice.invoiceNumber,
+        invoice.total,
+        invoice.jobberClientId
+      );
+    }
+  } catch (error) {
+    console.error(
+      `Failed to send manual payment receipt for invoice ${invoiceId}:`,
+      error
+    );
+  }
+}
+
 // The authoritative "money actually captured" event -- fires for card
 // immediately and for ACH once the debit clears (days later). This is
 // what actually flips an invoice to paid; checkout.session.completed
@@ -200,6 +275,15 @@ async function handlePaymentIntentSucceeded(
       amount,
       stripePaymentIntentId: paymentIntent.id,
     });
+
+    // Autopay's off-session charge (lib/autopay.ts's attemptAutopayCharge)
+    // tags its PaymentIntent with source=autopay and already sent its own
+    // receipt synchronously the moment the charge succeeded -- this is
+    // only for a manual Pay Now checkout, which has no other confirmation
+    // step.
+    if (paymentIntent.metadata?.source !== "autopay") {
+      await sendManualPaymentReceipt(invoiceId);
+    }
   } else {
     console.error(
       `payment_intent.succeeded ${paymentIntent.id} has no resolvable invoice -- payment recorded but no invoice was marked paid.`

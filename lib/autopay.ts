@@ -352,7 +352,13 @@ export async function attemptAutopayCharge(
       off_session: true,
       confirm: true,
       description: `Invoice ${invoice.invoiceNumber}`,
-      metadata: { invoice_id: invoice.id },
+      // "source: autopay" lets the payment_intent.succeeded webhook
+      // handler (lib/stripeWebhookProcessor.ts) tell this charge apart
+      // from a manual Pay Now checkout -- it uses that to skip sending
+      // the manual-payment receipt, since this flow's caller
+      // (app/(platform)/invoices/actions.ts) already sends the autopay
+      // receipt synchronously as soon as this charge succeeds.
+      metadata: { invoice_id: invoice.id, source: "autopay" },
     });
 
     return { charged: true };
