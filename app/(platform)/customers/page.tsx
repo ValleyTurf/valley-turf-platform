@@ -383,10 +383,16 @@ export default async function CustomersPage({
 
           <div className="flex flex-col items-end gap-2">
             <div className="flex flex-wrap gap-3">
+              <Link
+                href="/customers/new"
+                className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
+              >
+                + Add Customer
+              </Link>
 
               <Link
                 href="/"
-                className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
+                className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold transition hover:bg-white"
               >
                 Home
               </Link>
