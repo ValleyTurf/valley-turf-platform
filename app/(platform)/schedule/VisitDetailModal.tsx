@@ -122,6 +122,12 @@ export default function VisitDetailModal({
             >
               {visit.statusLabel}
             </span>
+
+            {visit.confirmed && (
+              <span className="ml-2 mt-2 inline-block rounded-full bg-green-100 px-3 py-1 text-xs font-bold text-green-800">
+                ✓ Confirmed
+              </span>
+            )}
           </div>
 
           <button

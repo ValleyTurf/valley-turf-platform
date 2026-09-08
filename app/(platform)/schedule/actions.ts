@@ -71,7 +71,15 @@ export async function rescheduleVisit(
 
   if (startTime) {
     const iso = toUtcIso(date, startTime);
-    if (iso) updates.start_at = iso;
+    if (iso) {
+      updates.start_at = iso;
+      // A confirmation (migration 061) was for the OLD date/time -- clear
+      // it so a moved visit doesn't keep showing the checkmark on
+      // Schedule/My Day for a slot the customer never actually confirmed.
+      // The token itself stays put; the same confirm link keeps working,
+      // it just needs clicking again.
+      updates.confirmed_at = null;
+    }
   }
 
   if (endTime) {

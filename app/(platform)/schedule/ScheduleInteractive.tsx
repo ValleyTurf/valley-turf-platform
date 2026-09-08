@@ -208,6 +208,12 @@ export default function ScheduleInteractive({
                         {visit.statusLabel}
                       </span>
 
+                      {visit.confirmed && (
+                        <span className="rounded-full bg-green-100 px-3 py-1 text-sm font-bold text-green-800">
+                          ✓ Confirmed
+                        </span>
+                      )}
+
                       {visit.clientId && (
                         <Link
                           href={`/customers/${encodeURIComponent(visit.clientId)}`}

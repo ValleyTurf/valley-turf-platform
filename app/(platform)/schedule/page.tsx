@@ -30,6 +30,7 @@ type VisitRow = {
   start_at: string | null;
   end_at: string | null;
   duration_minutes: number | string | null;
+  confirmed_at: string | null;
 };
 
 type JobRow = {
@@ -428,6 +429,7 @@ function buildScheduleVisit(
     statusLabel: meta.label,
     statusClasses: meta.classes,
     statusDotClass: meta.dot,
+    confirmed: Boolean(visit.confirmed_at),
     gateCode: contact?.gate_code ?? null,
     specialInstructions: contact?.service_instructions ?? null,
     latitude: Number.isFinite(latitude) ? latitude : null,
@@ -541,7 +543,7 @@ export default async function SchedulePage({
     supabaseServer
       .from("jobber_visits")
       .select(
-        "jobber_visit_id, jobber_job_id, jobber_client_id, jobber_invoice_id, customer_name, job_number, job_status, title, visit_status, start_at, end_at, duration_minutes"
+        "jobber_visit_id, jobber_job_id, jobber_client_id, jobber_invoice_id, customer_name, job_number, job_status, title, visit_status, start_at, end_at, duration_minutes, confirmed_at"
       )
       // Job canceled directly in Jobber's own UI (not through this app)
       // only fires a job-level webhook — it never touches the visit rows

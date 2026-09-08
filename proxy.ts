@@ -167,6 +167,11 @@ export async function proxy(request: NextRequest) {
   // model as /pay/ and /q/ above (customer_payment_methods.enrollment_token,
   // migration 047). Covers both the page and its Server Action.
   const isPublicAutopay = pathname.startsWith("/autopay/");
+  // Public visit-confirmation link sent in the 4-day/2-day reminder
+  // text/email -- same unguessable-token trust model as /pay/ and /q/
+  // above (jobber_visits.confirmation_token, migration 061). Covers both
+  // the page and its Server Action.
+  const isPublicConfirm = pathname.startsWith("/confirm/");
   // Public quote-request intake form (app/request-quote) — no token at
   // all, since this is where NEW leads originate rather than looking up
   // an existing record. Replaces the Jobber-embedded quote form as the
@@ -179,7 +184,8 @@ export async function proxy(request: NextRequest) {
     isPublicQuote ||
     isPublicInvoicePay ||
     isPublicAutopay ||
-    isPublicRequestQuote
+    isPublicRequestQuote ||
+    isPublicConfirm
   ) {
     return NextResponse.next();
   }

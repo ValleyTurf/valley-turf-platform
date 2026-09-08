@@ -23,6 +23,10 @@ export type ScheduleVisit = {
   statusLabel: string;
   statusClasses: string;
   statusDotClass: string;
+  // Customer clicked the confirm link in their 4-day/2-day reminder
+  // (migration 061) -- shown as a small checkmark on the schedule and
+  // My Day. Cleared automatically if the visit gets rescheduled.
+  confirmed: boolean;
   gateCode: string | null;
   specialInstructions: string | null;
   latitude: number | null;

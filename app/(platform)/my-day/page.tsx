@@ -45,6 +45,7 @@ type VisitRow = {
   start_at: string | null;
   end_at: string | null;
   on_way_sent_at: string | null;
+  confirmed_at: string | null;
 };
 
 type CustomerContact = {
@@ -254,7 +255,7 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
     supabaseServer
       .from("jobber_visits")
       .select(
-        "jobber_visit_id, jobber_client_id, customer_name, title, visit_status, start_at, end_at, on_way_sent_at"
+        "jobber_visit_id, jobber_client_id, customer_name, title, visit_status, start_at, end_at, on_way_sent_at, confirmed_at"
       )
       // Exclude visits whose job was canceled/archived directly in
       // Jobber's own UI — see 051_add_job_status_to_visits.sql for why
@@ -786,6 +787,11 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                       >
                         {badge.label}
                       </span>
+                      {visit.confirmed_at && (
+                        <span className="rounded-full bg-green-100 px-2 py-1 text-[10px] font-bold text-green-800">
+                          ✓ Confirmed
+                        </span>
+                      )}
                       <span
                         aria-hidden="true"
                         className="text-[#9c7a20] transition-transform duration-200 group-open:rotate-180"

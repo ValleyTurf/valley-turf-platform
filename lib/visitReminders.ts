@@ -12,6 +12,8 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
 import { sendVisitReminderSms, sendVisitReminderEmail } from "@/lib/notifications";
 import { getNotificationRecipients } from "@/lib/customerContacts";
+import { getOrCreateConfirmationToken } from "@/lib/visitConfirmation";
+import { getBaseUrl } from "@/lib/baseUrl";
 
 // Same fixed-offset assumption made throughout this app (lib/nativeJobs.ts's
 // BUSINESS_UTC_OFFSET, lib/payPeriods.ts) -- Phoenix doesn't observe DST,
@@ -65,24 +67,6 @@ function formatVisitDateLabel(startAt: string | null): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
-}
-
-// Every visit's title already follows the "{Customer} - {Service}"
-// convention (see lib/nativeJobs.ts, lib/quoteJobConversion.ts) -- strip
-// the customer name back off so the reminder reads naturally ("your Turf
-// Cleaning visit"), falling back to the raw title or a generic label if
-// it doesn't match that shape.
-function visitLabel(title: string | null, customerName: string | null): string {
-  if (!title) return "upcoming";
-
-  if (customerName) {
-    const prefix = `${customerName} - `;
-    if (title.startsWith(prefix)) {
-      return title.slice(prefix.length);
-    }
-  }
-
-  return title;
 }
 
 export async function sendDueVisitReminders(): Promise<SendRemindersResult> {
@@ -212,8 +196,15 @@ export async function sendDueVisitReminders(): Promise<SendRemindersResult> {
         ? await getNotificationRecipients(visit.jobber_client_id, email, phone)
         : { emails: email ? [email] : [], phones: phone ? [phone] : [] };
 
-      const label = visitLabel(visit.title, visit.customer_name);
       const dateLabel = formatVisitDateLabel(visit.start_at);
+
+      // Reused across both the 4-day and 2-day reminder for this same
+      // visit (migration 061) -- generated once, on whichever fires
+      // first. null just means the confirm link is skipped; the rest of
+      // the reminder still goes out rather than failing entirely.
+      const confirmToken = await getOrCreateConfirmationToken(visit.jobber_visit_id);
+      const baseUrl = await getBaseUrl();
+      const confirmUrl = confirmToken ? `${baseUrl}/confirm/${confirmToken}` : `${baseUrl}/confirm`;
 
       let delivered = false;
 
@@ -221,8 +212,8 @@ export async function sendDueVisitReminders(): Promise<SendRemindersResult> {
         const sent = await sendVisitReminderSms(
           toPhone,
           visit.customer_name,
-          label,
           dateLabel,
+          confirmUrl,
           visit.jobber_client_id
         );
         delivered = delivered || sent;
@@ -232,8 +223,8 @@ export async function sendDueVisitReminders(): Promise<SendRemindersResult> {
         const sent = await sendVisitReminderEmail(
           toEmail,
           visit.customer_name,
-          label,
           dateLabel,
+          confirmUrl,
           visit.jobber_client_id
         );
         delivered = delivered || sent;

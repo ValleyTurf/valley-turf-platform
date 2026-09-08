@@ -749,14 +749,16 @@ export async function sendAutopayReceiptSms(
 // Pre-visit reminder text (Tier 3, Jobber Independence Roadmap) --
 // fired by lib/visitReminders.ts's cron-driven send loop at whichever
 // day-offsets are enabled in visit_reminder_rules (Ryan's default: 4
-// days and 2 days before the visit). Same boolean-return pattern as
-// sendOnMyWaySms -- the cron route logs failures per-visit rather than
-// silently losing track of who didn't get reminded.
+// days and 2 days before the visit). Same wording both times -- Ryan's
+// explicit call, rather than the 4-day and 2-day rules reading
+// differently. Same boolean-return pattern as sendOnMyWaySms -- the cron
+// route logs failures per-visit rather than silently losing track of who
+// didn't get reminded.
 export async function sendVisitReminderSms(
   toPhone: string,
   customerName: string | null,
-  visitLabel: string,
   visitDateLabel: string,
+  confirmUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -768,8 +770,8 @@ export async function sendVisitReminderSms(
     return false;
   }
 
-  const greetingName = customerName?.trim() || "there";
-  const body = `Hi ${greetingName}, this is Valley Turf Revival. Reminder: your ${visitLabel} visit is scheduled for ${visitDateLabel}. Reply to this number if you need to reschedule.`;
+  const greetingName = firstNameOf(customerName);
+  const body = `Hi ${greetingName}, we have your next turf cleaning with Valley Turf Revival scheduled for ${visitDateLabel}. Please confirm here: ${confirmUrl} — or reply to this message if you need to reschedule. Before we arrive, please try to pick up any easily removable dog waste. Thank you!`;
 
   try {
     const response = await fetch(
@@ -813,14 +815,14 @@ export async function sendVisitReminderSms(
   }
 }
 
-// Email counterpart to sendVisitReminderSms -- same reasoning as
-// sendInvoiceEmail existing alongside sendInvoiceSms, sent independently
-// (not either/or) so a customer with both on file gets both.
+// Email counterpart to sendVisitReminderSms -- same wording (Ryan wants
+// text and email to match), sent independently (not either/or) so a
+// customer with both on file gets both.
 export async function sendVisitReminderEmail(
   toEmail: string,
   customerName: string | null,
-  visitLabel: string,
   visitDateLabel: string,
+  confirmUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
@@ -830,17 +832,25 @@ export async function sendVisitReminderEmail(
     return false;
   }
 
-  const greetingName = customerName || "there";
+  const greetingName = firstNameOf(customerName);
 
   const html = `
     <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
       <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
-      <p>This is a reminder that your <strong>${escapeHtml(
-        visitLabel
-      )}</strong> visit with Valley Turf Revival is scheduled for <strong>${escapeHtml(
-    visitDateLabel
-  )}</strong>.</p>
-      <p style="color: #6b705c; font-size: 12px;">Need to reschedule? Just reply to this email or give us a call.</p>
+      <p>We have your next turf cleaning with Valley Turf Revival scheduled for <strong>${escapeHtml(
+        visitDateLabel
+      )}</strong>.</p>
+      <p style="margin: 24px 0;">
+        <a
+          href="${confirmUrl}"
+          style="background-color: #174734; color: #ffffff; padding: 12px 24px; border-radius: 10px; text-decoration: none; font-weight: bold; display: inline-block;"
+        >
+          Confirm My Visit
+        </a>
+      </p>
+      <p>Need to reschedule? Just reply to this email or give us a call.</p>
+      <p>Before we arrive, please try to pick up any easily removable dog waste. Thank you!</p>
+      <p style="margin-top: 20px;">Valley Turf Revival</p>
     </div>
   `;
 
@@ -855,7 +865,7 @@ export async function sendVisitReminderEmail(
         from: fromHeader(),
         to: toEmail,
         reply_to: replyToAddressFor(jobberClientId),
-        subject: `Reminder: your ${visitLabel} visit is coming up`,
+        subject: "Please confirm your upcoming turf cleaning",
         html,
       }),
     });
@@ -875,7 +885,7 @@ export async function sendVisitReminderEmail(
       jobberClientId,
       channel: "email",
       subject: "Visit Reminder",
-      summary: `Reminder for ${visitLabel} visit on ${visitDateLabel}.`,
+      summary: `Reminder + confirm link for visit on ${visitDateLabel}.`,
       resendEmailId: data.id ?? null,
     });
 
