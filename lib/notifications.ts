@@ -211,6 +211,72 @@ export async function sendPortalMagicLinkEmail(
   }
 }
 
+// Text counterpart to sendPortalMagicLinkEmail -- for the phone-based
+// portal sign-in option (a customer might not have an email on file, or
+// just prefers a text). Same single-use/15-minute link, just delivered
+// over SMS instead. Returns a boolean for the same reason the email
+// version does -- app/portal/login/actions.ts needs to know whether the
+// text actually went out.
+export async function sendPortalMagicLinkSms(
+  toPhone: string,
+  customerName: string | null,
+  loginUrl: string,
+  jobberClientId: string | null
+): Promise<boolean> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_FROM_NUMBER;
+
+  if (!accountSid || !authToken || !fromNumber) {
+    console.error("Cannot send portal magic link text: Twilio env vars are not set.");
+    return false;
+  }
+
+  const greetingName = firstNameOf(customerName);
+  const body = `Hi ${greetingName}, this is Valley Turf Revival. Use this link to sign in to your customer portal (valid 15 min, one-time use): ${loginUrl}`;
+
+  try {
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${accountSid}:${authToken}`
+          ).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          To: toPhone,
+          From: fromNumber,
+          Body: body,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      console.error(
+        "Portal magic link SMS failed:",
+        response.status,
+        await response.text()
+      );
+      return false;
+    }
+
+    await logContactHistory({
+      jobberClientId,
+      channel: "sms",
+      subject: "Portal Sign-In Link",
+      summary: "Sent a magic sign-in link for the customer portal.",
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Portal magic link SMS error:", error);
+    return false;
+  }
+}
+
 export type ManualEmail = {
   toEmail: string;
   customerName: string | null;
@@ -610,7 +676,7 @@ export async function sendAutopayReceiptEmail(
     return false;
   }
 
-  const greetingName = request.customerName || "there";
+  const greetingName = firstNameOf(request.customerName);
   const cardSuffix = request.cardLast4 ? ` (card ending in ${request.cardLast4})` : "";
 
   const html = `
@@ -620,7 +686,9 @@ export async function sendAutopayReceiptEmail(
         request.invoiceNumber
       )}</strong> from Valley Turf Revival has been paid automatically${escapeHtml(
     cardSuffix
-  )} for <strong>$${request.total.toFixed(2)}</strong>, as part of your autopay enrollment.</p>
+  )} for <strong>$${request.total.toFixed(
+    2
+  )}</strong>, for your recent turf cleaning service.</p>
       <p>Your receipt is attached. No action is needed.</p>
       <p style="color: #6b705c; font-size: 12px;">Questions about this charge? Just reply to this email.</p>
     </div>
@@ -697,11 +765,13 @@ export async function sendAutopayReceiptSms(
     return false;
   }
 
-  const greetingName = customerName?.trim() || "there";
+  const greetingName = firstNameOf(customerName);
   const cardSuffix = cardLast4 ? ` (card ending in ${cardLast4})` : "";
-  const body = `Hi ${greetingName}, this is Valley Turf Revival. Invoice ${invoiceNumber} ($${total.toFixed(
+  // Same wording as the email receipt, minus "Your receipt is attached" --
+  // Twilio SMS can't carry a PDF, so that line would be false here.
+  const body = `Hi ${greetingName}, Your invoice ${invoiceNumber} from Valley Turf Revival has been paid automatically${cardSuffix} for $${total.toFixed(
     2
-  )}) was paid automatically${cardSuffix} via autopay. No action needed.`;
+  )}, for your recent turf cleaning service. No action is needed.`;
 
   try {
     const response = await fetch(

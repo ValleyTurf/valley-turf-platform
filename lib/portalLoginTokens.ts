@@ -5,12 +5,16 @@
 // same split app/api/login/route.ts already has with lib/auth.ts.
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
+import { normalizePhone } from "@/lib/matching";
 
 const TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 export type PortalLoginCustomer = {
   jobberClientId: string;
-  email: string;
+  // Nullable now that a customer can also sign in by phone (see
+  // findPortalCustomerByPhone below) -- not every customer on file has
+  // an email, and requiring one here would have blocked that path.
+  email: string | null;
   name: string;
 };
 
@@ -67,9 +71,43 @@ export async function createPortalLoginToken(
   return token;
 }
 
+// Phone counterpart to findPortalCustomerByEmail, for the text-based
+// sign-in option. `customers.phone` isn't stored in one consistent
+// format (formatted vs. digits-only depends on how Jobber synced it),
+// so an exact/ilike column match can't be trusted -- instead this pulls
+// the (small, single-business) set of phone-having customers and
+// compares digits-only via the same normalizePhone() lib/campaignRoi.ts
+// already relies on for cross-source phone matching.
+export async function findPortalCustomerByPhone(
+  phone: string
+): Promise<PortalLoginCustomer | null> {
+  const target = normalizePhone(phone);
+  if (!target) return null;
+
+  const { data, error } = await supabaseServer
+    .from("customers")
+    .select("jobber_client_id, email, phone, full_name")
+    .not("jobber_client_id", "is", null)
+    .not("phone", "is", null);
+
+  if (error || !data) return null;
+
+  const match = data.find(
+    (row) => normalizePhone(row.phone as string | null) === target
+  );
+
+  if (!match || !match.jobber_client_id) return null;
+
+  return {
+    jobberClientId: match.jobber_client_id as string,
+    email: (match.email as string | null) || null,
+    name: (match.full_name as string | null) || "there",
+  };
+}
+
 export type ConsumedPortalToken = {
   jobberClientId: string;
-  email: string;
+  email: string | null;
   name: string;
 };
 
@@ -113,7 +151,7 @@ export async function consumePortalLoginToken(
 
   return {
     jobberClientId,
-    email: data.email as string,
+    email: data.email as string | null,
     name: (customer?.full_name as string | null) || "there",
   };
 }

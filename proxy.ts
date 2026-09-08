@@ -146,7 +146,11 @@ export async function proxy(request: NextRequest) {
 
     const headers = new Headers(request.headers);
     headers.set("x-portal-client-id", portalUser.jobberClientId);
-    headers.set("x-portal-email", portalUser.email);
+    // "" (not omitted) when the customer signed in by text and has no
+    // email on file -- lib/currentPortalUser.ts treats that as valid and
+    // maps it back to null, rather than treating a missing header as
+    // "not signed in" the way it does for jobberClientId/name.
+    headers.set("x-portal-email", portalUser.email ?? "");
     headers.set("x-portal-name", portalUser.name);
 
     return NextResponse.next({ request: { headers } });

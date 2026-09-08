@@ -17,7 +17,9 @@
 
 export type PortalSessionUser = {
   jobberClientId: string;
-  email: string;
+  // Nullable -- a customer who signs in by text (app/portal/login's phone
+  // option) may not have an email on file at all.
+  email: string | null;
   name: string;
 };
 
@@ -79,7 +81,7 @@ function decodePayload(encoded: string): PortalSessionPayload | null {
       typeof parsed !== "object" ||
       parsed === null ||
       typeof parsed.jobberClientId !== "string" ||
-      typeof parsed.email !== "string" ||
+      (typeof parsed.email !== "string" && parsed.email !== null) ||
       typeof parsed.name !== "string" ||
       typeof parsed.exp !== "number"
     ) {
