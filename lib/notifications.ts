@@ -544,7 +544,7 @@ export async function sendOverdueInvoiceEmail(
         request.invoiceNumber
       )}</strong> from Valley Turf Revival, for <strong>$${request.total.toFixed(
     2
-  )}</strong>, was due on ${escapeHtml(request.dueDateLabel)} and hasn't been paid yet.</p>
+  )}</strong>, is past due and still awaiting payment.</p>
       <p style="margin: 20px 0;">
         <a
           href="${request.payUrl}"
@@ -623,7 +623,7 @@ export async function sendOverdueInvoiceSms(
   const greetingName = firstNameOf(customerName);
   const body = `Hi ${greetingName}, this is Valley Turf Revival. Invoice ${invoiceNumber} ($${total.toFixed(
     2
-  )}) was due ${dueDateLabel} and is still unpaid. Pay here: ${payUrl}`;
+  )}) is past due and still awaiting payment. Pay here: ${payUrl}`;
 
   try {
     const response = await fetch(
@@ -657,7 +657,7 @@ export async function sendOverdueInvoiceSms(
       jobberClientId,
       channel: "sms",
       subject: `Invoice ${invoiceNumber} Overdue Reminder`,
-      summary: body,
+      summary: `Past-due reminder for $${total.toFixed(2)}, due ${dueDateLabel}.`,
       relatedType: "invoice",
     });
 
