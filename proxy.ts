@@ -43,6 +43,13 @@ const PUBLIC_PATHS = [
   "/icons",
   "/sw.js",
   "/offline.html",
+  // Logo/wordmark assets referenced as plain <img> tags on public pages
+  // (app/request-quote/page.tsx, and now the app/site marketing tree) --
+  // without this, an anonymous visitor's browser request for the image
+  // itself (a separate GET from the page it's embedded in) hit this same
+  // auth check and got 302'd to /login, so the logo silently rendered as
+  // a broken image for every signed-out visitor.
+  "/branding",
   // Same reasoning as the PWA assets above — a crawler requesting this
   // with no session cookie was getting redirected to /login (HTML)
   // instead of the actual disallow rules, so Googlebot had no way to
@@ -110,6 +117,36 @@ const CRON_PATHS = [
 // expired/invalid cookie never itself gets redirect-looped.
 const PORTAL_PUBLIC_PATHS = ["/portal/login", "/portal/verify", "/portal/logout"];
 
+// Jobber Independence Roadmap, marketing-site build: the public
+// valleyturfrevival.com domain and the CRM's go.valleyturfrevival.com
+// subdomain are two Host headers pointed at this same Vercel deployment.
+// Rather than build a second Next.js project, marketing pages live under
+// app/site/ and only get served when the Host is one of these -- every
+// other host (go.valleyturfrevival.com, Vercel preview URLs, localhost)
+// falls straight through to the normal CRM routing below, completely
+// unaffected.
+const MARKETING_HOSTS = ["valleyturfrevival.com", "www.valleyturfrevival.com"];
+
+// Only these paths get rewritten into app/site/* -- deliberately an
+// allowlist rather than "rewrite everything on this host," so that
+// /request-quote, /privacy-policy, /terms-and-conditions, /login, /api/*,
+// PWA assets, etc. keep resolving to their existing pages unchanged
+// regardless of which domain they're hit from (they already work fine on
+// both, and are already public/shared).
+const MARKETING_PATH_PREFIXES = ["/services", "/about", "/reviews", "/service-areas"];
+
+// "/" is special-cased separately below since app/page.tsx (the CRM's
+// own root) unconditionally redirects to /my-day -- a marketing-domain
+// visitor hitting "/" must never reach that, it needs the actual
+// homepage at app/site/page.tsx instead.
+function marketingRewritePath(pathname: string): string | null {
+  if (pathname === "/") return "/site";
+  if (pathname === "/robots.txt") return "/site/robots.txt";
+  if (pathname === "/sitemap.xml") return "/site/sitemap.xml";
+  if (matchesPrefix(pathname, MARKETING_PATH_PREFIXES)) return `/site${pathname}`;
+  return null;
+}
+
 function matchesPrefix(pathname: string, prefixes: string[]): boolean {
   return prefixes.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
@@ -135,6 +172,21 @@ function isAuthorizedCronRequest(
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // Marketing domain routing -- checked first and returns immediately,
+  // ahead of every other branch below (portal, cron, staff session).
+  // These are public-by-definition pages that need no auth of any kind,
+  // same reasoning as the token-based public paths further down.
+  const hostname = (request.headers.get("host") || "").split(":")[0].toLowerCase();
+  if (MARKETING_HOSTS.includes(hostname)) {
+    const rewritePath = marketingRewritePath(pathname);
+    if (rewritePath) {
+      return NextResponse.rewrite(new URL(rewritePath, request.url));
+    }
+    // Any other path on the marketing domain (e.g. /request-quote,
+    // /privacy-policy, /login) falls through unchanged into the normal
+    // logic below -- those already work identically on both domains.
+  }
 
   // Handled entirely separately from the staff session logic below —
   // a customer hitting /portal/* should never be redirected to the
