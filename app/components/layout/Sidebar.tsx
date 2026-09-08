@@ -71,6 +71,7 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
       { name: "Reactivation", href: "/reactivation", icon: "📞" },
       { name: "Customer Map", href: "/map", icon: "🗺️" },
       { name: "Recurring Services", href: "/recurring-services", icon: "🔁" },
+      { name: "Jobs", href: "/jobs", icon: "🧰" },
       { name: "Create Job", href: "/jobs/new", icon: "🆕" },
       { name: "Quotes", href: "/quotes", icon: "📝" },
     ],
