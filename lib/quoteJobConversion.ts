@@ -14,23 +14,23 @@
 // As of Tier 2 (Jobber Independence Roadmap), the job itself is created
 // natively via lib/nativeJobs.ts's createNativeJob — straight into this
 // app's own jobber_jobs/jobber_visits tables, no Jobber round-trip, no
-// property required. Client records are the one piece of this flow that
-// still goes through Jobber (createJobberClientForQuote below, via
-// Jobber's clientCreate mutation) — Tier 2 only covers job/visit
-// creation, not customer records, which remain Jobber's system of record
-// for now (see lib/nativeJobs.ts's header comment).
+// property required. As of Tier 4, the client record for a lead-based
+// quote is now also created natively (createNativeCustomer below, from
+// lib/nativeCustomers.ts) rather than via Jobber's clientCreate mutation
+// — nothing downstream (jobs, invoicing, payments) needs the customer to
+// actually exist in Jobber anymore.
 //
-// createJobberClientForQuote only runs for a lead-based quote with no
-// Jobber client yet. quotes.recipient_address is only ever a flat string
-// (see 013_add_quotes.sql), so it goes into the new client's property
-// street1 line as-is — there's no reliable way to split it into
-// street1/city/province/postalCode here. Staff can clean up the
-// individual address fields in Jobber afterward, same as this app has
-// always done for lead-sourced addresses elsewhere.
+// createNativeCustomer only runs for a lead-based quote with no customer
+// record yet. quotes.recipient_address is only ever a flat string (see
+// 013_add_quotes.sql), so it's passed through as the new customer's
+// street line as-is — there's no reliable way to split it into
+// street/city/state/zip here. Staff can clean up the individual address
+// fields on the Customer page afterward, same as this app has always
+// done for lead-sourced addresses elsewhere.
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
-import { jobberGraphQL } from "@/lib/jobber";
-import { createNativeJob, type MutationOutcome } from "@/lib/nativeJobs";
+import { createNativeJob } from "@/lib/nativeJobs";
+import { createNativeCustomer } from "@/lib/nativeCustomers";
 
 type QuoteForConversion = {
   id: string;
@@ -45,104 +45,6 @@ type QuoteForConversion = {
   price_total: number | string | null;
   jobber_job_id: string | null;
 };
-
-const CLIENT_CREATE_MUTATION = `
-  mutation CreateClientFromQuote($input: ClientCreateInput!) {
-    clientCreate(input: $input) {
-      client {
-        id
-        clientProperties(first: 1) {
-          nodes {
-            id
-          }
-        }
-      }
-      userErrors {
-        message
-      }
-    }
-  }
-`;
-
-function splitName(fullName: string): {
-  firstName: string;
-  lastName: string | null;
-} {
-  const trimmed = fullName.trim();
-  const spaceIndex = trimmed.indexOf(" ");
-
-  if (spaceIndex === -1) {
-    return { firstName: trimmed || "Customer", lastName: null };
-  }
-
-  return {
-    firstName: trimmed.slice(0, spaceIndex),
-    lastName: trimmed.slice(spaceIndex + 1).trim() || null,
-  };
-}
-
-async function createJobberClientForQuote(
-  quote: QuoteForConversion
-): Promise<MutationOutcome<{ clientId: string; propertyId: string | null }>> {
-  const { firstName, lastName } = splitName(quote.recipient_name || "Customer");
-
-  const input: Record<string, unknown> = {
-    firstName,
-    ...(lastName ? { lastName } : {}),
-  };
-
-  if (quote.recipient_email) {
-    input.emails = [
-      { description: "MAIN", primary: true, address: quote.recipient_email },
-    ];
-  }
-
-  if (quote.recipient_phone) {
-    input.phones = [
-      { description: "MAIN", primary: true, number: quote.recipient_phone },
-    ];
-  }
-
-  // See the module comment: quotes.recipient_address is a flat string, so
-  // it goes into street1 as-is rather than being split into structured
-  // fields we don't have. PropertyAttributes.address is required, so we
-  // only attempt this when there's actually an address to send —
-  // otherwise leave properties unset and let the "no property" retry path
-  // below tell staff to add one in Jobber.
-  const trimmedAddress = quote.recipient_address?.trim();
-  if (trimmedAddress) {
-    input.properties = [{ address: { street1: trimmedAddress } }];
-  }
-
-  const { data, errors } = await jobberGraphQL<{
-    clientCreate: {
-      client: {
-        id: string;
-        clientProperties: { nodes: { id: string }[] } | null;
-      } | null;
-      userErrors: { message: string }[];
-    };
-  }>(CLIENT_CREATE_MUTATION, { input });
-
-  if (errors?.length) {
-    return { ok: false, error: errors.map((e) => e.message).join("; ") };
-  }
-
-  const userErrors = data?.clientCreate?.userErrors ?? [];
-  if (userErrors.length > 0) {
-    return { ok: false, error: userErrors.map((e) => e.message).join("; ") };
-  }
-
-  const clientId = data?.clientCreate?.client?.id;
-  if (!clientId) {
-    return { ok: false, error: "Jobber did not return a client id." };
-  }
-
-  const propertyId =
-    data?.clientCreate?.client?.clientProperties?.nodes?.[0]?.id ?? null;
-
-  return { ok: true, value: { clientId, propertyId } };
-}
 
 async function recordConversionFailure(
   quoteId: string,
@@ -186,18 +88,25 @@ export async function attemptQuoteJobConversion(
     const typedQuote = quote as QuoteForConversion;
     let clientId = typedQuote.customer_id;
 
-    // Client/property creation still goes through Jobber -- Tier 2 of the
-    // Jobber Independence Roadmap only covers job/visit creation, not
-    // customer records (see lib/nativeJobs.ts's header comment). A lead
-    // accepting a quote still needs a real Jobber client to exist, since
-    // that's this app's system of record for customers.
+    // As of Tier 4, a lead accepting a quote gets a native customer
+    // record created directly (see the module comment) instead of a real
+    // Jobber client — nothing downstream needs Jobber to know this
+    // customer exists.
     if (!clientId && typedQuote.lead_id) {
-      const clientResult = await createJobberClientForQuote(typedQuote);
+      const clientResult = await createNativeCustomer({
+        fullName: typedQuote.recipient_name || "Customer",
+        email: typedQuote.recipient_email,
+        phone: typedQuote.recipient_phone,
+        street: typedQuote.recipient_address,
+        city: null,
+        state: null,
+        zip: null,
+      });
 
       if (!clientResult.ok) {
         await recordConversionFailure(
           quoteId,
-          `Couldn't create Jobber client: ${clientResult.error}`
+          `Couldn't create the customer: ${clientResult.error}`
         );
         return;
       }

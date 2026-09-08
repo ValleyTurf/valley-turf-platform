@@ -3,6 +3,7 @@ export const revalidate = 0;
 
 import Link from "next/link";
 import { jobberGraphQL } from "@/lib/jobber";
+import { isNativeId } from "@/lib/nativeJobs";
 import { supabaseServer } from "@/lib/supabase-server";
 import { normalizeEmail, normalizePhone } from "@/lib/matching";
 import {
@@ -686,6 +687,160 @@ async function getJobberClient(id: string): Promise<{
   };
 }
 
+// Tier 4 (Jobber Independence Roadmap) — a native customer (id starts
+// "native-") has never existed in Jobber, so getJobberClient's live query
+// above would just fail for one. This builds the exact same JobberClient
+// shape entirely from local tables instead: the `customers` row itself
+// for identity/property, jobber_jobs/jobber_invoices (already this app's
+// own read model for both native and Jobber-sourced records — see
+// jobs/page.tsx and invoices/history/page.tsx) for Recent Jobs/Invoices.
+// Quotes are left empty here — a native customer's quotes live in this
+// app's own Quotes tool (/quotes), not Jobber's, and pulling those in
+// too is follow-up work, not part of getting this page to render at all.
+type LocalCustomerRow = {
+  jobber_client_id: string;
+  first_name: string | null;
+  last_name: string | null;
+  full_name: string | null;
+  company_name: string | null;
+  email: string | null;
+  phone: string | null;
+  address_line_1: string | null;
+  address_line_2: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+  country: string | null;
+  current_balance: number | string | null;
+  created_at: string | null;
+};
+
+type LocalJobRow = {
+  jobber_job_id: string;
+  job_number: string | null;
+  title: string | null;
+  job_status: string | null;
+  job_type: string | null;
+  total: number | string | null;
+  end_at: string | null;
+  completed_at: string | null;
+  jobber_web_uri: string | null;
+};
+
+type LocalInvoiceRow = {
+  jobber_invoice_id: string;
+  invoice_number: string | null;
+  subject: string | null;
+  status: string | null;
+  issue_date: string | null;
+  due_date: string | null;
+  total: number | string | null;
+  jobber_web_uri: string | null;
+};
+
+async function getLocalClientView(id: string): Promise<{
+  client: JobberClient | null;
+  error: string | null;
+}> {
+  const [{ data: customerRow }, { data: jobRows }, { data: invoiceRows }] =
+    await Promise.all([
+      supabaseServer
+        .from("customers")
+        .select(
+          "jobber_client_id, first_name, last_name, full_name, company_name, email, phone, address_line_1, address_line_2, city, state, postal_code, country, current_balance, created_at"
+        )
+        .eq("jobber_client_id", id)
+        .maybeSingle(),
+      supabaseServer
+        .from("jobber_jobs")
+        .select(
+          "jobber_job_id, job_number, title, job_status, job_type, total, end_at, completed_at, jobber_web_uri"
+        )
+        .eq("jobber_client_id", id)
+        .order("end_at", { ascending: false, nullsFirst: false })
+        .limit(10),
+      supabaseServer
+        .from("jobber_invoices")
+        .select(
+          "jobber_invoice_id, invoice_number, subject, status, issue_date, due_date, total, jobber_web_uri"
+        )
+        .eq("jobber_client_id", id)
+        .order("issue_date", { ascending: false, nullsFirst: false })
+        .limit(10),
+    ]);
+
+  if (!customerRow) {
+    return { client: null, error: "This customer could not be found." };
+  }
+
+  const row = customerRow as LocalCustomerRow;
+
+  const client: JobberClient = {
+    id: row.jobber_client_id,
+    name:
+      row.full_name ||
+      [row.first_name, row.last_name].filter(Boolean).join(" ") ||
+      row.company_name ||
+      null,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    companyName: row.company_name,
+    balance: row.current_balance,
+    createdAt: row.created_at,
+    jobberWebUri: null,
+    emails: row.email ? [{ address: row.email }] : [],
+    phones: row.phone ? [{ number: row.phone }] : [],
+    clientProperties: row.address_line_1
+      ? {
+          nodes: [
+            {
+              id: `${row.jobber_client_id}-property`,
+              jobberWebUri: null,
+              address: {
+                street1: row.address_line_1,
+                street2: row.address_line_2,
+                city: row.city,
+                province: row.state,
+                postalCode: row.postal_code,
+                country: row.country,
+              },
+            },
+          ],
+        }
+      : { nodes: [] },
+    jobs: {
+      nodes: ((jobRows ?? []) as LocalJobRow[]).map((job) => ({
+        id: job.jobber_job_id,
+        jobNumber: job.job_number,
+        title: job.title,
+        jobStatus: job.job_status,
+        jobType: job.job_type,
+        total: job.total,
+        startAt: null,
+        endAt: job.end_at,
+        completedAt: job.completed_at,
+        jobberWebUri: job.jobber_web_uri,
+      })),
+    },
+    quotes: { nodes: [] },
+    invoices: {
+      nodes: ((invoiceRows ?? []) as LocalInvoiceRow[]).map((invoice) => ({
+        id: invoice.jobber_invoice_id,
+        invoiceNumber: invoice.invoice_number,
+        subject: invoice.subject,
+        invoiceStatus: invoice.status,
+        issuedDate: invoice.issue_date,
+        dueDate: invoice.due_date,
+        receivedDate: null,
+        total: invoice.total,
+        jobberWebUri: invoice.jobber_web_uri,
+      })),
+    },
+  };
+
+  return { client, error: null };
+}
+
 async function getCustomerFinancials(
   jobberClientId: string
 ): Promise<CustomerFinancials | null> {
@@ -1129,7 +1284,7 @@ export default async function CustomerDetailPage({
     additionalContacts,
     nativeInvoices,
   ] = await Promise.all([
-    getJobberClient(decodedId),
+    isNativeId(decodedId) ? getLocalClientView(decodedId) : getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
     getCustomerProfile(decodedId),
     getCustomerProfitSummary(decodedId),
@@ -1161,7 +1316,10 @@ export default async function CustomerDetailPage({
             </h1>
 
             <p className="mt-4 text-[#6b705c]">
-              {error ?? "No customer information was returned by Jobber."}
+              {error ??
+                (isNativeId(decodedId)
+                  ? "This customer could not be found."
+                  : "No customer information was returned by Jobber.")}
             </p>
 
             <div className="mt-6 flex flex-wrap gap-3">
@@ -1172,12 +1330,14 @@ export default async function CustomerDetailPage({
                 Back to Customers
               </Link>
 
-              <Link
-                href="/api/jobber/connect"
-                className="rounded-xl border border-[#174734] px-5 py-3 text-sm font-bold"
-              >
-                Reconnect Jobber
-              </Link>
+              {!isNativeId(decodedId) && (
+                <Link
+                  href="/api/jobber/connect"
+                  className="rounded-xl border border-[#174734] px-5 py-3 text-sm font-bold"
+                >
+                  Reconnect Jobber
+                </Link>
+              )}
             </div>
           </section>
         </div>
@@ -1274,7 +1434,8 @@ export default async function CustomerDetailPage({
           )}
 
           <p className="mt-2 text-sm text-[#6b705c]">
-            Jobber customer since {formatDate(client.createdAt)}
+            {isNativeId(decodedId) ? "Customer" : "Jobber customer"} since{" "}
+            {formatDate(client.createdAt)}
           </p>
         </header>
 

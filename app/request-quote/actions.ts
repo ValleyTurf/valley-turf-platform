@@ -7,7 +7,8 @@
 // proxy.ts PUBLIC_PATHS), same trust model as /q/[token] and /pay/[token].
 import { supabaseServer } from "@/lib/supabase-server";
 import { validateAddress } from "@/lib/addressValidation";
-import { createJobberClientForLead, splitName } from "@/lib/leadJobberClient";
+import { splitName } from "@/lib/leadJobberClient";
+import { createNativeCustomer } from "@/lib/nativeCustomers";
 
 export type SubmitQuoteRequestInput = {
   fullName: string;
@@ -102,13 +103,17 @@ export async function submitQuoteRequest(
     };
   }
 
-  // Best-effort: turn this lead into a real Jobber client + property right
-  // away. Never blocks the submission the customer sees — a Jobber outage
-  // or write-access issue just leaves the lead exactly as before (visible
-  // on the Leads page, convertible manually), same fallback that's always
-  // existed.
+  // Best-effort: turn this lead into a real customer record right away,
+  // same as this always did, just natively now (Tier 4 of the Jobber
+  // Independence Roadmap) instead of via Jobber's clientCreate mutation —
+  // see lib/nativeCustomers.ts. Never blocks the submission the customer
+  // sees — a database hiccup just leaves the lead exactly as before
+  // (visible on the Leads page, convertible manually), same fallback
+  // that's always existed. The address was already validated above for
+  // the lead record itself, so that lat/lng is passed straight through
+  // instead of paying for a second Address Validation call.
   try {
-    const clientResult = await createJobberClientForLead({
+    const clientResult = await createNativeCustomer({
       fullName,
       email,
       phone,
@@ -116,6 +121,8 @@ export async function submitQuoteRequest(
       city,
       state,
       zip,
+      knownLatitude: validation?.latitude ?? null,
+      knownLongitude: validation?.longitude ?? null,
     });
 
     if (clientResult.ok) {
@@ -125,12 +132,12 @@ export async function submitQuoteRequest(
         .eq("id", insertedLead.id);
     } else {
       console.error(
-        "submitQuoteRequest: Jobber client creation failed:",
+        "submitQuoteRequest: native customer creation failed:",
         clientResult.error
       );
     }
   } catch (error) {
-    console.error("submitQuoteRequest: Jobber client creation threw:", error);
+    console.error("submitQuoteRequest: native customer creation threw:", error);
   }
 
   return { ok: true };

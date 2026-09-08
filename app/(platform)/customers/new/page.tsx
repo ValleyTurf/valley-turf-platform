@@ -17,8 +17,8 @@ export default function NewCustomerPage() {
               Add Customer
             </h1>
             <p className="mt-2 max-w-2xl text-[#6b705c]">
-              Creates a real client in Jobber and shows them here right
-              away — no need to wait for the next sync.
+              Creates the customer directly in this app — no Jobber
+              account needed, and they show up right away.
             </p>
           </div>
 

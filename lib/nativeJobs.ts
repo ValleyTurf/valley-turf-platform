@@ -32,7 +32,11 @@ export function isNativeId(id: string | null | undefined): boolean {
   return typeof id === "string" && id.startsWith(NATIVE_ID_PREFIX);
 }
 
-function generateNativeId(): string {
+// Exported so lib/nativeCustomers.ts (Tier 4) can mint ids from the exact
+// same convention instead of duplicating it -- a native customer id needs
+// to be indistinguishable in shape from a native job/visit id, since
+// isNativeId() below is shared across all three.
+export function generateNativeId(): string {
   return `${NATIVE_ID_PREFIX}${crypto.randomUUID()}`;
 }
 

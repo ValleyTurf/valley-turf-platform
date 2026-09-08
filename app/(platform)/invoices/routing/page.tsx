@@ -99,6 +99,12 @@ function sourceLabel(source: string | null): { text: string; color: string; bg: 
       return { text: "Auto — no card in Jobber", color: "#2f7d3f", bg: "#e6f2e6" };
     case "manual":
       return { text: "Manual override", color: "#2255a3", bg: "#e5eefb" };
+    // Tier 4 (Jobber Independence Roadmap): a customer created directly
+    // in this app (lib/nativeCustomers.ts) was never a Jobber client, so
+    // "checked for a card on file in Jobber" doesn't apply — they're
+    // always native invoicing from day one.
+    case "native":
+      return { text: "Native customer (no Jobber history)", color: "#2f7d3f", bg: "#e6f2e6" };
     default:
       return { text: "Not yet checked", color: "#7c8a80", bg: "#f2f4f1" };
   }
