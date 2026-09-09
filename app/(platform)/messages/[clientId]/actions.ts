@@ -3,40 +3,64 @@
 import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/currentUser";
 import { supabaseServer } from "@/lib/supabase-server";
+import { sendManualEmailToCustomer } from "@/lib/composeEmailAction";
 
-// Any staff member who can reach this page (gated by the customer_portal
-// permission section, not a role check) can reply — replying to a
-// customer isn't a manager-only action the way Crew Status/Timecards are.
-export async function replyToCustomer(
+// Replaces the old replyToCustomer, which wrote into portal_messages --
+// the customer-portal chat table nobody actually uses (Ryan: "replying
+// back goes into their client portal which no one is using"). Customers
+// only ever see a staff reply here as a real email landing in their
+// inbox (their reply to the 4-day/2-day reminder is what got this
+// thread started in the first place, via the inbound-email webhook --
+// see lib/replyRouting.ts + the email.received branch in
+// app/api/webhooks/resend/route.ts), so staff's reply needs to go back
+// out the same way instead of into an unused portal. Delegates entirely
+// to sendManualEmailToCustomer (lib/composeEmailAction.ts) -- the same
+// send/log/audit pipeline already used by the Customer page's Compose
+// Email -- so a reply from here gets identical reply-to threading and
+// contact_history logging. Only adds an auto-generated subject line on
+// top, so this page's reply box can stay a single textarea rather than
+// also asking staff to type a subject for what's really just a reply.
+export async function replyToCustomerByEmail(
   jobberClientId: string,
   formData: FormData
-): Promise<void> {
-  const user = await getCurrentUser();
-
-  if (!user) {
-    throw new Error("Sign-in required.");
-  }
-
+): Promise<{ error: string | null }> {
   const rawBody = formData.get("body");
   const body = typeof rawBody === "string" ? rawBody.trim() : "";
 
   if (!body) {
-    return;
+    return { error: "Write a reply before sending." };
   }
 
-  const { error } = await supabaseServer.from("portal_messages").insert({
-    jobber_client_id: jobberClientId,
-    sender: "staff",
-    sender_name: user.name,
-    body,
-  });
+  const { data: lastInbound } = await supabaseServer
+    .from("contact_history")
+    .select("subject")
+    .eq("jobber_client_id", jobberClientId)
+    .eq("channel", "email")
+    .eq("direction", "inbound")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  if (error) {
-    throw new Error(`Unable to send reply: ${error.message}`);
+  const baseSubject =
+    lastInbound?.subject?.trim() || "your message to Valley Turf Revival";
+  const subject = baseSubject.toLowerCase().startsWith("re:")
+    ? baseSubject
+    : `Re: ${baseSubject}`;
+
+  const emailFormData = new FormData();
+  emailFormData.set("subject", subject);
+  emailFormData.set("body", body);
+
+  const result = await sendManualEmailToCustomer(jobberClientId, emailFormData);
+
+  if (result.error) {
+    return result;
   }
 
   revalidatePath(`/messages/${jobberClientId}`);
   revalidatePath("/messages");
+
+  return { error: null };
 }
 
 export async function updateServiceRequestStatus(

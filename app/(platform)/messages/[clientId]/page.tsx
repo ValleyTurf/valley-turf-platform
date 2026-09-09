@@ -5,8 +5,9 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { formatDateOnly } from "@/lib/format";
 import { markInboundEmailsRead } from "@/lib/contactHistory";
-import { replyToCustomer, updateServiceRequestStatus } from "./actions";
+import { replyToCustomerByEmail, updateServiceRequestStatus } from "./actions";
 import { StatusSelect } from "./StatusSelect";
+import { ReplyForm } from "./ReplyForm";
 
 type PortalMessage = {
   id: string;
@@ -20,6 +21,19 @@ type InboundEmail = {
   id: string;
   subject: string | null;
   summary: string | null;
+  created_at: string;
+};
+
+// A staff reply sent via replyToCustomerByEmail (actions.ts) -- these are
+// real outbound emails logged to contact_history the same way Compose
+// Email on the Customer page logs its sends, so they need to be merged
+// into this thread too, or a staff reply would go out but never show up
+// here again after the page re-renders.
+type OutboundEmail = {
+  id: string;
+  subject: string | null;
+  summary: string | null;
+  created_by_name: string | null;
   created_at: string;
 };
 
@@ -67,8 +81,13 @@ export default async function CustomerMessageThreadPage({
   const { clientId } = await params;
   const jobberClientId = decodeURIComponent(clientId);
 
-  const [customerResult, messagesResult, requestsResult, emailsResult] =
-    await Promise.all([
+  const [
+    customerResult,
+    messagesResult,
+    requestsResult,
+    emailsResult,
+    outboundEmailsResult,
+  ] = await Promise.all([
       supabaseServer
         .from("customers")
         .select("full_name, email, phone")
@@ -100,6 +119,20 @@ export default async function CustomerMessageThreadPage({
         .eq("direction", "inbound")
         .order("created_at", { ascending: true })
         .limit(200),
+
+      // Staff replies sent via the Reply box below (replyToCustomerByEmail)
+      // and any Compose Email sends from the Customer page -- both log
+      // here as channel: "email", direction: "outbound" (logContactHistory's
+      // default), so both need to render as this customer's staff-sent
+      // messages in the thread.
+      supabaseServer
+        .from("contact_history")
+        .select("id, subject, summary, created_by_name, created_at")
+        .eq("jobber_client_id", jobberClientId)
+        .eq("channel", "email")
+        .eq("direction", "outbound")
+        .order("created_at", { ascending: true })
+        .limit(200),
     ]);
 
   const customer = customerResult.data as
@@ -109,6 +142,7 @@ export default async function CustomerMessageThreadPage({
   const messages = (messagesResult.data ?? []) as PortalMessage[];
   const requests = (requestsResult.data ?? []) as PortalServiceRequest[];
   const inboundEmails = (emailsResult.data ?? []) as InboundEmail[];
+  const outboundEmails = (outboundEmailsResult.data ?? []) as OutboundEmail[];
 
   const threadItems: ThreadItem[] = [
     ...messages.map(
@@ -131,6 +165,17 @@ export default async function CustomerMessageThreadPage({
         kind: "email",
         sender: "customer",
         senderLabel: customer?.full_name || "Customer",
+        subject: email.subject,
+        body: email.summary || "(No message body.)",
+        created_at: email.created_at,
+      })
+    ),
+    ...outboundEmails.map(
+      (email): ThreadItem => ({
+        id: `outbound-email-${email.id}`,
+        kind: "email",
+        sender: "staff",
+        senderLabel: email.created_by_name || "Staff",
         subject: email.subject,
         body: email.summary || "(No message body.)",
         created_at: email.created_at,
@@ -164,7 +209,7 @@ export default async function CustomerMessageThreadPage({
   // with what staff have actually looked at.
   await markInboundEmailsRead(jobberClientId);
 
-  const replyToCustomerWithId = replyToCustomer.bind(null, jobberClientId);
+  const replyToCustomerWithId = replyToCustomerByEmail.bind(null, jobberClientId);
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
@@ -260,31 +305,10 @@ export default async function CustomerMessageThreadPage({
             )}
           </div>
 
-          <form action={replyToCustomerWithId} className="mt-4 flex gap-3">
-            <textarea
-              name="body"
-              rows={2}
-              required
-              placeholder="Type a reply..."
-              className="block w-full rounded-xl border border-[#d8d3c6] bg-white px-4 py-3 text-[#174734] outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-            />
-            <button
-              type="submit"
-              className="shrink-0 rounded-xl bg-[#174734] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#226246]"
-            >
-              Reply
-            </button>
-          </form>
+          <ReplyForm onSubmit={replyToCustomerWithId} />
           <p className="mt-2 text-xs text-[#9c9887]">
-            This reply goes through the customer portal chat. To reply by
-            email instead, use Compose Email on the customer&apos;s{" "}
-            <Link
-              href={`/customers/${encodeURIComponent(jobberClientId)}`}
-              className="font-semibold text-[#9c7a20] hover:underline"
-            >
-              profile page
-            </Link>
-            .
+            Sends a real email to the customer (as a reply to whatever they
+            last emailed in about) and logs here.
           </p>
         </section>
       </div>
