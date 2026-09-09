@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { supabaseServer } from "@/lib/supabase-server";
+import { TESTIMONIALS, GOOGLE_RATING, GOOGLE_REVIEW_COUNT } from "../testimonials";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -41,6 +42,14 @@ export default async function ReviewsPage() {
       <h1 className="mt-2 text-4xl font-bold" style={{ color: BRAND_GREEN }}>
         What our customers say
       </h1>
+      <div className="mt-4 flex items-center justify-center gap-2">
+        <span aria-hidden className="text-lg" style={{ color: "#f5b400" }}>
+          &#9733;&#9733;&#9733;&#9733;&#9733;
+        </span>
+        <span className="text-sm font-semibold" style={{ color: BRAND_GREEN }}>
+          {GOOGLE_RATING.toFixed(1)} ({GOOGLE_REVIEW_COUNT} Google reviews)
+        </span>
+      </div>
       <p className="mt-6 text-lg" style={{ color: MUTED_GRAY }}>
         {googleReviewUrl
           ? "Read our latest reviews directly on Google, or leave one of your own if you've worked with us."
@@ -59,6 +68,19 @@ export default async function ReviewsPage() {
         </a>
       )}
 
+      <div className="mt-14 grid gap-6 text-left sm:grid-cols-3">
+        {TESTIMONIALS.map((testimonial) => (
+          <div key={testimonial.name} className="rounded-3xl bg-white p-6 shadow-sm">
+            <p className="text-sm" style={{ color: MUTED_GRAY }}>
+              &ldquo;{testimonial.quote}&rdquo;
+            </p>
+            <p className="mt-4 text-sm font-bold" style={{ color: BRAND_GREEN }}>
+              {testimonial.name}
+            </p>
+          </div>
+        ))}
+      </div>
+
       <div className="mt-14 rounded-3xl p-10" style={{ background: BRAND_GREEN }}>
         <h2 className="text-2xl font-bold text-white">Ready to see the difference for yourself?</h2>
         <p className="mt-2 text-white/80">Get a free quote — usually a response within one business day.</p>
@@ -67,7 +89,7 @@ export default async function ReviewsPage() {
           className="mt-6 inline-block rounded-full bg-white px-7 py-3 text-base font-bold"
           style={{ color: BRAND_GREEN }}
         >
-          Get my free quote
+          Get a Free Quote
         </Link>
       </div>
     </div>

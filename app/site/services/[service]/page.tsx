@@ -1,45 +1,169 @@
+import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { SERVICES, getService } from "../../services";
+import { GOOGLE_RATING, GOOGLE_REVIEW_COUNT } from "../../testimonials";
 
 // Data-driven per-service detail page. Only two services exist in this
 // codebase today (see ../../services.ts's header comment) but this stays
 // a single dynamic route rather than two hardcoded page files, so adding
 // a third service later is just one new entry in SERVICE_DETAILS +
 // services.ts, no new route file.
-const SERVICE_DETAILS: Record<
-  string,
-  { intro: string; benefits: string[]; process: { title: string; body: string }[] }
-> = {
+//
+// pet-odor-removal's copy below is lifted verbatim (Ryan's request) from
+// the old Jobber-hosted site's own Pet Odor Removal page
+// (goldenturfcare.jobbersites.com/services/pet-odor-removal) -- that's
+// the one service that already had its own dedicated page there.
+// turf-cleaning has no equivalent page on the old site (it was just the
+// homepage's general framing), so its copy is adapted from that same
+// site's homepage service list, pricing FAQ, and Revival plan wording
+// rather than invented from scratch -- same voice, same real business
+// facts, just assembled into the same section shape as the real
+// pet-odor-removal page for consistency between the two service pages.
+type ServiceDetails = {
+  intro: string;
+  featured: { title: string; body: string }[];
+  included: { title: string; body: string }[];
+  whyHeading: string;
+  whyParagraphs: string[];
+  faq: { q: string; a: string }[];
+  beforeAfter?: { before: string; after: string }[];
+};
+
+const SERVICE_DETAILS: Record<string, ServiceDetails> = {
   "turf-cleaning": {
     intro:
-      "Artificial turf still needs regular care. Dirt, dust, pollen, and everyday debris build up in the infill over time, flattening the blades and dulling the color. Our turf cleaning service rinses and restores your lawn so it looks like the day it was installed.",
-    benefits: [
-      "Removes dirt, dust, and debris trapped deep in the infill",
-      "Restores color and blade texture flattened by foot traffic",
-      "Clears drainage so water doesn't pool after rain or watering",
-      "Extends the life of your turf installation",
+      "Turf Fluff and Cleaning, Pressure Wash Stuck Messes, Edge Cleaning, Debris Removal, Power Broom, Turf Brushing, Infill Replacement, and a full Lawn Inspection — everything your artificial turf needs to look, drain, and feel like new again.",
+    featured: [
+      {
+        title: "One Time Deep Clean",
+        body: "For turf that's overdue for attention. A full reset that removes built-up dirt, debris, and buildup in a single visit.",
+      },
+      {
+        title: "Recurring Plans",
+        body: "Monthly, Every Other Month, Quarterly, or Semi-Annual visits that keep your turf looking fresh year-round.",
+      },
+      {
+        title: "Affordable, Upfront Pricing",
+        body: "Transparent pricing based on square footage — no surprises, and we don't require contracts.",
+      },
     ],
-    process: [
-      { title: "Inspect", body: "We walk the yard and check drainage, seams, and infill level." },
-      { title: "Clean", body: "Deep rinse and debris removal across every section of turf." },
-      { title: "Groom", body: "Blades are brushed upright and infill is leveled evenly." },
+    included: [
+      {
+        title: "Turf Fluff and Cleaning",
+        body: "Lift flattened fibers and restore the color and softness foot traffic wears down.",
+      },
+      {
+        title: "Pressure Wash Stuck Messes",
+        body: "Blast away anything stuck to the blades that a garden hose alone won't budge.",
+      },
+      {
+        title: "Edge Cleaning & Debris Removal",
+        body: "Clear leaves, twigs, and everyday buildup along borders, pavers, and walls.",
+      },
+      {
+        title: "Power Broom & Turf Brushing",
+        body: "Groom blades upright and level the infill evenly across every section.",
+      },
+      {
+        title: "Lawn Inspection",
+        body: "We check drainage, seams, and infill level while we're there.",
+      },
+    ],
+    whyHeading: "Why Artificial Turf Still Needs Cleaning",
+    whyParagraphs: [
+      "Artificial turf is low-maintenance, not no-maintenance. Dirt, dust, pollen, and everyday debris settle into the infill over time, flattening the blades, dulling the color, and blocking drainage.",
+      "Our process pressure washes stuck messes, clears debris, and power brooms the blades back upright — restoring the color, softness, and drainage it had on day one.",
+    ],
+    faq: [
+      {
+        q: "Will my turf look and smell new again?",
+        a: "Not all turf is the same. We do our best to fluff the turf back up to as good as new on the Initial Full Revival Cleaning. However, if the turf has not been cleaned in a while, results may not be fully seen until regular maintenance has taken place.",
+      },
+      {
+        q: "How do you determine pricing for your services?",
+        a: "Our pricing is based on the type of service, materials required, and the scope of the job. We provide transparent, upfront pricing before any work begins, so there are no surprises. All pricing is based on the amount of square feet you want serviced.",
+      },
+      {
+        q: "Do you have recurring services?",
+        a: "Yes! We have a Revival plan to fit everyone's needs! We start with a Full Revival Cleaning and then if you would like to set up a plan with us, we have Monthly, Every Other Month, Quarterly and Semi-Annual plans available. We also can build a custom plan for you!",
+      },
+      {
+        q: "Do you require contracts?",
+        a: "No, we don't have contracts, but do offer recurring services. We ask that if you decide to cancel that you do so at least 3 business days before your next service.",
+      },
+    ],
+    beforeAfter: [
+      { before: "/images/before-after/before-1.jpg", after: "/images/before-after/after-1.jpg" },
+      { before: "/images/before-after/before-2.jpg", after: "/images/before-after/after-2.jpg" },
     ],
   },
   "pet-odor-removal": {
     intro:
-      "Regular hosing doesn't remove the bacteria that cause pet odor in artificial turf — it just spreads it around. Our pet odor removal treatment breaks down odor-causing bacteria trapped in the infill at the source, so the smell doesn't come back after the next rinse.",
-    benefits: [
-      "Targets the bacteria causing odor, not just the surface smell",
-      "Safe for pets and kids once the treatment has dried",
-      "Works on turf of any age or infill type",
-      "Pairs well with a full turf cleaning for the best results",
+      "Dogs and artificial turf can coexist. We eliminate pet odor at the source — not just mask it for a week.",
+    featured: [
+      {
+        title: "One Time Deep Clean",
+        body: "For turf that's overdue for attention. A full reset that removes built-up odor and debris in a single visit.",
+      },
+      {
+        title: "Recurring Plans",
+        body: "Monthly, bi-monthly, or quarterly visits that keep odor from ever building back up — ideal for multi-dog households.",
+      },
+      {
+        title: "Family & Pet Safe",
+        body: "All products used are safe for kids and pets to be back on the turf shortly after treatment.",
+      },
     ],
-    process: [
-      { title: "Assess", body: "We identify the hot spots pets use most." },
-      { title: "Treat", body: "An enzyme-based treatment breaks down odor-causing bacteria." },
-      { title: "Rinse & dry", body: "A final rinse leaves the yard fresh and ready to use." },
+    included: [
+      {
+        title: "Turf Sweep and Broom",
+        body: "Lift fibers and remove debris that may be hidden in the turf.",
+      },
+      {
+        title: "Remove Any Stuck Messes",
+        body: "Power wash any messes from your pets that may be stuck to your turf.",
+      },
+      {
+        title: "Infill Replenishment",
+        body: "Pet friendly product helps stop urine odors, prevents bacteria, and helps turf blades keep their shape.",
+      },
+      {
+        title: "Deodorizing & Disinfectant Spray",
+        body: "Hydrogen peroxide-based deodorizing and disinfecting spray that kills the bacteria causing the odor.",
+      },
+      {
+        title: "Optional Recurring Visits",
+        body: "Set a recurring schedule that works for you to keep odor from building back up.",
+      },
+    ],
+    whyHeading: "Why Does Artificial Turf Start to Smell?",
+    whyParagraphs: [
+      "Most pet odor doesn't sit on the surface — it soaks into the infill layer underneath the blades, where bacteria feeds on trapped urine and keeps producing odor long after the surface looks clean. A quick hose-down or surface spray only masks it temporarily.",
+      "Our process is built to reach that layer: we pressure wash to loosen embedded residue, flush it out with a deep rinse, then treat with a hydrogen peroxide-based deodorizer and disinfectant that actually breaks down the bacteria — not just covers the smell. For turf that's seen heavy use, we replenish the infill with a pet-specific product designed to resist odor buildup going forward.",
+    ],
+    faq: [
+      {
+        q: "Will the smell really go away, or will it come back?",
+        a: "Our deep-clean process targets the bacteria in the infill layer, not just the surface, so the odor doesn't just return in a few days like it can with a basic hose-down. For homes with multiple dogs or heavy use, we recommend a recurring plan to keep it from building back up.",
+      },
+      {
+        q: "How long does a pet odor treatment take?",
+        a: "Most residential jobs take 45 minutes to 2 hours, depending on the size of your yard and how built-up the odor is.",
+      },
+      {
+        q: "Is the treatment safe for my pets and kids?",
+        a: "Yes. We use pet- and kid-safe products, and can let you know the recommended wait time before they're back on the turf after treatment.",
+      },
+      {
+        q: "How often should I get pet odor treatments?",
+        a: "It depends on how many pets you have and how they use the space. Many of our recurring customers do quarterly visits; homes with multiple dogs often do monthly or bi-monthly.",
+      },
+      {
+        q: "Do you use bleach or harsh chemicals?",
+        a: "No — our disinfecting and deodorizing products are formulated specifically for artificial turf and pet safety.",
+      },
     ],
   },
 };
@@ -81,59 +205,138 @@ export default async function ServiceDetailPage({
   if (!service || !details) notFound();
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-16 sm:px-6">
-      <p className="text-sm font-bold uppercase tracking-[0.3em]" style={{ color: GOLD }}>
-        Service
-      </p>
-      <h1 className="mt-2 text-4xl font-bold" style={{ color: BRAND_GREEN }}>
-        {service.name}
-      </h1>
-      <p className="mt-5 text-lg" style={{ color: MUTED_GRAY }}>
-        {details.intro}
-      </p>
+    <div>
+      <div className="mx-auto max-w-4xl px-4 py-16 sm:px-6">
+        <p className="text-sm font-bold uppercase tracking-[0.3em]" style={{ color: GOLD }}>
+          Service
+        </p>
+        <h1 className="mt-2 text-4xl font-bold" style={{ color: BRAND_GREEN }}>
+          {service.name}
+        </h1>
+        <div className="mt-3 flex items-center gap-2">
+          <span aria-hidden className="text-sm" style={{ color: "#f5b400" }}>
+            &#9733;&#9733;&#9733;&#9733;&#9733;
+          </span>
+          <span className="text-sm font-semibold" style={{ color: BRAND_GREEN }}>
+            {GOOGLE_RATING.toFixed(1)} ({GOOGLE_REVIEW_COUNT})
+          </span>
+        </div>
+        <p className="mt-5 text-lg" style={{ color: MUTED_GRAY }}>
+          {details.intro}
+        </p>
 
-      <div className="mt-10 grid gap-8 sm:grid-cols-2">
-        <div>
+        <div className="mt-10 grid gap-6 sm:grid-cols-3">
+          {details.featured.map((item) => (
+            <div key={item.title} className="rounded-2xl bg-white p-6 shadow-sm">
+              <h2 className="text-base font-bold" style={{ color: BRAND_GREEN }}>
+                {item.title}
+              </h2>
+              <p className="mt-2 text-sm" style={{ color: MUTED_GRAY }}>
+                {item.body}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        {details.beforeAfter && (
+          <div className="mt-14">
+            <h2 className="text-xl font-bold" style={{ color: BRAND_GREEN }}>
+              Real results
+            </h2>
+            <div className="mt-5 grid gap-6 sm:grid-cols-2">
+              {details.beforeAfter.map((pair, index) => (
+                <div key={index} className="grid grid-cols-2 gap-2">
+                  <div className="relative aspect-square overflow-hidden rounded-2xl">
+                    <Image
+                      src={pair.before}
+                      alt="Before turf cleaning"
+                      fill
+                      sizes="(min-width: 640px) 25vw, 50vw"
+                      className="object-cover"
+                    />
+                    <span className="absolute bottom-2 left-2 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+                      Before
+                    </span>
+                  </div>
+                  <div className="relative aspect-square overflow-hidden rounded-2xl">
+                    <Image
+                      src={pair.after}
+                      alt="After turf cleaning"
+                      fill
+                      sizes="(min-width: 640px) 25vw, 50vw"
+                      className="object-cover"
+                    />
+                    <span className="absolute bottom-2 left-2 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+                      After
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-14">
           <h2 className="text-xl font-bold" style={{ color: BRAND_GREEN }}>
-            What you get
+            What&apos;s Included
           </h2>
-          <ul className="mt-4 space-y-3">
-            {details.benefits.map((benefit) => (
-              <li key={benefit} className="flex gap-2 text-sm" style={{ color: MUTED_GRAY }}>
-                <span style={{ color: GOLD }}>&#10003;</span>
-                {benefit}
+          <ul className="mt-4 space-y-4">
+            {details.included.map((item) => (
+              <li key={item.title} className="flex gap-3 text-sm" style={{ color: MUTED_GRAY }}>
+                <span className="font-bold" style={{ color: GOLD }}>
+                  &#10003;
+                </span>
+                <span>
+                  <span className="font-bold" style={{ color: BRAND_GREEN }}>
+                    {item.title}
+                  </span>{" "}
+                  &mdash; {item.body}
+                </span>
               </li>
             ))}
           </ul>
         </div>
 
-        <div>
+        <div className="mt-14">
           <h2 className="text-xl font-bold" style={{ color: BRAND_GREEN }}>
-            How it works
+            {details.whyHeading}
           </h2>
-          <ol className="mt-4 space-y-4">
-            {details.process.map((step, index) => (
-              <li key={step.title} className="text-sm" style={{ color: MUTED_GRAY }}>
-                <span className="font-bold" style={{ color: BRAND_GREEN }}>
-                  {index + 1}. {step.title}
-                </span>
-                <p className="mt-1">{step.body}</p>
-              </li>
-            ))}
-          </ol>
+          {details.whyParagraphs.map((paragraph, index) => (
+            <p key={index} className="mt-3 text-sm" style={{ color: MUTED_GRAY }}>
+              {paragraph}
+            </p>
+          ))}
         </div>
-      </div>
 
-      <div className="mt-14 rounded-3xl p-10 text-center" style={{ background: BRAND_GREEN }}>
-        <h2 className="text-2xl font-bold text-white">Get a free quote for {service.name.toLowerCase()}</h2>
-        <p className="mt-2 text-white/80">Usually a response within one business day.</p>
-        <Link
-          href="/request-quote"
-          className="mt-6 inline-block rounded-full bg-white px-7 py-3 text-base font-bold"
-          style={{ color: BRAND_GREEN }}
-        >
-          Get my free quote
-        </Link>
+        <div className="mt-14">
+          <h2 className="text-xl font-bold" style={{ color: BRAND_GREEN }}>
+            Frequently Asked Questions
+          </h2>
+          <div className="mt-5 space-y-5">
+            {details.faq.map((item) => (
+              <div key={item.q}>
+                <h3 className="text-sm font-bold" style={{ color: BRAND_GREEN }}>
+                  {item.q}
+                </h3>
+                <p className="mt-1 text-sm" style={{ color: MUTED_GRAY }}>
+                  {item.a}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-14 rounded-3xl p-10 text-center" style={{ background: BRAND_GREEN }}>
+          <h2 className="text-2xl font-bold text-white">Get a free quote for {service.name.toLowerCase()}</h2>
+          <p className="mt-2 text-white/80">Usually a response within one business day.</p>
+          <Link
+            href="/request-quote"
+            className="mt-6 inline-block rounded-full bg-white px-7 py-3 text-base font-bold"
+            style={{ color: BRAND_GREEN }}
+          >
+            Get a Free Quote
+          </Link>
+        </div>
       </div>
     </div>
   );

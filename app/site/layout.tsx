@@ -91,7 +91,7 @@ function SiteHeader() {
             className="rounded-full px-4 py-2 text-sm font-bold text-white transition-opacity hover:opacity-90"
             style={{ background: BRAND_GREEN }}
           >
-            Get my free quote
+            Get a Free Quote
           </Link>
         </div>
       </div>

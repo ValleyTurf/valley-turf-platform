@@ -19,18 +19,20 @@ export default function AboutPage() {
         About us
       </p>
       <h1 className="mt-2 text-4xl font-bold" style={{ color: BRAND_GREEN }}>
-        Local, hands-on, and easy to reach
+        Formerly Golden Turf Care, now Valley Turf Revival
       </h1>
       <p className="mt-6 text-lg" style={{ color: MUTED_GRAY }}>
-        Valley Turf Revival is based in Queen Creek, Arizona, and serves homeowners across the
-        greater Phoenix/East Valley area. We focus on two things — keeping artificial turf clean
-        and keeping it free of pet odor — instead of trying to be everything to everyone.
+        Valley Turf Revival is a family owned and operated company specializing in full service
+        artificial turf revival and cleaning. Located in Queen Creek, we pride ourselves on
+        delivering outstanding service that will enhance the beauty and longevity of your
+        artificial turf at great prices.
       </p>
       <p className="mt-4 text-lg" style={{ color: MUTED_GRAY }}>
-        Artificial turf is low-maintenance, not no-maintenance. Dirt and debris build up in the
-        infill over time, and pet odor gets trapped at a level a garden hose can&apos;t reach. We
-        show up, do the work right, and communicate clearly along the way — from your first quote
-        request to appointment reminders and an easy way to pay when the job&apos;s done.
+        Our experienced team is dedicated to providing personalized solutions that meet the
+        unique needs of each customer, ensuring your outdoor space remains pristine and inviting
+        year-round. We show up, do the work right, and communicate clearly along the way — from
+        your first quote request to appointment reminders and an easy way to pay when the
+        job&apos;s done.
       </p>
 
       <div className="mt-10 grid gap-6 sm:grid-cols-2">

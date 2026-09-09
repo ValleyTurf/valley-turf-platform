@@ -54,7 +54,7 @@ export default function ServicesPage() {
           className="mt-6 inline-block rounded-full bg-white px-7 py-3 text-base font-bold"
           style={{ color: BRAND_GREEN }}
         >
-          Get my free quote
+          Get a Free Quote
         </Link>
       </div>
     </div>
