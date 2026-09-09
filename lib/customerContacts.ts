@@ -6,6 +6,7 @@
 // optionally flagged to also receive those same automated sends.
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
+import { normalizePhone } from "@/lib/matching";
 
 export type CustomerContact = {
   id: string;
@@ -161,4 +162,41 @@ export async function getNotificationRecipients(
   }
 
   return { emails: Array.from(emails), phones: Array.from(phones) };
+}
+
+// Reverse lookup for inbound texts (app/api/webhooks/twilio/route.ts) --
+// Twilio hands us the sender's number in E.164 (+14805551234), but
+// customers.phone/customer_contacts.phone were typed in by hand over
+// time in whatever format Jobber or a staff member used, so this
+// compares via normalizePhone's bare-10-digit form on both sides rather
+// than an exact string match. A full-table pull + in-memory compare
+// rather than a SQL filter, same trade-off lib/matching.ts's other
+// callers already make -- fine at this business's customer-list size,
+// and phone numbers can't be normalized in a WHERE clause anyway.
+export async function findJobberClientIdByPhone(
+  rawPhone: string
+): Promise<string | null> {
+  const target = normalizePhone(rawPhone);
+
+  if (!target) return null;
+
+  const [customersResult, contactsResult] = await Promise.all([
+    supabaseServer.from("customers").select("jobber_client_id, phone").not("phone", "is", null),
+    supabaseServer
+      .from("customer_contacts")
+      .select("jobber_client_id, phone")
+      .not("phone", "is", null),
+  ]);
+
+  const customerMatch = (
+    (customersResult.data ?? []) as { jobber_client_id: string; phone: string | null }[]
+  ).find((row) => normalizePhone(row.phone) === target);
+
+  if (customerMatch) return customerMatch.jobber_client_id;
+
+  const contactMatch = (
+    (contactsResult.data ?? []) as { jobber_client_id: string; phone: string | null }[]
+  ).find((row) => normalizePhone(row.phone) === target);
+
+  return contactMatch?.jobber_client_id ?? null;
 }

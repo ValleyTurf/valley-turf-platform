@@ -25,6 +25,13 @@ const PUBLIC_PATHS = [
   // the svix-signature header check (see route.ts), same pattern as the
   // Stripe webhook above.
   "/api/webhooks/resend",
+  // Twilio POSTs directly to this one too (inbound SMS) — guards itself
+  // internally via the X-Twilio-Signature header check (see route.ts),
+  // same pattern as the Stripe/Resend webhooks above. This is the exact
+  // bug class that broke marketing-site photos (missing public exemption
+  // -> redirected to /login instead of reaching the route) — do not repeat
+  // it here.
+  "/api/webhooks/twilio",
   "/api/scan-leads",
   // Called by an external automation (Jobber automation / Zapier), not
   // from inside this app. Guards itself internally with its own

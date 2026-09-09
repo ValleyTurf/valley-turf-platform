@@ -4,7 +4,7 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { formatDateOnly } from "@/lib/format";
-import { markInboundEmailsRead } from "@/lib/contactHistory";
+import { markInboundMessagesRead } from "@/lib/contactHistory";
 import { replyToCustomerByEmail, updateServiceRequestStatus } from "./actions";
 import { StatusSelect } from "./StatusSelect";
 import { ReplyForm } from "./ReplyForm";
@@ -43,6 +43,17 @@ type OutboundEmail = {
 // to see outgoing texts in Messages, not just email, so this thread
 // needs its own query the way outboundEmailsResult already exists below.
 type OutboundSms = {
+  id: string;
+  subject: string | null;
+  summary: string | null;
+  created_at: string;
+};
+
+// A customer's reply to any text this app sends -- captured via the
+// Twilio inbound webhook (app/api/webhooks/twilio/route.ts), matched to
+// this customer by phone number and logged to contact_history the same
+// shape inbound email replies already use.
+type InboundSms = {
   id: string;
   subject: string | null;
   summary: string | null;
@@ -100,6 +111,7 @@ export default async function CustomerMessageThreadPage({
     emailsResult,
     outboundEmailsResult,
     outboundSmsResult,
+    inboundSmsResult,
   ] = await Promise.all([
       supabaseServer
         .from("customers")
@@ -147,16 +159,27 @@ export default async function CustomerMessageThreadPage({
         .order("created_at", { ascending: true })
         .limit(200),
 
-      // Outbound texts to this customer -- no inbound-SMS capture exists
-      // in this app yet (only inbound email replies are wired, via the
-      // Resend webhook), so this is one-directional: everything here is
-      // staff/automation-sent.
+      // Outbound texts to this customer -- visit reminders, "On My Way",
+      // invoice sends/reminders, quote follow-ups, receipts, etc.
       supabaseServer
         .from("contact_history")
         .select("id, subject, summary, created_at")
         .eq("jobber_client_id", jobberClientId)
         .eq("channel", "sms")
         .eq("direction", "outbound")
+        .order("created_at", { ascending: true })
+        .limit(200),
+
+      // Customer replies to any text this app sends -- see
+      // app/api/webhooks/twilio/route.ts for how these get here (matched
+      // by phone number rather than a reply-routing address like email
+      // uses).
+      supabaseServer
+        .from("contact_history")
+        .select("id, subject, summary, created_at")
+        .eq("jobber_client_id", jobberClientId)
+        .eq("channel", "sms")
+        .eq("direction", "inbound")
         .order("created_at", { ascending: true })
         .limit(200),
     ]);
@@ -170,6 +193,7 @@ export default async function CustomerMessageThreadPage({
   const inboundEmails = (emailsResult.data ?? []) as InboundEmail[];
   const outboundEmails = (outboundEmailsResult.data ?? []) as OutboundEmail[];
   const outboundSms = (outboundSmsResult.data ?? []) as OutboundSms[];
+  const inboundSms = (inboundSmsResult.data ?? []) as InboundSms[];
 
   const threadItems: ThreadItem[] = [
     ...messages.map(
@@ -219,6 +243,17 @@ export default async function CustomerMessageThreadPage({
         created_at: sms.created_at,
       })
     ),
+    ...inboundSms.map(
+      (sms): ThreadItem => ({
+        id: `inbound-sms-${sms.id}`,
+        kind: "sms",
+        sender: "customer",
+        senderLabel: customer?.full_name || "Customer",
+        subject: sms.subject,
+        body: sms.summary || "(No message body.)",
+        created_at: sms.created_at,
+      })
+    ),
   ].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   );
@@ -242,10 +277,10 @@ export default async function CustomerMessageThreadPage({
   }
 
   // Same "viewing counts as reading" convention, applied to inbound
-  // email replies (migration 057's read_at column) — keeps this page's
-  // unread counts in the /messages inbox and the Sidebar badge in sync
-  // with what staff have actually looked at.
-  await markInboundEmailsRead(jobberClientId);
+  // email/SMS replies (migration 057's read_at column) — keeps this
+  // page's unread counts in the /messages inbox and the Sidebar badge in
+  // sync with what staff have actually looked at.
+  await markInboundMessagesRead(jobberClientId);
 
   const replyToCustomerWithId = replyToCustomerByEmail.bind(null, jobberClientId);
 

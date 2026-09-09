@@ -100,36 +100,38 @@ export async function markEmailOpened(resendEmailId: string): Promise<void> {
 // Called when staff open a customer's message thread (app/(platform)/
 // messages/[clientId]/page.tsx) -- same "load the page, mark it seen"
 // convention that page already uses for portal_messages. Scoped to
-// channel: "email" + direction: "inbound" since those are the only rows
-// migration 057 ever expects a read_at on in the first place.
-export async function markInboundEmailsRead(
+// direction: "inbound" across both channel: "email" and channel: "sms"
+// (inbound texts, added for the Twilio webhook, get a read_at the exact
+// same way inbound email replies already did -- was email-only until then).
+export async function markInboundMessagesRead(
   jobberClientId: string
 ): Promise<void> {
   const { error } = await supabaseServer
     .from("contact_history")
     .update({ read_at: new Date().toISOString() })
     .eq("jobber_client_id", jobberClientId)
-    .eq("channel", "email")
+    .in("channel", ["email", "sms"])
     .eq("direction", "inbound")
     .is("read_at", null);
 
   if (error) {
-    console.error("markInboundEmailsRead failed:", error.message, jobberClientId);
+    console.error("markInboundMessagesRead failed:", error.message, jobberClientId);
   }
 }
 
-// Total unread count across both message sources this app has -- portal
-// chat (portal_messages) and inbound email replies (contact_history).
-// Powers the Sidebar's "Messages" nav badge (app/components/layout/
-// Sidebar.tsx via app/(platform)/layout.tsx), so staff can tell there's
-// something new without opening the inbox page. head: true + count:
-// "exact" asks Postgres for just the row count, not the rows themselves.
+// Total unread count across all three message sources this app has --
+// portal chat (portal_messages), inbound email replies, and inbound texts
+// (both contact_history). Powers the Sidebar's "Messages" nav badge
+// (app/components/layout/Sidebar.tsx via app/(platform)/layout.tsx), so
+// staff can tell there's something new without opening the inbox page.
+// head: true + count: "exact" asks Postgres for just the row count, not
+// the rows themselves.
 export async function getUnreadMessageCount(): Promise<number> {
-  const [emailResult, chatResult] = await Promise.all([
+  const [historyResult, chatResult] = await Promise.all([
     supabaseServer
       .from("contact_history")
       .select("id", { count: "exact", head: true })
-      .eq("channel", "email")
+      .in("channel", ["email", "sms"])
       .eq("direction", "inbound")
       .is("read_at", null),
 
@@ -140,7 +142,7 @@ export async function getUnreadMessageCount(): Promise<number> {
       .is("read_at", null),
   ]);
 
-  return (emailResult.count ?? 0) + (chatResult.count ?? 0);
+  return (historyResult.count ?? 0) + (chatResult.count ?? 0);
 }
 
 export type ContactHistoryEntry = {

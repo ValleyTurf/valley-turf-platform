@@ -19,8 +19,12 @@ type PortalServiceRequestRow = {
   created_at: string;
 };
 
-type InboundEmailRow = {
+// Customer replies to any email OR text this app sends -- email via
+// lib/replyRouting.ts + the Resend webhook, SMS via the Twilio webhook
+// (app/api/webhooks/twilio/route.ts), matched by phone number.
+type InboundMessageRow = {
   jobber_client_id: string | null;
+  channel: "email" | "sms" | "call";
   subject: string | null;
   summary: string | null;
   read_at: string | null;
@@ -88,7 +92,7 @@ function formatInboxTimestamp(iso: string, todayPhoenix: string | null): string 
 }
 
 export default async function MessagesInboxPage() {
-  const [messagesResult, requestsResult, inboundEmailsResult, outboundResult] =
+  const [messagesResult, requestsResult, inboundMessagesResult, outboundResult] =
     await Promise.all([
       supabaseServer
         .from("portal_messages")
@@ -103,15 +107,16 @@ export default async function MessagesInboxPage() {
         .order("created_at", { ascending: false })
         .limit(500),
 
-      // Customer replies to any email this app sends (see lib/replyRouting.ts
-      // and app/api/webhooks/resend/route.ts) -- these used to only ever
-      // show up buried on the individual Customer page's Contact History.
-      // Merged into this same inbox below so a new reply is just as visible
-      // as a new portal chat message.
+      // Customer replies to any email OR text this app sends (see
+      // lib/replyRouting.ts + app/api/webhooks/resend/route.ts for email,
+      // app/api/webhooks/twilio/route.ts for SMS) -- these used to only
+      // ever show up buried on the individual Customer page's Contact
+      // History. Merged into this same inbox below so a new reply is just
+      // as visible as a new portal chat message.
       supabaseServer
         .from("contact_history")
-        .select("jobber_client_id, subject, summary, read_at, created_at")
-        .eq("channel", "email")
+        .select("jobber_client_id, channel, subject, summary, read_at, created_at")
+        .in("channel", ["email", "sms"])
         .eq("direction", "inbound")
         .order("created_at", { ascending: false })
         .limit(500),
@@ -131,7 +136,7 @@ export default async function MessagesInboxPage() {
 
   const messages = (messagesResult.data ?? []) as PortalMessageRow[];
   const openRequests = (requestsResult.data ?? []) as PortalServiceRequestRow[];
-  const inboundEmails = (inboundEmailsResult.data ?? []) as InboundEmailRow[];
+  const inboundMessages = (inboundMessagesResult.data ?? []) as InboundMessageRow[];
   const outboundMessages = (outboundResult.data ?? []) as OutboundMessageRow[];
 
   const inboxMap = new Map<string, InboxRow>();
@@ -183,26 +188,31 @@ export default async function MessagesInboxPage() {
     }
   }
 
-  // Emails are already ordered newest-first too, so same "first time
-  // seen wins the preview" logic as the portal messages loop above.
-  for (const email of inboundEmails) {
-    if (!email.jobber_client_id) continue;
+  // Inbound messages are already ordered newest-first too, so same
+  // "first time seen wins the preview" logic as the portal messages loop
+  // above.
+  for (const inbound of inboundMessages) {
+    if (!inbound.jobber_client_id) continue;
 
-    const row = getOrCreate(email.jobber_client_id);
-    const preview = email.summary?.trim() || email.subject || "New email reply";
+    const row = getOrCreate(inbound.jobber_client_id);
+    const icon = inbound.channel === "sms" ? "💬" : "✉️";
+    const preview =
+      inbound.summary?.trim() ||
+      inbound.subject ||
+      (inbound.channel === "sms" ? "New text reply" : "New email reply");
 
-    if (email.created_at > row.lastActivityAt) {
-      row.lastActivityAt = email.created_at;
+    if (inbound.created_at > row.lastActivityAt) {
+      row.lastActivityAt = inbound.created_at;
 
-      // Newest activity overall for this customer -- let the email take
-      // over the preview line even if a portal message was seen first,
-      // so the preview always reflects whatever actually came in last.
-      row.lastMessagePreview = `✉️ ${preview}`;
+      // Newest activity overall for this customer -- let this reply take
+      // over the preview line even if a portal message was seen first, so
+      // the preview always reflects whatever actually came in last.
+      row.lastMessagePreview = `${icon} ${preview}`;
     } else if (!row.lastMessagePreview) {
-      row.lastMessagePreview = `✉️ ${preview}`;
+      row.lastMessagePreview = `${icon} ${preview}`;
     }
 
-    if (!email.read_at) {
+    if (!inbound.read_at) {
       row.unreadCount += 1;
     }
   }
