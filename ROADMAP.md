@@ -33,13 +33,22 @@ now).
 
 ## Next up
 
-1. **Full one-time data migration off Jobber.** Audit every
+1. **Surface unrecognized inbound texts/emails instead of dropping them.**
+   Right now, a text or email reply from a number/address that doesn't
+   match any customer on file just gets logged as a server-side error
+   and never shown anywhere. That's a real gap: a brand-new prospect who
+   got your number from a friend and texts in cold has no customer
+   record yet, so their message currently disappears. Need to figure out
+   a way to catch these as an "Unknown sender" bucket somewhere in
+   Messages (or a lead-creation prompt) so nothing from a potential new
+   customer gets silently lost.
+2. **Full one-time data migration off Jobber.** Audit every
    Jobber-sourced customer/job/visit/quote record, confirm nothing is
    missing from the local mirror (some older/edge-case records may
    predate a given sync route), then re-label them as natively-owned
    going forward — so this app's database becomes the actual system of
    record, not just a mirror of one.
-2. **Stop Jobber from writing into this app, except invoicing/payments.**
+3. **Stop Jobber from writing into this app, except invoicing/payments.**
    Turn off the daily customer/job/visit sync crons and the
    corresponding live webhook handlers (client/job/visit
    create/update/delete), while leaving invoice, payment, payout, and
