@@ -274,7 +274,36 @@ export default async function JobCostsPage({
   }
 
   const { data: allVisitsData, error } = await allVisitsQuery;
-  const allVisits = (allVisitsData ?? []) as VisitRow[];
+  const rawVisits = (allVisitsData ?? []) as VisitRow[];
+
+  // visit_costing_list (a view, not the raw jobber_visits table -- see
+  // its own header comment for why) doesn't carry job_status, so a
+  // canceled/archived job's visit had no way to ever drop off this page
+  // the way it already does on schedule/my-day/crew-status
+  // (051_add_job_status_to_visits.sql). Cross-referenced against
+  // jobber_visits by id instead of touching the view, since
+  // lib/dailyDigest.ts also reads visit_costing_list and shouldn't be
+  // affected by a job-costs-page-only concern. Same
+  // null-or-not-archived logic as those other pages -- a visit not yet
+  // backfilled/synced with a job_status at all still shows.
+  const rawVisitIds = rawVisits.map((visit) => visit.jobber_visit_id);
+  const { data: statusRows } =
+    rawVisitIds.length > 0
+      ? await supabaseServer
+          .from("jobber_visits")
+          .select("jobber_visit_id, job_status")
+          .in("jobber_visit_id", rawVisitIds)
+      : { data: [] as { jobber_visit_id: string; job_status: string | null }[] };
+
+  const archivedVisitIds = new Set(
+    ((statusRows ?? []) as { jobber_visit_id: string; job_status: string | null }[])
+      .filter((row) => row.job_status === "archived")
+      .map((row) => row.jobber_visit_id)
+  );
+
+  const allVisits = rawVisits.filter(
+    (visit) => !archivedVisitIds.has(visit.jobber_visit_id)
+  );
   const allVisitIds = allVisits.map((visit) => visit.jobber_visit_id);
 
   // Fetched for every visit in the window (not just the current page) —
