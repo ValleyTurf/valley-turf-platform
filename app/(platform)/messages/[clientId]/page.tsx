@@ -37,6 +37,18 @@ type OutboundEmail = {
   created_at: string;
 };
 
+// Every outbound text this app has sent this customer -- visit
+// reminders, "On My Way", invoice sends/reminders, quote follow-ups,
+// receipts, etc. (every sendXSms() in lib/notifications.ts). Ryan asked
+// to see outgoing texts in Messages, not just email, so this thread
+// needs its own query the way outboundEmailsResult already exists below.
+type OutboundSms = {
+  id: string;
+  subject: string | null;
+  summary: string | null;
+  created_at: string;
+};
+
 // A single shape both portal chat messages and inbound email replies get
 // normalized into so the thread below can render/sort them together --
 // emails are always customer-sent (this app only ever logs a customer's
@@ -44,7 +56,7 @@ type OutboundEmail = {
 // view), so they render on the same side as a customer's chat bubbles.
 type ThreadItem = {
   id: string;
-  kind: "chat" | "email";
+  kind: "chat" | "email" | "sms";
   sender: "customer" | "staff";
   senderLabel: string;
   subject: string | null;
@@ -87,6 +99,7 @@ export default async function CustomerMessageThreadPage({
     requestsResult,
     emailsResult,
     outboundEmailsResult,
+    outboundSmsResult,
   ] = await Promise.all([
       supabaseServer
         .from("customers")
@@ -133,6 +146,19 @@ export default async function CustomerMessageThreadPage({
         .eq("direction", "outbound")
         .order("created_at", { ascending: true })
         .limit(200),
+
+      // Outbound texts to this customer -- no inbound-SMS capture exists
+      // in this app yet (only inbound email replies are wired, via the
+      // Resend webhook), so this is one-directional: everything here is
+      // staff/automation-sent.
+      supabaseServer
+        .from("contact_history")
+        .select("id, subject, summary, created_at")
+        .eq("jobber_client_id", jobberClientId)
+        .eq("channel", "sms")
+        .eq("direction", "outbound")
+        .order("created_at", { ascending: true })
+        .limit(200),
     ]);
 
   const customer = customerResult.data as
@@ -143,6 +169,7 @@ export default async function CustomerMessageThreadPage({
   const requests = (requestsResult.data ?? []) as PortalServiceRequest[];
   const inboundEmails = (emailsResult.data ?? []) as InboundEmail[];
   const outboundEmails = (outboundEmailsResult.data ?? []) as OutboundEmail[];
+  const outboundSms = (outboundSmsResult.data ?? []) as OutboundSms[];
 
   const threadItems: ThreadItem[] = [
     ...messages.map(
@@ -179,6 +206,17 @@ export default async function CustomerMessageThreadPage({
         subject: email.subject,
         body: email.summary || "(No message body.)",
         created_at: email.created_at,
+      })
+    ),
+    ...outboundSms.map(
+      (sms): ThreadItem => ({
+        id: `outbound-sms-${sms.id}`,
+        kind: "sms",
+        sender: "staff",
+        senderLabel: "Staff",
+        subject: sms.subject,
+        body: sms.summary || "(No message body.)",
+        created_at: sms.created_at,
       })
     ),
   ].sort(
@@ -287,9 +325,10 @@ export default async function CustomerMessageThreadPage({
                       : "bg-white text-[#174734] shadow"
                   }`}
                 >
-                  {item.kind === "email" ? (
+                  {item.kind === "email" || item.kind === "sms" ? (
                     <p className="mb-1 text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
-                      ✉️ Email{item.subject ? ` · ${item.subject}` : ""}
+                      {item.kind === "sms" ? "💬 Text" : "✉️ Email"}
+                      {item.subject ? ` · ${item.subject}` : ""}
                     </p>
                   ) : null}
                   <p className="whitespace-pre-wrap">{item.body}</p>
