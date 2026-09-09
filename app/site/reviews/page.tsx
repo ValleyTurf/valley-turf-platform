@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { supabaseServer } from "@/lib/supabase-server";
 import { TESTIMONIALS, GOOGLE_RATING, GOOGLE_REVIEW_COUNT } from "../testimonials";
+import { fetchLatestGoogleReviews } from "@/lib/googleReviews";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -32,7 +33,14 @@ async function getGoogleReviewUrl(): Promise<string | null> {
 }
 
 export default async function ReviewsPage() {
-  const googleReviewUrl = await getGoogleReviewUrl();
+  const [googleReviewUrl, liveReviews] = await Promise.all([
+    getGoogleReviewUrl(),
+    fetchLatestGoogleReviews(3),
+  ]);
+
+  const testimonials = liveReviews?.reviews.length ? liveReviews.reviews : TESTIMONIALS;
+  const rating = liveReviews?.rating || GOOGLE_RATING;
+  const reviewCount = liveReviews?.reviewCount || GOOGLE_REVIEW_COUNT;
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-16 text-center sm:px-6">
@@ -47,7 +55,7 @@ export default async function ReviewsPage() {
           &#9733;&#9733;&#9733;&#9733;&#9733;
         </span>
         <span className="text-sm font-semibold" style={{ color: BRAND_GREEN }}>
-          {GOOGLE_RATING.toFixed(1)} ({GOOGLE_REVIEW_COUNT} Google reviews)
+          {rating.toFixed(1)} ({reviewCount} Google reviews)
         </span>
       </div>
       <p className="mt-6 text-lg" style={{ color: MUTED_GRAY }}>
@@ -69,8 +77,8 @@ export default async function ReviewsPage() {
       )}
 
       <div className="mt-14 grid gap-6 text-left sm:grid-cols-3">
-        {TESTIMONIALS.map((testimonial) => (
-          <div key={testimonial.name} className="rounded-3xl bg-white p-6 shadow-sm">
+        {testimonials.map((testimonial, index) => (
+          <div key={`${testimonial.name}-${index}`} className="rounded-3xl bg-white p-6 shadow-sm">
             <p className="text-sm" style={{ color: MUTED_GRAY }}>
               &ldquo;{testimonial.quote}&rdquo;
             </p>

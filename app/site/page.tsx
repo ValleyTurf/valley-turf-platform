@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { SERVICES, TURF_TASKS } from "./services";
 import { SERVICE_AREAS } from "./serviceAreas";
 import { TESTIMONIALS, GOOGLE_RATING, GOOGLE_REVIEW_COUNT } from "./testimonials";
+import { fetchLatestGoogleReviews } from "@/lib/googleReviews";
 
 export const metadata: Metadata = {
   title: "Artificial Turf Cleaning & Pet Odor Removal in Phoenix's East Valley",
@@ -70,7 +71,16 @@ const GALLERY_IMAGES = [
   "/images/gallery/gallery-9.jpg",
 ];
 
-export default function MarketingHomePage() {
+export default async function MarketingHomePage() {
+  // Live Google reviews when GOOGLE_PLACES_API_KEY/GOOGLE_PLACE_ID are
+  // configured (lib/googleReviews.ts) -- falls back to the static,
+  // hand-picked TESTIMONIALS/GOOGLE_RATING/GOOGLE_REVIEW_COUNT below
+  // until then, so this never breaks the page if the key isn't set yet.
+  const liveReviews = await fetchLatestGoogleReviews(3);
+  const testimonials = liveReviews?.reviews.length ? liveReviews.reviews : TESTIMONIALS;
+  const rating = liveReviews?.rating || GOOGLE_RATING;
+  const reviewCount = liveReviews?.reviewCount || GOOGLE_REVIEW_COUNT;
+
   return (
     <div>
       {/* Hero */}
@@ -91,7 +101,7 @@ export default function MarketingHomePage() {
             <div className="mt-6 flex items-center gap-2">
               <Stars />
               <span className="text-sm font-semibold" style={{ color: BRAND_GREEN }}>
-                {GOOGLE_RATING.toFixed(1)} ({GOOGLE_REVIEW_COUNT} Google reviews)
+                {rating.toFixed(1)} ({reviewCount} Google reviews)
               </span>
             </div>
             <div className="mt-8 flex flex-wrap items-center gap-4">
@@ -239,12 +249,12 @@ export default function MarketingHomePage() {
         <div className="mt-2 flex items-center justify-center gap-2">
           <Stars />
           <span className="text-sm font-semibold" style={{ color: BRAND_GREEN }}>
-            {GOOGLE_RATING.toFixed(1)} ({GOOGLE_REVIEW_COUNT} Google reviews)
+            {rating.toFixed(1)} ({reviewCount} Google reviews)
           </span>
         </div>
         <div className="mt-8 grid gap-6 sm:grid-cols-3">
-          {TESTIMONIALS.map((testimonial) => (
-            <div key={testimonial.name} className="rounded-3xl bg-white p-6 shadow-sm">
+          {testimonials.map((testimonial, index) => (
+            <div key={`${testimonial.name}-${index}`} className="rounded-3xl bg-white p-6 shadow-sm">
               <p className="text-sm" style={{ color: MUTED_GRAY }}>
                 &ldquo;{testimonial.quote}&rdquo;
               </p>
