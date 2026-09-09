@@ -135,12 +135,22 @@ export type DailyDigestSection = {
   sample: string[];
 };
 
+// Unpaid invoices additionally carries a running $ total across every
+// matching invoice, not just the sampled ones -- shown in the section
+// title so the dollar figure is visible even when there are more unpaid
+// invoices than the sample cap shows.
+export type UnpaidInvoicesSection = DailyDigestSection & {
+  totalAmount: number;
+};
+
 export type DailyDigestData = {
   unloggedJobCosts: DailyDigestSection;
   visitsMissingPhotos: DailyDigestSection;
   quotesApprovedNotScheduled: DailyDigestSection;
   openShifts: DailyDigestSection;
   openTimers: DailyDigestSection;
+  unpaidInvoices: UnpaidInvoicesSection;
+  remindersGoingOutToday: DailyDigestSection;
 };
 
 function digestSectionHtml(title: string, section: DailyDigestSection, emptyLabel: string): string {
@@ -197,7 +207,7 @@ export async function sendDailyDigestEmail(
         "Nothing outstanding."
       )}
       ${digestSectionHtml(
-        "Visits from yesterday missing photos",
+        "Visits missing photos (last 7 days)",
         data.visitsMissingPhotos,
         "All good."
       )}
@@ -215,6 +225,16 @@ export async function sendDailyDigestEmail(
         "Job timers left running",
         data.openTimers,
         "No stuck timers."
+      )}
+      ${digestSectionHtml(
+        `Unpaid invoices -- $${data.unpaidInvoices.totalAmount.toFixed(2)} outstanding`,
+        data.unpaidInvoices,
+        "Nothing unpaid."
+      )}
+      ${digestSectionHtml(
+        "Visit reminders going out today at 8am",
+        data.remindersGoingOutToday,
+        "None queued today."
       )}
       <p style="color: #6b705c; font-size: 12px; margin-top: 20px;">This is an automated summary -- no action needed unless something above looks off.</p>
     </div>

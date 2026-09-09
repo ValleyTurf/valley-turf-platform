@@ -261,3 +261,76 @@ export async function sendDueVisitReminders(): Promise<SendRemindersResult> {
 
   return result;
 }
+
+export type PendingRemindersPreview = {
+  count: number;
+  sample: string[];
+};
+
+// Read-only preview of what today's send-reminders cron (this same file's
+// sendDueVisitReminders, running later the same morning -- see
+// vercel.json, both anchored to Phoenix 7-8am) is about to actually send.
+// Ryan asked for this in the daily digest so he can see who's getting a
+// reminder before it goes out. Deliberately duplicates the rule ->
+// target-date -> pending-visit query above rather than sharing it with
+// sendDueVisitReminders, so a bug in this read-only preview path can
+// never affect the real send.
+export async function previewPendingVisitReminders(): Promise<PendingRemindersPreview> {
+  const { data: rulesData, error: rulesError } = await supabaseServer
+    .from("visit_reminder_rules")
+    .select("id, days_before")
+    .eq("enabled", true);
+
+  if (rulesError) {
+    return { count: 0, sample: [] };
+  }
+
+  const rules = (rulesData ?? []) as ReminderRule[];
+  const todayPhoenix = toPhoenixDateString(new Date().toISOString());
+
+  if (!todayPhoenix || rules.length === 0) {
+    return { count: 0, sample: [] };
+  }
+
+  const lines: string[] = [];
+  let count = 0;
+
+  for (const rule of rules) {
+    const targetDate = addDaysToPhoenixDate(todayPhoenix, rule.days_before);
+    const nextDate = addDaysToPhoenixDate(targetDate, 1);
+
+    const { data: visitsData } = await supabaseServer
+      .from("jobber_visits")
+      .select("jobber_visit_id, jobber_client_id, customer_name, title, start_at")
+      .gte("start_at", `${targetDate}T00:00:00${BUSINESS_UTC_OFFSET}`)
+      .lt("start_at", `${nextDate}T00:00:00${BUSINESS_UTC_OFFSET}`)
+      .or("job_status.is.null,job_status.neq.archived")
+      .not("jobber_client_id", "is", null);
+
+    const visits = (visitsData ?? []) as ReminderVisit[];
+
+    if (visits.length === 0) continue;
+
+    const visitIds = visits.map((v) => v.jobber_visit_id);
+    const { data: alreadySentData } = await supabaseServer
+      .from("visit_reminders_sent")
+      .select("jobber_visit_id")
+      .eq("days_before", rule.days_before)
+      .in("jobber_visit_id", visitIds);
+
+    const alreadySent = new Set(
+      (alreadySentData ?? []).map((row) => row.jobber_visit_id as string)
+    );
+    const pending = visits.filter((v) => !alreadySent.has(v.jobber_visit_id));
+
+    count += pending.length;
+
+    for (const visit of pending) {
+      const who = visit.customer_name ?? "Unknown customer";
+      const dateLabel = formatVisitDateLabel(visit.start_at);
+      lines.push(`${who} -- ${rule.days_before}-day reminder (visit ${dateLabel})`);
+    }
+  }
+
+  return { count, sample: lines.slice(0, 8) };
+}

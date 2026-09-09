@@ -15,7 +15,12 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
 import { parseLaborEmployeeName } from "@/lib/laborMaterialName";
 import { toNumber } from "@/lib/format";
-import { sendDailyDigestEmail, type DailyDigestData } from "@/lib/notifications";
+import {
+  sendDailyDigestEmail,
+  type DailyDigestData,
+  type UnpaidInvoicesSection,
+} from "@/lib/notifications";
+import { previewPendingVisitReminders } from "@/lib/visitReminders";
 
 const BUSINESS_UTC_OFFSET = "-07:00";
 
@@ -129,24 +134,32 @@ type CompletedVisitRow = {
   title: string | null;
 };
 
-// Visits marked completed yesterday (Phoenix) with zero photos across
-// every visit_notes row for that visit -- a visit can have several note
-// rows, each with its own (possibly empty) photo_paths array, so this
-// has to union across all of them rather than just checking row
-// existence. See lib/visitNotes.ts for the table/bucket this reads.
+// Visits marked completed in the last 7 days (Phoenix) with zero photos
+// across every visit_notes row for that visit -- a visit can have
+// several note rows, each with its own (possibly empty) photo_paths
+// array, so this has to union across all of them rather than just
+// checking row existence. See lib/visitNotes.ts for the table/bucket
+// this reads.
+//
+// Deliberately a rolling 7-day window rather than just "yesterday"
+// (Ryan's request) -- a job missing photos should keep showing up in
+// the digest every morning until someone actually adds the photos, not
+// just get one day of visibility and then silently drop off.
+const MISSING_PHOTOS_LOOKBACK_DAYS = 7;
+
 async function countVisitsMissingPhotos(): Promise<{
   count: number;
   sample: string[];
 }> {
   const todayPhoenix = toPhoenixDateString(new Date().toISOString());
   if (!todayPhoenix) return { count: 0, sample: [] };
-  const yesterday = addDaysToPhoenixDate(todayPhoenix, -1);
+  const windowStart = addDaysToPhoenixDate(todayPhoenix, -MISSING_PHOTOS_LOOKBACK_DAYS);
 
   const { data: visitsData } = await supabaseServer
     .from("jobber_visits")
     .select("jobber_visit_id, jobber_client_id, customer_name, title")
     .eq("visit_status", "COMPLETED")
-    .gte("completed_at", `${yesterday}T00:00:00${BUSINESS_UTC_OFFSET}`)
+    .gte("completed_at", `${windowStart}T00:00:00${BUSINESS_UTC_OFFSET}`)
     .lt("completed_at", `${todayPhoenix}T00:00:00${BUSINESS_UTC_OFFSET}`)
     .not("jobber_client_id", "is", null)
     .or("job_status.is.null,job_status.neq.archived");
@@ -174,6 +187,62 @@ async function countVisitsMissingPhotos(): Promise<{
       const who = v.customer_name ?? "Unknown customer";
       const what = v.title ?? "visit";
       return `${who} -- ${what}`;
+    }),
+  };
+}
+
+type InvoiceRow = {
+  jobber_invoice_id: string;
+  customer_name: string | null;
+  invoice_number: string | null;
+  status: string | null;
+  total: number | string | null;
+  due_date: string | null;
+};
+
+// Same permissive status check as lib/invoiceReminders.ts's
+// isUnpaidAndSendable (kept as a separate copy rather than an import --
+// this file only needs the read, not the reminder-sending machinery
+// around it): catches both native lowercase and Jobber-synced uppercase
+// statuses. Ryan's request -- every currently-outstanding invoice, not
+// just ones that happen to be exactly 3 or 10 days overdue like the
+// automated reminder rules.
+function isUnpaidInvoiceStatus(status: string | null): boolean {
+  if (!status) return false;
+  const upper = status.toUpperCase();
+  return !upper.includes("PAID") && !upper.includes("VOID") && upper !== "DRAFT";
+}
+
+async function countUnpaidInvoices(): Promise<UnpaidInvoicesSection> {
+  const { data } = await supabaseServer
+    .from("jobber_invoices")
+    .select("jobber_invoice_id, customer_name, invoice_number, status, total, due_date")
+    .not("jobber_client_id", "is", null);
+
+  const invoices = ((data ?? []) as InvoiceRow[]).filter((invoice) =>
+    isUnpaidInvoiceStatus(invoice.status)
+  );
+
+  // Oldest due date first -- the ones most worth a look land at the top
+  // of the sample list rather than in whatever order Supabase happened
+  // to return them.
+  invoices.sort((a, b) => {
+    if (!a.due_date) return 1;
+    if (!b.due_date) return -1;
+    return a.due_date < b.due_date ? -1 : 1;
+  });
+
+  const totalAmount = invoices.reduce((sum, invoice) => sum + toNumber(invoice.total), 0);
+
+  return {
+    count: invoices.length,
+    totalAmount,
+    sample: invoices.slice(0, SAMPLE_LIMIT).map((invoice) => {
+      const who = invoice.customer_name ?? "Unknown customer";
+      const number = invoice.invoice_number ?? "—";
+      const amount = toNumber(invoice.total).toFixed(2);
+      const due = invoice.due_date ?? "no due date";
+      return `${who} -- Invoice ${number}, $${amount}, due ${due}`;
     }),
   };
 }
@@ -329,13 +398,21 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     return { sent: false, reason: "No digest recipients configured." };
   }
 
-  const [unloggedJobCosts, visitsMissingPhotos, quotesApprovedNotScheduled, timecardIssues] =
-    await Promise.all([
-      countUnloggedJobCosts(),
-      countVisitsMissingPhotos(),
-      countQuotesApprovedNotScheduled(),
-      findTimecardIssues(),
-    ]);
+  const [
+    unloggedJobCosts,
+    visitsMissingPhotos,
+    quotesApprovedNotScheduled,
+    timecardIssues,
+    unpaidInvoices,
+    remindersGoingOutToday,
+  ] = await Promise.all([
+    countUnloggedJobCosts(),
+    countVisitsMissingPhotos(),
+    countQuotesApprovedNotScheduled(),
+    findTimecardIssues(),
+    countUnpaidInvoices(),
+    previewPendingVisitReminders(),
+  ]);
 
   const data: DailyDigestData = {
     unloggedJobCosts,
@@ -343,14 +420,21 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     quotesApprovedNotScheduled,
     openShifts: timecardIssues.openShifts,
     openTimers: timecardIssues.openTimers,
+    unpaidInvoices,
+    remindersGoingOutToday,
   };
 
+  // Reminders queued for today count toward "is there anything worth
+  // sending" too -- Ryan wants that visibility every morning, not only
+  // on days something is also broken.
   const totalFlagged =
     data.unloggedJobCosts.count +
     data.visitsMissingPhotos.count +
     data.quotesApprovedNotScheduled.count +
     data.openShifts.count +
-    data.openTimers.count;
+    data.openTimers.count +
+    data.unpaidInvoices.count +
+    data.remindersGoingOutToday.count;
 
   if (totalFlagged === 0) {
     return { sent: false, reason: "Nothing to report today -- digest skipped." };
