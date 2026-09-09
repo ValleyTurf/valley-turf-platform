@@ -63,6 +63,30 @@ type SentTodayRow = {
   createdAt: string;
 };
 
+// Same "today shows just a time, anything older shows a short date"
+// convention as the "Sent today" panel above, just also covering
+// non-today activity since this is a customer's most recent contact
+// ever, not only from today.
+function formatInboxTimestamp(iso: string, todayPhoenix: string | null): string {
+  const date = new Date(iso);
+
+  if (Number.isNaN(date.getTime())) return "";
+
+  if (todayPhoenix && toPhoenixDateString(iso) === todayPhoenix) {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Phoenix",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(date);
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Phoenix",
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
 export default async function MessagesInboxPage() {
   const [messagesResult, requestsResult, inboundEmailsResult, outboundResult] =
     await Promise.all([
@@ -342,19 +366,25 @@ export default async function MessagesInboxPage() {
                     ) : null}
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-2">
-                    {row.openRequestCount > 0 ? (
-                      <span className="rounded-full bg-[#faf4e3] px-3 py-1 text-xs font-bold text-[#9c7a20]">
-                        {row.openRequestCount} open request
-                        {row.openRequestCount === 1 ? "" : "s"}
-                      </span>
-                    ) : null}
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    <span className="text-xs text-[#9c9887]">
+                      {formatInboxTimestamp(row.lastActivityAt, todayPhoenix)}
+                    </span>
 
-                    {row.unreadCount > 0 ? (
-                      <span className="rounded-full bg-[#174734] px-3 py-1 text-xs font-bold text-white">
-                        {row.unreadCount} unread
-                      </span>
-                    ) : null}
+                    <div className="flex items-center gap-2">
+                      {row.openRequestCount > 0 ? (
+                        <span className="rounded-full bg-[#faf4e3] px-3 py-1 text-xs font-bold text-[#9c7a20]">
+                          {row.openRequestCount} open request
+                          {row.openRequestCount === 1 ? "" : "s"}
+                        </span>
+                      ) : null}
+
+                      {row.unreadCount > 0 ? (
+                        <span className="rounded-full bg-[#174734] px-3 py-1 text-xs font-bold text-white">
+                          {row.unreadCount} unread
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
                 </Link>
               ))}
