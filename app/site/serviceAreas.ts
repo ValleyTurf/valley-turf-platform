@@ -25,7 +25,6 @@ export const SERVICE_AREAS: ServiceArea[] = [
   { slug: "casa-grande", name: "Casa Grande", region: "Southeast Valley & Pinal County" },
   { slug: "coolidge", name: "Coolidge", region: "Southeast Valley & Pinal County" },
   { slug: "florence", name: "Florence", region: "Southeast Valley & Pinal County" },
-  { slug: "eloy", name: "Eloy", region: "Southeast Valley & Pinal County" },
 
   // Central Phoenix
   { slug: "phoenix", name: "Phoenix", region: "Central Phoenix" },
