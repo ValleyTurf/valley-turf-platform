@@ -50,6 +50,13 @@ const PUBLIC_PATHS = [
   // auth check and got 302'd to /login, so the logo silently rendered as
   // a broken image for every signed-out visitor.
   "/branding",
+  // Same bug, same fix, for the real hero/gallery/before-after photos
+  // added to the marketing site (public/images/**). next/image's
+  // optimizer fetches these from this same deployment over HTTP, so
+  // without a public exemption every one of those fetches got redirected
+  // to the login page (HTML) instead of the actual photo, which is
+  // exactly why they rendered as broken images for a signed-out visitor.
+  "/images",
   // Same reasoning as the PWA assets above — a crawler requesting this
   // with no session cookie was getting redirected to /login (HTML)
   // instead of the actual disallow rules, so Googlebot had no way to
