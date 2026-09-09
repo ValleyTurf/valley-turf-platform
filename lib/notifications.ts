@@ -1519,7 +1519,7 @@ export async function sendVisitReminderEmail(
         from: fromHeader(),
         to: toEmail,
         reply_to: replyToAddressFor(jobberClientId),
-        subject: "Please confirm your upcoming turf cleaning",
+        subject: "Upcoming Turf Cleaning Appointment",
         html,
       }),
     });
