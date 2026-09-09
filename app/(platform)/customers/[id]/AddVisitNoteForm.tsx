@@ -90,7 +90,20 @@ export default function AddVisitNoteForm({
         return;
       }
 
-      formRef.current?.reset();
+      // Deliberately NOT form.reset() -- that snaps the visit <select>
+      // back to its defaultValue (noteableVisits[0], which is the
+      // customer's next UPCOMING visit when one exists, listed ahead of
+      // past visits -- see page.tsx). A staff member adding a text note
+      // then coming right back to attach photos to that same visit would
+      // have the picker silently jump to a different (often future,
+      // unrelated) visit in between, with no indication it happened --
+      // exactly how a photo-only note ended up dated months out instead
+      // of tied to the visit it was actually about. Only the text and
+      // file inputs get cleared; the visit selection is left exactly
+      // where the user put it.
+      const noteField = form.elements.namedItem("note");
+      if (noteField instanceof HTMLTextAreaElement) noteField.value = "";
+      if (fileInput instanceof HTMLInputElement) fileInput.value = "";
       setSaved(true);
     });
   }

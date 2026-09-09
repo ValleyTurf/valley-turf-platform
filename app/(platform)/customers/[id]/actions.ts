@@ -2,12 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
-import { getCurrentUser } from "@/lib/currentUser";
+import { getCurrentUser, requireAdmin } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
 import {
   insertVisitNote,
   parsePhotoPathsField,
   removeVisitNotePhoto,
+  updateVisitNote,
+  deleteVisitNote,
 } from "@/lib/visitNotes";
 import { removeJobberJobNotePhoto } from "@/lib/jobberJobNotes";
 import { getOrCreateEnrollmentToken, setAutopayEnabled } from "@/lib/autopay";
@@ -259,6 +261,85 @@ export async function removeVisitPhoto(
     entityId: noteId,
     entityLabel: photoPath,
     before: { photo_path: photoPath },
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+
+  return { error: null };
+}
+
+// Admin-only (Ryan's explicit request): fixes a note's text and/or adds
+// photos to it after the fact -- e.g. a note saved with no photos, where
+// the follow-up "just add the photos" attempt landed on the wrong visit
+// entirely because AddVisitNoteForm's visit picker used to snap back to
+// the next upcoming visit after every save (see that file's own fix).
+// requireAdmin throws (caught below, turned into the same {error} shape
+// every other action here returns) rather than silently no-op'ing, since
+// this is reachable directly as a Server Action call, not just via a
+// button a non-admin would never see.
+export async function updateVisitNoteText(
+  jobberClientId: string,
+  noteId: string,
+  formData: FormData
+): Promise<{ error: string | null }> {
+  let actor;
+  try {
+    actor = await requireAdmin();
+  } catch {
+    return { error: "Only admins can edit visit notes." };
+  }
+
+  const note = cleanText(formData.get("note"));
+  const addPhotoPaths = parsePhotoPathsField(formData);
+
+  const result = await updateVisitNote(noteId, { note, addPhotoPaths });
+
+  if (result.error) {
+    return result;
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "visit_note",
+    entityId: noteId,
+    entityLabel: note ?? `+${addPhotoPaths.length} photo(s)`,
+    after: { note, added_photo_count: addPhotoPaths.length },
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+
+  return { error: null };
+}
+
+// Admin-only whole-note delete -- for a note/photos attached to
+// completely the wrong visit, where updateVisitNoteText above can't help
+// since jobber_visit_id itself isn't editable (the note would need to
+// move to a different visit's group). Delete and re-add against the
+// right visit is the supported fix for that case.
+export async function deleteVisitNoteAction(
+  jobberClientId: string,
+  noteId: string
+): Promise<{ error: string | null }> {
+  let actor;
+  try {
+    actor = await requireAdmin();
+  } catch {
+    return { error: "Only admins can delete visit notes." };
+  }
+
+  const result = await deleteVisitNote(noteId);
+
+  if (result.error) {
+    return result;
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "delete",
+    entityType: "visit_note",
+    entityId: noteId,
+    entityLabel: "Visit note deleted",
   });
 
   revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);

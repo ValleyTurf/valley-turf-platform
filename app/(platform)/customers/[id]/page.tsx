@@ -6,6 +6,7 @@ import { jobberGraphQL } from "@/lib/jobber";
 import { isNativeId } from "@/lib/nativeJobs";
 import { supabaseServer } from "@/lib/supabase-server";
 import { normalizeEmail, normalizePhone } from "@/lib/matching";
+import { getCurrentUser } from "@/lib/currentUser";
 import {
   updateCustomerProfile,
   updateGeneralNotes,
@@ -15,6 +16,8 @@ import {
   toggleAutopay,
   setCurrentProperty,
   logPhoneCall,
+  updateVisitNoteText,
+  deleteVisitNoteAction,
 } from "./actions";
 import { getPaymentMethodByClientId } from "@/lib/autopay";
 import { saveVisitCosts } from "../../materials/actions";
@@ -26,6 +29,7 @@ import {
 } from "@/lib/contactHistory";
 import TurfSizeField from "./TurfSizeField";
 import AddVisitNoteForm from "./AddVisitNoteForm";
+import VisitNoteItem from "./VisitNoteItem";
 import PhotoGrid from "@/app/components/PhotoGrid";
 import { ComposeEmailForm } from "@/app/components/ComposeEmailForm";
 import CustomerContactsSection from "./CustomerContactsSection";
@@ -1302,6 +1306,13 @@ export default async function CustomerDetailPage({
     getNativeInvoicesForCustomer(decodedId),
   ]);
 
+  // Gates the Edit/Delete controls on each visit note below (Ryan's
+  // explicit "at the admin level" request) -- a manager or staff member
+  // can still add notes/photos via AddVisitNoteForm above, just not
+  // rewrite or remove one after the fact.
+  const currentUser = await getCurrentUser();
+  const isAdmin = currentUser?.role === "admin";
+
   if (!client) {
     return (
       <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
@@ -1846,33 +1857,31 @@ export default async function CustomerDetailPage({
 
                       <div className="mt-2 space-y-2">
                         {group.notes.map((note) => (
-                          <div
+                          <VisitNoteItem
                             key={note.id}
-                            className="rounded-xl bg-[#f7f6f1] px-3 py-2"
-                          >
-                            {note.note && (
-                              <p className="text-sm text-[#174734]">
-                                {note.note}
-                              </p>
+                            jobberVisitId={note.jobberVisitId}
+                            note={note.note}
+                            photoUrls={note.photoUrls}
+                            photoPaths={note.photoPaths}
+                            authorName={note.authorName}
+                            createdAtLabel={formatVisitDateTime(note.createdAt)}
+                            canManage={isAdmin}
+                            onRemovePhoto={removeVisitPhoto.bind(
+                              null,
+                              decodedId,
+                              note.id
                             )}
-
-                            <PhotoGrid
-                              photos={note.photoUrls.map((url, i) => ({
-                                url,
-                                path: note.photoPaths[i],
-                              }))}
-                              onRemove={removeVisitPhoto.bind(
-                                null,
-                                decodedId,
-                                note.id
-                              )}
-                            />
-
-                            <p className="mt-1 text-[10px] text-[#9c7a20]">
-                              {note.authorName ?? "Unknown"} ·{" "}
-                              {formatVisitDateTime(note.createdAt)}
-                            </p>
-                          </div>
+                            onUpdate={updateVisitNoteText.bind(
+                              null,
+                              decodedId,
+                              note.id
+                            )}
+                            onDelete={deleteVisitNoteAction.bind(
+                              null,
+                              decodedId,
+                              note.id
+                            )}
+                          />
                         ))}
                       </div>
                     </div>

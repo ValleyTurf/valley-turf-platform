@@ -150,6 +150,94 @@ export async function removeVisitNotePhoto(
   return { error: null };
 }
 
+// Admin-only correction tool (Ryan's request): a note saved without
+// photos, then a follow-up note/photos landing on the wrong visit
+// because AddVisitNoteForm's visit picker defaults back to the next
+// upcoming visit after every save (see that file's own fix) needs a way
+// to actually be fixed after the fact, not just avoided going forward.
+// addPhotoPaths are appended to whatever's already on the note (not a
+// replacement) so pulling a wrong photo off (removeVisitNotePhoto above)
+// and adding correct ones on are independent, composable operations
+// through the same "Edit" UI.
+export async function updateVisitNote(
+  noteId: string,
+  params: { note: string | null; addPhotoPaths: string[] }
+): Promise<{ error: string | null }> {
+  const { data: noteRow, error: fetchError } = await supabaseServer
+    .from("visit_notes")
+    .select("photo_paths")
+    .eq("id", noteId)
+    .maybeSingle();
+
+  if (fetchError) {
+    return { error: fetchError.message };
+  }
+
+  if (!noteRow) {
+    return { error: "Note not found." };
+  }
+
+  const mergedPaths = [
+    ...((noteRow.photo_paths ?? []) as string[]),
+    ...params.addPhotoPaths,
+  ];
+
+  if (!params.note && mergedPaths.length === 0) {
+    return { error: "A note can't be saved completely empty — add text or a photo." };
+  }
+
+  const { error } = await supabaseServer
+    .from("visit_notes")
+    .update({ note: params.note, photo_paths: mergedPaths })
+    .eq("id", noteId);
+
+  return { error: error?.message ?? null };
+}
+
+// Whole-note delete (admin-only, wired in customers/[id]/actions.ts) —
+// e.g. a note/photos that landed against the wrong visit entirely, where
+// editing it to the right visit isn't possible since jobber_visit_id
+// isn't editable through updateVisitNote above (the note would need to
+// move to a different visit's group, not just change content). Deleting
+// and re-adding against the correct visit is the supported fix for that
+// case. Best-effort photo cleanup, same reasoning as
+// removeVisitNotePhoto -- the DB delete is what actually matters for the
+// app; a storage-quota leftover from a failed cleanup isn't worth
+// blocking on.
+export async function deleteVisitNote(
+  noteId: string
+): Promise<{ error: string | null }> {
+  const { data: noteRow, error: fetchError } = await supabaseServer
+    .from("visit_notes")
+    .select("photo_paths")
+    .eq("id", noteId)
+    .maybeSingle();
+
+  if (fetchError) {
+    return { error: fetchError.message };
+  }
+
+  if (!noteRow) {
+    return { error: "Note not found." };
+  }
+
+  const { error: deleteError } = await supabaseServer
+    .from("visit_notes")
+    .delete()
+    .eq("id", noteId);
+
+  if (deleteError) {
+    return { error: deleteError.message };
+  }
+
+  const photoPaths = (noteRow.photo_paths ?? []) as string[];
+  if (photoPaths.length > 0) {
+    await supabaseServer.storage.from(PHOTO_BUCKET).remove(photoPaths);
+  }
+
+  return { error: null };
+}
+
 type VisitNoteRow = {
   id: string;
   jobber_visit_id: string;
