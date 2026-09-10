@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 import { supabaseServer } from "@/lib/supabase-server";
 import { formatCurrencyPrecise, formatDateOnly } from "@/lib/format";
 import { payInvoice } from "./actions";
+import { TipSelector } from "./TipSelector";
 
 type PublicInvoice = {
   id: string;
@@ -173,9 +174,10 @@ export default async function PublicInvoicePage({
 
       {isPayable && (
         <form action={payInvoice.bind(null, token)} className="mt-6">
+          <TipSelector invoiceTotal={Number(invoice.total)} />
           <button
             type="submit"
-            className="w-full rounded-xl bg-[#174734] px-5 py-4 text-center text-base font-bold text-white transition hover:bg-[#226246]"
+            className="mt-4 w-full rounded-xl bg-[#174734] px-5 py-4 text-center text-base font-bold text-white transition hover:bg-[#226246]"
           >
             Pay Now
           </button>

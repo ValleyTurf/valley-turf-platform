@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/currentUser";
 import { supabaseServer } from "@/lib/supabase-server";
 import { sendManualEmailToCustomer } from "@/lib/composeEmailAction";
+import { sendManualSmsToCustomer } from "@/lib/composeSmsAction";
 
 // Replaces the old replyToCustomer, which wrote into portal_messages --
 // the customer-portal chat table nobody actually uses (Ryan: "replying
@@ -52,6 +53,28 @@ export async function replyToCustomerByEmail(
   emailFormData.set("body", body);
 
   const result = await sendManualEmailToCustomer(jobberClientId, emailFormData);
+
+  if (result.error) {
+    return result;
+  }
+
+  revalidatePath(`/messages/${jobberClientId}`);
+  revalidatePath("/messages");
+
+  return { error: null };
+}
+
+// Text counterpart to replyToCustomerByEmail above -- no subject/"Re:"
+// concept for a text, so this is a much thinner wrapper around
+// sendManualSmsToCustomer (lib/composeSmsAction.ts). Lets the Messages
+// thread's reply box send either channel from the same place, matching
+// how outbound texts already show up alongside outbound emails in that
+// same thread.
+export async function replyToCustomerBySms(
+  jobberClientId: string,
+  formData: FormData
+): Promise<{ error: string | null }> {
+  const result = await sendManualSmsToCustomer(jobberClientId, formData);
 
   if (result.error) {
     return result;

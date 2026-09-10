@@ -62,43 +62,35 @@ now).
    already being done through this app day-to-day, we're clear to
    proceed.
 
-## Top 10 fresh ideas (CRM + website)
+## Fresh ideas (CRM + website)
 
 1. ~~**Capture inbound text replies.**~~ **Done.** A customer replying
    to a visit reminder/invoice text now gets logged and shown in
    Messages the same way an email reply already was, via a new Twilio
    inbound webhook.
-2. **At-risk/churn scoring.** Reactivation and Customer Intelligence
-   already bucket customers by time-since-last-service — a real
-   predictive score (declining frequency, late payments, complaint
-   history) would catch customers before they go quiet, not after.
-3. **Referral program.** A trackable referral link/code per customer,
+2. **Referral program.** A trackable referral link/code per customer,
    a reward when it converts, and a leaderboard/report for you — ties
    the marketing site and CRM together and is a cheap way to grow.
-4. **One-time add-on upsells at booking.** Let a customer tack on an
-   extra deodorizing treatment, infill top-up, etc. when confirming a
-   visit or requesting service, priced automatically off the pricing
-   calculator that already exists for quotes.
-5. **Push notifications**, not just the PWA install prompt — a crew
+3. **Push notifications**, not just the PWA install prompt — a crew
    member gets pinged the moment they're assigned a new visit; a
    customer gets a day-of alert beyond the 2-day/4-day email/text.
-6. **Recurring-revenue dashboard.** You're a subscription-style
+4. **Recurring-revenue dashboard.** You're a subscription-style
    business (Revival plans) — an MRR-style view (new/lost/net recurring
    revenue by month) would sit well next to the existing Revenue
    dashboard.
-7. **Marketing site content/SEO buildout.** Per-city pages exist but
+5. **Marketing site content/SEO buildout.** Per-city pages exist but
    are thin; a short FAQ/content block per city plus LocalBusiness
    schema markup would help local search ranking more than anything
    else easy to do on the site right now.
-8. **Seasonal promo automation.** Auto-send a targeted email/text
+6. **Seasonal promo automation.** Auto-send a targeted email/text
    campaign (e.g. spring startup, fall cleanup) to a filtered customer
    segment, reusing the Compose Email infrastructure that already
    exists.
-9. **Photo-based before/after gallery, sourced from your own visit
+7. **Photo-based before/after gallery, sourced from your own visit
    photos.** My Day already captures visit photos — surfacing the best
    of them (with customer permission) on the marketing site would beat
    hand-picking gallery images.
-10. **Team performance dashboard.** Crew Status and job costing already
-    track time-per-visit and job costs per crew member — rolling that
-    up into a simple per-crew scorecard (avg time, cost accuracy, tips)
-    would help with reviews and scheduling decisions.
+8. **Team performance dashboard.** Crew Status and job costing already
+   track time-per-visit and job costs per crew member — rolling that
+   up into a simple per-crew scorecard (avg time, cost accuracy, tips)
+   would help with reviews and scheduling decisions.

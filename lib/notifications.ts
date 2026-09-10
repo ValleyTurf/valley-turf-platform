@@ -126,6 +126,78 @@ async function sendLeadEmailAlert(lead: NewLeadAlert): Promise<void> {
   }
 }
 
+// Ryan's request: a staff-facing heads-up the moment money actually
+// comes in, separate from the customer-facing receipt (sendManualPayment
+// ReceiptEmail/Sms, or the autopay receipt sent synchronously by the
+// invoice-send flow). Fires for every successful payment_intent.succeeded
+// (lib/stripeWebhookProcessor.ts) regardless of whether it was a manual
+// Pay Now checkout or an autopay charge -- an internal alert like
+// sendNewLeadAlerts above, so no logContactHistory call.
+export type PaymentReceivedAlert = {
+  invoiceNumber: string;
+  customerName: string | null;
+  amount: number;
+  method: string | null;
+  viaAutopay: boolean;
+};
+
+export async function sendPaymentReceivedAlertEmail(
+  alert: PaymentReceivedAlert
+): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    return;
+  }
+
+  const amountLabel = alert.amount.toFixed(2);
+  const methodLabel = alert.viaAutopay
+    ? "Autopay (saved card)"
+    : alert.method === "us_bank_account"
+      ? "Bank transfer (ACH)"
+      : alert.method === "card"
+        ? "Card"
+        : "Card or bank transfer";
+
+  const subject = `Payment received: $${amountLabel} -- Invoice ${alert.invoiceNumber}`;
+
+  const html = `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 16px; font-weight: bold;">Payment received</p>
+      <p><strong>Customer:</strong> ${escapeHtml(alert.customerName)}</p>
+      <p><strong>Invoice:</strong> ${escapeHtml(alert.invoiceNumber)}</p>
+      <p><strong>Amount:</strong> $${amountLabel}</p>
+      <p><strong>Method:</strong> ${escapeHtml(methodLabel)}</p>
+    </div>
+  `;
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromHeader(),
+        to: ALERT_EMAIL,
+        subject,
+        html,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error(
+        "Payment received alert email failed:",
+        response.status,
+        await response.text()
+      );
+    }
+  } catch (error) {
+    console.error("Payment received alert email error:", error);
+  }
+}
+
 // Ops digest, once a day (lib/dailyDigest.ts) -- an internal alert like
 // sendNewLeadAlerts above, not a customer-facing send, so no
 // logContactHistory call and no reply-routing address. Draft wording
@@ -513,6 +585,68 @@ export async function sendManualEmail(request: ManualEmail): Promise<boolean> {
     return true;
   } catch (error) {
     console.error("Manual email error:", error);
+    return false;
+  }
+}
+
+export type ManualSms = {
+  toPhone: string;
+  body: string;
+  jobberClientId: string | null;
+  createdByUserId?: string | null;
+  createdByName?: string | null;
+};
+
+// Staff-composed, one-off text -- the SMS counterpart to sendManualEmail
+// above (see lib/composeSmsAction.ts and ComposeSmsForm/ReplyForm for the
+// entry points). Sent as-is, no template wrapper -- staff are writing
+// this themselves, same "reads like a normal text" reasoning as the
+// manual email version.
+export async function sendManualSms(request: ManualSms): Promise<boolean> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_FROM_NUMBER;
+
+  if (!accountSid || !authToken || !fromNumber) {
+    console.error("Cannot send manual text: Twilio env vars are not set.");
+    return false;
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${accountSid}:${authToken}`
+          ).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          To: request.toPhone,
+          From: fromNumber,
+          Body: request.body,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      console.error("Manual text failed:", response.status, await response.text());
+      return false;
+    }
+
+    await logContactHistory({
+      jobberClientId: request.jobberClientId,
+      channel: "sms",
+      summary: request.body,
+      createdByUserId: request.createdByUserId ?? null,
+      createdByName: request.createdByName ?? null,
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Manual text error:", error);
     return false;
   }
 }

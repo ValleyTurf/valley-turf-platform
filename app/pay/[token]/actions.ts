@@ -17,7 +17,7 @@ import { supabaseServer } from "@/lib/supabase-server";
 
 const PAYABLE_STATUSES = new Set(["sent", "overdue"]);
 
-export async function payInvoice(token: string): Promise<void> {
+export async function payInvoice(token: string, formData: FormData): Promise<void> {
   const { data: invoice, error: fetchError } = await supabaseServer
     .from("invoices")
     .select("id, invoice_number, status, total")
@@ -42,11 +42,23 @@ export async function payInvoice(token: string): Promise<void> {
     redirect(`/pay/${token}?error=invalid_amount`);
   }
 
+  // Optional tip, chosen on the page itself (TipSelector) before Pay Now
+  // is clicked -- Ryan's request. createCheckoutSession already supports
+  // this as its own Stripe line item (Stripe Checkout has no native tip
+  // prompt); this was the only caller that never actually passed it
+  // through, so no invoice paid through this page ever had a tip option.
+  const tipCentsRaw = formData.get("tipCents");
+  const parsedTipCents =
+    typeof tipCentsRaw === "string" ? Math.round(Number(tipCentsRaw)) : 0;
+  const tipCents =
+    Number.isFinite(parsedTipCents) && parsedTipCents > 0 ? parsedTipCents : undefined;
+
   const baseUrl = await getBaseUrl();
 
   const checkoutResult = await createCheckoutSession({
     description: `Invoice ${invoice.invoice_number}`,
     amountCents,
+    tipCents,
     successUrl: `${baseUrl}/pay/${token}?paid=1`,
     cancelUrl: `${baseUrl}/pay/${token}`,
     metadata: { invoice_id: invoice.id },

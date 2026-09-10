@@ -5,7 +5,11 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { formatDateOnly } from "@/lib/format";
 import { markInboundMessagesRead } from "@/lib/contactHistory";
-import { replyToCustomerByEmail, updateServiceRequestStatus } from "./actions";
+import {
+  replyToCustomerByEmail,
+  replyToCustomerBySms,
+  updateServiceRequestStatus,
+} from "./actions";
 import { StatusSelect } from "./StatusSelect";
 import { ReplyForm } from "./ReplyForm";
 
@@ -282,7 +286,8 @@ export default async function CustomerMessageThreadPage({
   // sync with what staff have actually looked at.
   await markInboundMessagesRead(jobberClientId);
 
-  const replyToCustomerWithId = replyToCustomerByEmail.bind(null, jobberClientId);
+  const replyToCustomerByEmailWithId = replyToCustomerByEmail.bind(null, jobberClientId);
+  const replyToCustomerBySmsWithId = replyToCustomerBySms.bind(null, jobberClientId);
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
@@ -379,10 +384,12 @@ export default async function CustomerMessageThreadPage({
             )}
           </div>
 
-          <ReplyForm onSubmit={replyToCustomerWithId} />
+          <ReplyForm
+            onSubmitEmail={replyToCustomerByEmailWithId}
+            onSubmitSms={replyToCustomerBySmsWithId}
+          />
           <p className="mt-2 text-xs text-[#9c9887]">
-            Sends a real email to the customer (as a reply to whatever they
-            last emailed in about) and logs here.
+            Sends a real email or text to the customer and logs here.
           </p>
         </section>
       </div>

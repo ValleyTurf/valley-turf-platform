@@ -26,6 +26,7 @@ import { getNotificationRecipients } from "@/lib/customerContacts";
 import {
   sendManualPaymentReceiptEmail,
   sendManualPaymentReceiptSms,
+  sendPaymentReceivedAlertEmail,
 } from "@/lib/notifications";
 
 type StripeWebhookEventRow = {
@@ -200,6 +201,38 @@ async function sendManualPaymentReceipt(invoiceId: string): Promise<void> {
   }
 }
 
+// Best-effort, staff-facing (Ryan's request) -- fires for every
+// successful payment regardless of source (manual Pay Now checkout or
+// autopay charge), unlike sendManualPaymentReceipt which is customer-
+// facing and skipped for autopay (that flow already sent its own receipt
+// synchronously). Wrapped the same way: a failure here should never
+// affect the already-recorded payment/invoice state.
+async function notifyStaffOfPayment(
+  invoiceId: string,
+  amount: number,
+  method: string | null,
+  viaAutopay: boolean
+): Promise<void> {
+  try {
+    const invoice = await getInvoiceById(invoiceId);
+
+    if (!invoice) return;
+
+    await sendPaymentReceivedAlertEmail({
+      invoiceNumber: invoice.invoiceNumber,
+      customerName: invoice.customerName,
+      amount,
+      method,
+      viaAutopay,
+    });
+  } catch (error) {
+    console.error(
+      `Failed to send payment-received staff alert for invoice ${invoiceId}:`,
+      error
+    );
+  }
+}
+
 // The authoritative "money actually captured" event -- fires for card
 // immediately and for ACH once the debit clears (days later). This is
 // what actually flips an invoice to paid; checkout.session.completed
@@ -276,12 +309,18 @@ async function handlePaymentIntentSucceeded(
       stripePaymentIntentId: paymentIntent.id,
     });
 
+    const viaAutopay = paymentIntent.metadata?.source === "autopay";
+
+    // Staff-facing "money came in" alert -- fires either way, unlike the
+    // customer-facing receipt below.
+    await notifyStaffOfPayment(invoiceId, amount, method, viaAutopay);
+
     // Autopay's off-session charge (lib/autopay.ts's attemptAutopayCharge)
     // tags its PaymentIntent with source=autopay and already sent its own
     // receipt synchronously the moment the charge succeeded -- this is
     // only for a manual Pay Now checkout, which has no other confirmation
     // step.
-    if (paymentIntent.metadata?.source !== "autopay") {
+    if (!viaAutopay) {
       await sendManualPaymentReceipt(invoiceId);
     }
   } else {

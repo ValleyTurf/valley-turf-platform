@@ -82,7 +82,33 @@ async function countUnloggedJobCosts(): Promise<{
   ]);
 
   const materials = (materialsResult.data ?? []) as { id: string; name: string }[];
-  const visits = (visitsResult.data ?? []) as VisitCostingRow[];
+  const rawVisits = (visitsResult.data ?? []) as VisitCostingRow[];
+
+  if (rawVisits.length === 0) return { count: 0, sample: [] };
+
+  // visit_costing_list (a view) doesn't carry job_status, so a
+  // canceled/archived job's visit had no way to ever drop off this
+  // section -- same gap job-costs/page.tsx already had to work around
+  // (see that file's comment above its own archivedVisitIds filter).
+  // Cross-referenced against jobber_visits by id rather than touching
+  // the view, since job-costs/page.tsx also reads visit_costing_list and
+  // shouldn't be affected by a digest-only concern.
+  const rawVisitIds = rawVisits.map((visit) => visit.jobber_visit_id);
+  const { data: statusRows } =
+    rawVisitIds.length > 0
+      ? await supabaseServer
+          .from("jobber_visits")
+          .select("jobber_visit_id, job_status")
+          .in("jobber_visit_id", rawVisitIds)
+      : { data: [] as { jobber_visit_id: string; job_status: string | null }[] };
+
+  const archivedVisitIds = new Set(
+    ((statusRows ?? []) as { jobber_visit_id: string; job_status: string | null }[])
+      .filter((row) => row.job_status === "archived")
+      .map((row) => row.jobber_visit_id)
+  );
+
+  const visits = rawVisits.filter((visit) => !archivedVisitIds.has(visit.jobber_visit_id));
 
   if (visits.length === 0) return { count: 0, sample: [] };
 
