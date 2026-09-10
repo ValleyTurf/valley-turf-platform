@@ -93,6 +93,7 @@ function formatMessageTime(value: string): string {
   if (Number.isNaN(date.getTime())) return "";
 
   return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Phoenix",
     month: "short",
     day: "numeric",
     hour: "numeric",
