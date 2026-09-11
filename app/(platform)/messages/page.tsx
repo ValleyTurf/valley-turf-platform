@@ -4,6 +4,8 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
+import { listNewUnknownContacts } from "@/lib/unknownContacts";
+import UnknownContactsPanel from "./UnknownContactsPanel";
 
 type PortalMessageRow = {
   jobber_client_id: string;
@@ -92,8 +94,13 @@ function formatInboxTimestamp(iso: string, todayPhoenix: string | null): string 
 }
 
 export default async function MessagesInboxPage() {
-  const [messagesResult, requestsResult, inboundMessagesResult, outboundResult] =
-    await Promise.all([
+  const [
+    messagesResult,
+    requestsResult,
+    inboundMessagesResult,
+    outboundResult,
+    unknownContacts,
+  ] = await Promise.all([
       supabaseServer
         .from("portal_messages")
         .select("jobber_client_id, sender, body, read_at, created_at")
@@ -132,6 +139,13 @@ export default async function MessagesInboxPage() {
         .in("channel", ["email", "sms"])
         .order("created_at", { ascending: false })
         .limit(1000),
+
+      // Unrecognized inbound texts/emails -- see lib/unknownContacts.ts
+      // and migration 066_add_unknown_contacts.sql. Rendered in its own
+      // panel below (UnknownContactsPanel) rather than folded into the
+      // main inbox loop, since these aren't tied to any jobber_client_id
+      // yet -- that's the whole point of "Add as Lead."
+      listNewUnknownContacts(),
     ]);
 
   const messages = (messagesResult.data ?? []) as PortalMessageRow[];
@@ -353,6 +367,8 @@ export default async function MessagesInboxPage() {
             </div>
           )}
         </section>
+
+        <UnknownContactsPanel contacts={unknownContacts} />
 
         <section className="mt-6 rounded-3xl bg-white p-5 shadow sm:p-8">
           {inboxRows.length === 0 ? (

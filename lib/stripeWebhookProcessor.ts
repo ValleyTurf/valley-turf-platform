@@ -469,11 +469,24 @@ export type ProcessPendingStripeWebhookEventsResult = {
   failed: number;
 };
 
-// Safe to call concurrently (the on-demand call right after each
-// webhook POST, plus any future cron backstop) -- each event is claimed
-// by flipping it to "processing" individually, and reprocessing an
-// already-processed event is harmless while every handler here is a
-// no-op or an idempotent upsert.
+// Safe to call concurrently (the on-demand call right after each webhook
+// POST, plus any future cron backstop) -- but ONLY because the claim
+// step below is a conditional update (WHERE status = 'pending'), and a
+// worker backs off the moment it doesn't get the row back. That guard
+// matters: unlike the idempotent upserts elsewhere in this file,
+// sendManualPaymentReceipt/notifyStaffOfPayment (below, via
+// processStripeWebhookEvent) send a real email/SMS every time they run,
+// with no dedupe of their own. Stripe's at-least-once delivery means the
+// same event can arrive twice within moments of each other (not an
+// error -- expected, routine behavior on Stripe's side), each POST
+// kicks off its own processPendingStripeWebhookEvents() call regardless
+// of whether that delivery was a fresh row or a duplicate, and an
+// unconditional "flip to processing" update let both overlapping calls
+// claim and process the same event -- which is exactly what sent a
+// customer two payment-receipt emails/texts (each phone number on file)
+// for one payment. Fixed by making the claim a compare-and-swap: only a
+// call that actually flips status from pending -> processing (verified
+// via .select() on the update) may proceed to run the handler.
 export async function processPendingStripeWebhookEvents(): Promise<ProcessPendingStripeWebhookEventsResult> {
   const { data: pendingEvents, error: pendingEventsError } =
     await supabaseServer
@@ -498,14 +511,25 @@ export async function processPendingStripeWebhookEvents(): Promise<ProcessPendin
   for (const event of events) {
     const nextAttempt = Number(event.attempts ?? 0) + 1;
 
-    const { error: processingUpdateError } = await supabaseServer
-      .from("stripe_webhook_events")
-      .update({
-        status: "processing",
-        attempts: nextAttempt,
-        error_message: null,
-      })
-      .eq("id", event.id);
+    // Compare-and-swap claim: the WHERE status = 'pending' guard plus
+    // .select() to see what actually got updated is what makes this
+    // safe under concurrent calls. If another overlapping call already
+    // claimed this event (or it's no longer pending for any other
+    // reason) between our SELECT above and this UPDATE, claimedRows
+    // comes back empty and we skip it -- we must NOT run the handler in
+    // that case, since it's not idempotent (see comment above this
+    // function).
+    const { data: claimedRows, error: processingUpdateError } =
+      await supabaseServer
+        .from("stripe_webhook_events")
+        .update({
+          status: "processing",
+          attempts: nextAttempt,
+          error_message: null,
+        })
+        .eq("id", event.id)
+        .eq("status", "pending")
+        .select("id");
 
     if (processingUpdateError) {
       console.error(
@@ -514,6 +538,16 @@ export async function processPendingStripeWebhookEvents(): Promise<ProcessPendin
       );
 
       failed += 1;
+
+      continue;
+    }
+
+    if (!claimedRows || claimedRows.length === 0) {
+      // Lost the race to another concurrent call (or a prior run already
+      // moved this event past "pending") -- not our event to process.
+      console.log(
+        `Stripe webhook ${event.id} was already claimed by another run -- skipping.`
+      );
 
       continue;
     }

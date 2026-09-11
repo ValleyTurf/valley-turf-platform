@@ -775,11 +775,23 @@ export type ProcessPendingWebhookEventsResult = {
 // Claims and processes up to EVENT_BATCH_SIZE pending webhook events.
 // Safe to call concurrently from multiple triggers (the on-demand call
 // after each webhook POST, the cron backstop, and the manual "Process
-// Now" button) — each event is claimed by flipping it to "processing"
-// individually, and reprocessing an already-processed event is harmless
-// since every handler here is an idempotent upsert keyed on the Jobber
-// ID. Worst case under overlapping calls is a little redundant work,
-// not incorrect data.
+// Now" button) — each event is claimed via a conditional UPDATE ...
+// WHERE status = 'pending' (see below), so only one caller ever wins the
+// claim for a given event; every other concurrent caller sees zero rows
+// affected and skips it instead of double-processing.
+//
+// This used to be an unconditional update (no WHERE status = 'pending'
+// guard, no check on how many rows it actually touched) -- the same bug
+// that caused Stripe webhook events to be double-claimed and sent a
+// customer two receipts instead of one (see stripeWebhookProcessor.ts's
+// processPendingStripeWebhookEvents, fixed the same way). It never
+// misfired here in practice only because no handler in
+// processWebhookEvent below currently sends a notification -- these are
+// all idempotent upserts keyed on the Jobber ID, so a double-claim just
+// meant redundant work, not a duplicate email/text. That's an accident
+// of what handlers happen to exist today, not a guarantee, so this gets
+// the same compare-and-swap fix now rather than waiting for the day a
+// notification-sending handler is added here too.
 export async function processPendingWebhookEvents(): Promise<ProcessPendingWebhookEventsResult> {
   const { data: pendingEvents, error: pendingEventsError } =
     await supabaseServer

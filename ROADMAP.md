@@ -33,15 +33,14 @@ now).
 
 ## Next up
 
-1. **Surface unrecognized inbound texts/emails instead of dropping them.**
-   Right now, a text or email reply from a number/address that doesn't
-   match any customer on file just gets logged as a server-side error
-   and never shown anywhere. That's a real gap: a brand-new prospect who
-   got your number from a friend and texts in cold has no customer
-   record yet, so their message currently disappears. Need to figure out
-   a way to catch these as an "Unknown sender" bucket somewhere in
-   Messages (or a lead-creation prompt) so nothing from a potential new
-   customer gets silently lost.
+1. ~~**Surface unrecognized inbound texts/emails instead of dropping them.**~~
+   **Done.** A text or email reply from a number/address that doesn't
+   match any customer on file now gets logged to a new `unknown_contacts`
+   table (migration 066_add_unknown_contacts.sql) instead of just an
+   error in the server log, and shows up in an "Unknown senders" panel
+   on the Messages page with the sender's phone number or email, where
+   it can be turned into a real Leads row with one click ("Add as
+   Lead") or dismissed as noise.
 2. **Full one-time data migration off Jobber.** Audit every
    Jobber-sourced customer/job/visit/quote record, confirm nothing is
    missing from the local mirror (some older/edge-case records may

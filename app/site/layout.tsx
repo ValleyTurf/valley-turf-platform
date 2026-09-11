@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SITE_URL } from "./config";
+import { GOOGLE_RATING, GOOGLE_REVIEW_COUNT } from "./testimonials";
 
 // Jobber Independence Roadmap -- public marketing site, served on
 // valleyturfrevival.com / www.valleyturfrevival.com only (see proxy.ts's
@@ -28,6 +29,60 @@ export const metadata: Metadata = {
     siteName: "Valley Turf Revival",
     type: "website",
     url: SITE_URL,
+    // Real photo (public/images/hero/hero-1.jpg, 1200x1600 -- its actual
+    // dimensions, not a guessed/standard OG size) so a link to the site
+    // shared in a text, Slack, or Facebook post shows an actual preview
+    // instead of nothing. Every page under app/site inherits this unless
+    // it sets its own openGraph.images.
+    images: [
+      {
+        url: "/images/hero/hero-1.jpg",
+        width: 1200,
+        height: 1600,
+        alt: "Artificial turf cleaned by Valley Turf Revival",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Valley Turf Revival | Artificial Turf Cleaning & Pet Odor Removal",
+    description:
+      "Professional artificial turf cleaning and pet odor removal serving Queen Creek and the greater Phoenix/East Valley area.",
+    images: ["/images/hero/hero-1.jpg"],
+  },
+};
+
+// Sitewide Organization schema -- tells Google this is one business
+// entity (as opposed to the page-level LocalBusiness/FAQPage schema on
+// individual service-area pages). Uses the same static, real rating/
+// review-count fallback shown elsewhere on the site (app/site/
+// testimonials.ts) rather than a live fetch here, so this doesn't add a
+// Google Places API call to every single marketing-site page load on top
+// of the ones the homepage and service-area pages already make.
+const ORGANIZATION_SCHEMA = {
+  "@context": "https://schema.org",
+  "@type": "HomeAndConstructionBusiness",
+  name: "Valley Turf Revival",
+  alternateName: "Golden Turf Care",
+  url: SITE_URL,
+  logo: `${SITE_URL}/branding/logo.png`,
+  image: `${SITE_URL}/images/hero/hero-1.jpg`,
+  telephone: "+14803314596",
+  email: "valleyturfrevival@gmail.com",
+  address: {
+    "@type": "PostalAddress",
+    addressLocality: "Queen Creek",
+    addressRegion: "AZ",
+    addressCountry: "US",
+  },
+  areaServed: {
+    "@type": "AdministrativeArea",
+    name: "Phoenix/East Valley, Arizona",
+  },
+  aggregateRating: {
+    "@type": "AggregateRating",
+    ratingValue: GOOGLE_RATING,
+    reviewCount: GOOGLE_REVIEW_COUNT,
   },
 };
 
@@ -46,6 +101,10 @@ const BG = "#f5f4ef";
 export default function SiteLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen" style={{ background: BG, color: BRAND_GREEN }}>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(ORGANIZATION_SCHEMA) }}
+      />
       <SiteHeader />
       <main>{children}</main>
       <SiteFooter />

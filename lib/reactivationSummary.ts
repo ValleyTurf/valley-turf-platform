@@ -12,6 +12,7 @@ import {
   normalizeReactivationStatus,
   type ReactivationStatus,
 } from "@/lib/reactivation";
+import { toPhoenixDateString } from "@/lib/phoenixDate";
 
 // Same "fetch everything, compute the pipeline, report the top-line
 // numbers" logic app/(platform)/reactivation/page.tsx already runs --
@@ -157,7 +158,19 @@ export async function getReactivationPipelineSummary(): Promise<ReactivationPipe
   }
 
   const now = new Date();
-  const today = now.toISOString().slice(0, 10);
+  // toPhoenixDateString, not a naive toISOString().slice(0, 10) --
+  // Vercel runs in UTC, and the naive form silently rolls "today" over
+  // to tomorrow for roughly 7 hours of every Phoenix evening (5pm-
+  // midnight local), the same class of bug the sync routes had before
+  // lib/phoenixDate.ts existed. Matters here specifically because this
+  // "today" is what daysSinceLastInvoice below is measured against, and
+  // that number is what decides whether a customer falls inside the
+  // reactivation candidate window.
+  // toPhoenixDateString only returns null for an unparseable input --
+  // impossible for a value we just produced from `new Date()` ourselves,
+  // so the fallback never actually triggers; it's here purely so `today`
+  // is typed as `string`, not `string | null`.
+  const today = toPhoenixDateString(now.toISOString()) ?? now.toISOString().slice(0, 10);
 
   let totalInPipeline = 0;
   let candidates = 0;

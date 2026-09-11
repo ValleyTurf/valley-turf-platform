@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { SERVICE_AREAS, SERVICE_AREA_REGIONS } from "../serviceAreas";
+import { Breadcrumbs, type BreadcrumbItem } from "../Breadcrumbs";
+import { buildBreadcrumbSchema } from "../breadcrumbSchema";
 
 export const metadata: Metadata = {
   title: "Service Areas",
@@ -13,9 +15,20 @@ const BRAND_GREEN = "#174734";
 const MUTED_GRAY = "#6b705c";
 const GOLD = "#9c7a20";
 
+const BREADCRUMB_ITEMS: BreadcrumbItem[] = [
+  { name: "Home", path: "/" },
+  { name: "Service Areas", path: "/service-areas" },
+];
+
 export default function ServiceAreasPage() {
   return (
-    <div className="mx-auto max-w-5xl px-4 py-16 sm:px-6">
+    <div>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(buildBreadcrumbSchema(BREADCRUMB_ITEMS)) }}
+      />
+      <Breadcrumbs items={BREADCRUMB_ITEMS} />
+      <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6">
       <p className="text-center text-sm font-bold uppercase tracking-[0.3em]" style={{ color: GOLD }}>
         Service areas
       </p>
@@ -62,6 +75,7 @@ export default function ServiceAreasPage() {
         >
           Get a Free Quote
         </Link>
+      </div>
       </div>
     </div>
   );

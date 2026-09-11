@@ -25,6 +25,7 @@ import {
   type RecontactInterval,
 } from "@/lib/reactivation";
 import { formatCurrency, formatNumber, formatPercent, toNumber } from "@/lib/format";
+import { toPhoenixDateString } from "@/lib/phoenixDate";
 import { ComposeEmailForm } from "@/app/components/ComposeEmailForm";
 
 type Customer = {
@@ -288,7 +289,14 @@ export default async function ReactivationPage({
     invoicesByClient.set(invoice.jobber_client_id, existing);
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  // toPhoenixDateString, not a naive toISOString().slice(0, 10) --
+  // Vercel runs in UTC, and the naive form rolls "today" over to
+  // tomorrow for roughly 7 hours of every Phoenix evening. This "today"
+  // is what daysSinceLastInvoice below is measured against, and that
+  // number decides whether a customer falls inside the reactivation
+  // candidate window -- same fix as lib/reactivationSummary.ts.
+  const now = new Date();
+  const today = toPhoenixDateString(now.toISOString()) ?? now.toISOString().slice(0, 10);
 
   // Every customer plus their invoice-derived stats, then narrowed down
   // to "belongs in the pipeline at all": either a fresh candidate
@@ -394,8 +402,6 @@ export default async function ReactivationPage({
   const scheduled = pipeline.filter(
     (entry) => entry.status === "scheduled"
   ).length;
-
-  const now = new Date();
 
   const overdueEntries = pipeline.filter((entry) =>
     isOverdue(entry.customer.reactivation_next_follow_up_at, now)

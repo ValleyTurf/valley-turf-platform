@@ -18,15 +18,17 @@
 // direction: "inbound") the same shape inbound email replies already
 // use, matched to a customer by phone number rather than a reply-routing
 // address (texts don't carry anything like Resend's reply-to encoding).
-// A text from an unrecognized number is intentionally NOT logged
-// anywhere -- there's no customer record to attach it to, same
-// "nothing useful to log this against" reasoning as
-// app/api/webhooks/resend's handleInboundReply.
+// A text from an unrecognized number used to just be console.error'd and
+// dropped -- now it's logged to unknown_contacts instead (see
+// lib/unknownContacts.ts and migration 066_add_unknown_contacts.sql) so
+// a brand-new prospect texting in cold shows up on the Messages page
+// instead of vanishing (ROADMAP.md "Next up" #1).
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { headers } from "next/headers";
 import { logContactHistory } from "@/lib/contactHistory";
 import { findJobberClientIdByPhone } from "@/lib/customerContacts";
+import { logUnknownContact } from "@/lib/unknownContacts";
 
 export const dynamic = "force-dynamic";
 
@@ -111,7 +113,11 @@ export async function POST(request: NextRequest) {
         summary: body.slice(0, 4000),
       });
     } else {
-      console.error(`Inbound text from unrecognized number ${fromPhone}: no matching customer.`);
+      await logUnknownContact({
+        channel: "sms",
+        phone: fromPhone,
+        summary: body.slice(0, 4000),
+      });
     }
   }
 

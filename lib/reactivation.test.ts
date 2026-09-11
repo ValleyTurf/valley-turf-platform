@@ -189,12 +189,34 @@ describe("nextReactivationState", () => {
 });
 
 describe("isSameDay / isOverdue / isDueToday / isUpcoming", () => {
+  // 2026-08-26T15:00:00Z is 8am on August 26th in Phoenix (UTC-7,
+  // year-round -- no DST) -- every case below is reasoned about in
+  // Phoenix time, which is what these functions are meant to compare in,
+  // not whatever timezone the test runner happens to be in.
   const today = new Date(Date.UTC(2026, 7, 26, 15, 0, 0));
 
   it("isSameDay compares calendar day only", () => {
-    const morning = new Date(Date.UTC(2026, 7, 26, 1, 0, 0));
+    // 7am and 4pm Phoenix on the same August 26th -- comfortably clear
+    // of the UTC/Phoenix day boundary so this is purely testing "same
+    // day, different times," not the timezone conversion itself (see
+    // the dedicated test below for that).
+    const morning = new Date(Date.UTC(2026, 7, 26, 14, 0, 0));
     const evening = new Date(Date.UTC(2026, 7, 26, 23, 0, 0));
     expect(isSameDay(morning, evening)).toBe(true);
+  });
+
+  it("uses Phoenix time, not UTC, to decide the calendar day", () => {
+    // 2026-08-26T01:00:00Z is August 26th in UTC, but only 6pm on
+    // August 25th in Phoenix -- the exact case that was silently broken
+    // when this compared via the runtime's local Date getters instead
+    // of an explicit America/Phoenix conversion (see lib/phoenixDate.ts).
+    const lateUtcStillPreviousDayInPhoenix = new Date(
+      Date.UTC(2026, 7, 26, 1, 0, 0)
+    );
+    expect(isSameDay(lateUtcStillPreviousDayInPhoenix, today)).toBe(false);
+    expect(isOverdue(lateUtcStillPreviousDayInPhoenix.toISOString(), today)).toBe(
+      true
+    );
   });
 
   it("null follow-up date is never overdue, due today, or upcoming", () => {
@@ -211,7 +233,8 @@ describe("isSameDay / isOverdue / isDueToday / isUpcoming", () => {
   });
 
   it("today's date is due today only", () => {
-    const sameDay = new Date(Date.UTC(2026, 7, 26, 3, 0, 0)).toISOString();
+    // 1pm Phoenix on the same August 26th as `today` (8am Phoenix).
+    const sameDay = new Date(Date.UTC(2026, 7, 26, 20, 0, 0)).toISOString();
     expect(isOverdue(sameDay, today)).toBe(false);
     expect(isDueToday(sameDay, today)).toBe(true);
     expect(isUpcoming(sameDay, today)).toBe(false);

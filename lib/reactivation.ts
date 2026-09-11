@@ -3,7 +3,10 @@
 // Zero dependency on lib/supabase-server.ts or any other server-only
 // module, same reasoning as lib/permissionRules.ts and lib/shiftHours.ts —
 // keeps this importable from tests and from the "use server" action
-// without dragging in a Supabase client construction.
+// without dragging in a Supabase client construction. (lib/phoenixDate.ts
+// is safe to import here for the same reason -- no server-only tag, no
+// Supabase dependency, just Intl.DateTimeFormat.)
+import { toPhoenixDateString } from "@/lib/phoenixDate";
 
 export type ReactivationStatus =
   | "candidate"
@@ -157,23 +160,37 @@ export function nextReactivationState(
   };
 }
 
+// Compares calendar days in the business's timezone (America/Phoenix),
+// not whichever timezone the process happens to be running in. The bug
+// this fixes: these four functions used to compare via Date's local
+// getters (getFullYear/getMonth/getDate) or setHours(0,0,0,0), both of
+// which reflect the RUNTIME's local system timezone -- fine (by
+// coincidence) on a dev machine already set to Phoenix time, but wrong
+// on Vercel, which runs in UTC. A follow-up due at, say, 6pm Phoenix
+// time lands after midnight UTC, so on the server this was silently
+// treated as "tomorrow" -- the same class of bug toPhoenixDateString
+// above already fixed for the Jobber sync routes. Routing every
+// comparison through toPhoenixDateString instead makes the result
+// identical regardless of what timezone the process is running in.
 export function isSameDay(first: Date, second: Date): boolean {
   return (
-    first.getFullYear() === second.getFullYear() &&
-    first.getMonth() === second.getMonth() &&
-    first.getDate() === second.getDate()
+    toPhoenixDateString(first.toISOString()) ===
+    toPhoenixDateString(second.toISOString())
   );
-}
-
-function startOfDay(date: Date): Date {
-  const copy = new Date(date.getTime());
-  copy.setHours(0, 0, 0, 0);
-  return copy;
 }
 
 export function isOverdue(nextFollowUpAt: string | null, now: Date): boolean {
   if (!nextFollowUpAt) return false;
-  return startOfDay(new Date(nextFollowUpAt)).getTime() < startOfDay(now).getTime();
+
+  const followUpDay = toPhoenixDateString(nextFollowUpAt);
+  const nowDay = toPhoenixDateString(now.toISOString());
+
+  if (!followUpDay || !nowDay) return false;
+
+  // Plain string comparison is safe here: toPhoenixDateString always
+  // returns a zero-padded "YYYY-MM-DD", which sorts identically to a
+  // real date comparison.
+  return followUpDay < nowDay;
 }
 
 export function isDueToday(
@@ -189,7 +206,13 @@ export function isUpcoming(
   now: Date
 ): boolean {
   if (!nextFollowUpAt) return false;
-  return startOfDay(new Date(nextFollowUpAt)).getTime() > startOfDay(now).getTime();
+
+  const followUpDay = toPhoenixDateString(nextFollowUpAt);
+  const nowDay = toPhoenixDateString(now.toISOString());
+
+  if (!followUpDay || !nowDay) return false;
+
+  return followUpDay > nowDay;
 }
 
 // Statuses that represent an in-progress or completed workflow — kept

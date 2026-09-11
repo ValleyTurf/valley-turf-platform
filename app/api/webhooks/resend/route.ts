@@ -6,6 +6,14 @@
 // See migration 056_add_contact_history.sql's header comment for the
 // "why" behind the table itself.
 //
+// An inbound email that doesn't decode to one of our reply-routing
+// addresses used to just be dropped silently (see the old comment on
+// handleInboundReply below) -- now it's logged to unknown_contacts
+// instead (see lib/unknownContacts.ts and migration
+// 066_add_unknown_contacts.sql) so a brand-new prospect emailing in
+// cold shows up on the Messages page instead of vanishing (ROADMAP.md
+// "Next up" #1 -- same fix the Twilio webhook already got).
+//
 // Resend signs webhooks the same way Svix does (Resend's webhook
 // infrastructure IS Svix under the hood) -- HMAC-SHA256 over
 // "{svix-id}.{svix-timestamp}.{body}", keyed by the base64 portion of
@@ -25,6 +33,8 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { logContactHistory, markEmailDelivered, markEmailOpened } from "@/lib/contactHistory";
 import { decodeClientIdFromReplyAddress } from "@/lib/replyRouting";
+import { normalizeEmail } from "@/lib/matching";
+import { logUnknownContact } from "@/lib/unknownContacts";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +43,7 @@ type ResendWebhookEvent = {
   data: {
     email_id?: string;
     to?: string[];
+    from?: string;
     subject?: string;
   };
 };
@@ -137,20 +148,13 @@ function stripQuotedReplyText(text: string): string {
 async function handleInboundReply(
   emailId: string,
   toAddresses: string[],
+  fromAddress: string | undefined,
   fallbackSubject: string | undefined,
   apiKey: string
 ): Promise<void> {
   const jobberClientId = toAddresses
     .map((address) => decodeClientIdFromReplyAddress(address))
     .find((decoded): decoded is string => Boolean(decoded));
-
-  if (!jobberClientId) {
-    // Not addressed to one of our reply-routing addresses -- e.g.
-    // RESEND_REPLY_DOMAIN isn't configured yet, or this is some other
-    // mail that landed on the receiving domain. Nothing to attribute
-    // this to, so there's nowhere useful to log it.
-    return;
-  }
 
   const content = await fetchReceivedEmailContent(emailId, apiKey);
   const rawBody =
@@ -162,6 +166,20 @@ async function handleInboundReply(
   const summary = rawBody
     ? stripQuotedReplyText(rawBody) || rawBody
     : "(No message body.)";
+
+  if (!jobberClientId) {
+    // Not addressed to one of our reply-routing addresses -- e.g.
+    // RESEND_REPLY_DOMAIN isn't configured yet, or this is some other
+    // mail that landed on the receiving domain. Log it as an unknown
+    // contact (rather than dropping it) so a cold prospect emailing in
+    // still shows up on the Messages page for a human to triage.
+    await logUnknownContact({
+      channel: "email",
+      email: normalizeEmail(fromAddress),
+      summary: summary.slice(0, 4000),
+    });
+    return;
+  }
 
   await logContactHistory({
     jobberClientId,
@@ -251,7 +269,13 @@ export async function POST(request: NextRequest) {
       const apiKey = process.env.RESEND_API_KEY;
 
       if (apiKey) {
-        await handleInboundReply(emailId, event.data.to ?? [], event.data.subject, apiKey);
+        await handleInboundReply(
+          emailId,
+          event.data.to ?? [],
+          event.data.from,
+          event.data.subject,
+          apiKey
+        );
       } else {
         console.error("Cannot fetch inbound reply content: RESEND_API_KEY is not set.");
       }
