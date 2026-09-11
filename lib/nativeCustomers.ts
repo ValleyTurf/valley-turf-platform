@@ -44,6 +44,13 @@ export type NativeCustomerInput = {
   // API call for the same address.
   knownLatitude?: number | null;
   knownLongitude?: number | null;
+  // Referral / lead-source tracking (migration
+  // 070_add_customer_referral_source.sql) -- see lib/referralSource.ts.
+  // All optional/nullable since most callers (e.g. quote-to-job
+  // conversion) don't collect this.
+  referralSource?: string | null;
+  referredByCustomerId?: string | null;
+  referralCampaignId?: string | null;
 };
 
 export async function createNativeCustomer(
@@ -92,6 +99,9 @@ export async function createNativeCustomer(
     source: "native",
     native_invoicing_enabled: true,
     invoicing_mode_source: "native",
+    referral_source: input.referralSource ?? null,
+    referred_by_customer_id: input.referredByCustomerId ?? null,
+    referral_campaign_id: input.referralCampaignId ?? null,
   });
 
   if (error) {

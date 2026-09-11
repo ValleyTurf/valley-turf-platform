@@ -3,8 +3,18 @@
 import { useActionState } from "react";
 import { createCustomer } from "./actions";
 import { initialActionState } from "./actionState";
+import ReferralSourceField, {
+  type ReferralPickerCustomer,
+  type ReferralQrCampaign,
+} from "@/app/components/ReferralSourceField";
 
-export default function NewCustomerForm() {
+export default function NewCustomerForm({
+  customers,
+  campaigns,
+}: {
+  customers: ReferralPickerCustomer[];
+  campaigns: ReferralQrCampaign[];
+}) {
   const [state, formAction, isPending] = useActionState(
     createCustomer,
     initialActionState
@@ -106,6 +116,8 @@ export default function NewCustomerForm() {
           />
         </div>
       </div>
+
+      <ReferralSourceField customers={customers} campaigns={campaigns} />
 
       {state.error && (
         <p className="text-sm font-semibold text-red-600">{state.error}</p>

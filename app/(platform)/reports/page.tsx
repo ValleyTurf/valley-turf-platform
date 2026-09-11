@@ -54,6 +54,20 @@ const REPORT_CARDS: ReportCard[] = [
     icon: "📆",
   },
   {
+    title: "Recurring Revenue",
+    description:
+      "Current MRR, plus new and lost recurring revenue by month.",
+    href: "/revenue/recurring",
+    icon: "🔁",
+  },
+  {
+    title: "Team Performance",
+    description:
+      "Avg time per visit and tips per crew member, for any date range.",
+    href: "/reports/team-performance",
+    icon: "🏅",
+  },
+  {
     title: "Job Costing Analytics",
     description:
       "Profit by service category for any date range, with a per-job drill-down.",
@@ -78,6 +92,13 @@ const REPORT_CARDS: ReportCard[] = [
     description: "Campaign scan and engagement performance.",
     href: "/analytics",
     icon: "📣",
+  },
+  {
+    title: "Referral Sources",
+    description:
+      "Where customers say they heard about us, plus who's referring the most.",
+    href: "/reports/referrals",
+    icon: "🤝",
   },
 ];
 

@@ -110,7 +110,14 @@ export async function sendDueVisitReminders(): Promise<SendRemindersResult> {
       // (see 051_add_job_status_to_visits.sql) -- a visit belonging to a
       // closed-out job shouldn't get a reminder.
       .or("job_status.is.null,job_status.neq.archived")
-      .not("jobber_client_id", "is", null);
+      .not("jobber_client_id", "is", null)
+      // Ryan asked (2026-09-11): once a customer confirms off whichever
+      // reminder reaches them first (usually the 4-day), don't bother
+      // them with the next one too (usually the 2-day) -- confirmed_at
+      // is shared across every rule for this visit (see
+      // getOrCreateConfirmationToken's comment in lib/visitConfirmation.ts),
+      // so this one filter covers any rule ordering, not just 4-then-2.
+      .is("confirmed_at", null);
 
     if (visitsError) {
       result.errors.push(
@@ -305,7 +312,10 @@ export async function previewPendingVisitReminders(): Promise<PendingRemindersPr
       .gte("start_at", `${targetDate}T00:00:00${BUSINESS_UTC_OFFSET}`)
       .lt("start_at", `${nextDate}T00:00:00${BUSINESS_UTC_OFFSET}`)
       .or("job_status.is.null,job_status.neq.archived")
-      .not("jobber_client_id", "is", null);
+      .not("jobber_client_id", "is", null)
+      // Mirrors the real send's confirmed_at filter above, so the daily
+      // digest preview doesn't list a reminder that won't actually go out.
+      .is("confirmed_at", null);
 
     const visits = (visitsData ?? []) as ReminderVisit[];
 

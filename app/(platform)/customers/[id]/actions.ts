@@ -21,6 +21,7 @@ import {
   updateContact,
 } from "@/lib/customerContacts";
 import { resendInvoice, type ResendInvoiceResult } from "../../invoices/actions";
+import { isReferralSource } from "@/lib/referralSource";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
@@ -54,6 +55,25 @@ export async function updateCustomerProfile(
   // column here. That's intentional: switching a property from "Exact"
   // to a preset range (or back) replaces the old value rather than
   // leaving stale data in the column the form isn't showing anymore.
+  // Same "only the source that's actually selected gets a value, every
+  // other conditional field clears" reasoning as turf_size_sqft/range
+  // above -- ReferralSourceField only renders the sub-field matching the
+  // selected referral_source, so a stale referred_by_customer_id or
+  // referral_campaign_id from a previous save must be explicitly cleared
+  // here rather than left in place when the source changes.
+  const referralSourceRaw = cleanText(formData.get("referral_source"));
+  const referralSource = isReferralSource(referralSourceRaw)
+    ? referralSourceRaw
+    : null;
+  const referredByCustomerId =
+    referralSource === "referral"
+      ? cleanText(formData.get("referred_by_customer_id"))
+      : null;
+  const referralCampaignId =
+    referralSource === "qr_code"
+      ? cleanText(formData.get("referral_campaign_id"))
+      : null;
+
   const updates = {
     turf_size_sqft: cleanNumber(formData.get("turf_size_sqft")),
     turf_size_range: cleanText(formData.get("turf_size_range")),
@@ -63,12 +83,15 @@ export async function updateCustomerProfile(
     odor_level: cleanText(formData.get("odor_level")),
     subscription_plan: cleanText(formData.get("subscription_plan")),
     service_instructions: cleanText(formData.get("service_instructions")),
+    referral_source: referralSource,
+    referred_by_customer_id: referredByCustomerId,
+    referral_campaign_id: referralCampaignId,
   };
 
   const { data: before } = await supabaseServer
     .from("customers")
     .select(
-      "full_name, turf_size_sqft, turf_size_range, gate_code, pet_count, pet_names, odor_level, subscription_plan, service_instructions"
+      "full_name, turf_size_sqft, turf_size_range, gate_code, pet_count, pet_names, odor_level, subscription_plan, service_instructions, referral_source, referred_by_customer_id, referral_campaign_id"
     )
     .eq("jobber_client_id", jobberClientId)
     .maybeSingle();

@@ -650,7 +650,13 @@ export async function cancelNativeJob(
 
   const { error: jobError } = await supabaseServer
     .from("jobber_jobs")
-    .update({ job_status: "archived", updated_at: nowIso })
+    // recurrence_cancelled_at (migration
+    // 071_add_recurrence_cancelled_at.sql) powers Lost MRR by month on
+    // /revenue/recurring -- see lib/recurringRevenue.ts. Set unconditionally
+    // (not just for recurring jobs) since it's simply "when this job was
+    // cancelled," true regardless of cadence -- lib/recurringRevenue.ts is
+    // the one place that only reads it for jobs with a recurrence_frequency.
+    .update({ job_status: "archived", updated_at: nowIso, recurrence_cancelled_at: nowIso })
     .eq("jobber_job_id", jobId)
     .eq("source", "native");
 
@@ -685,7 +691,14 @@ export async function reopenNativeJob(
 ): Promise<MutationOutcome<null>> {
   const { error } = await supabaseServer
     .from("jobber_jobs")
-    .update({ job_status: "upcoming", updated_at: new Date().toISOString() })
+    // Un-cancels -- clear recurrence_cancelled_at too, so a job that was
+    // briefly archived and reopened doesn't still count against that
+    // month's Lost MRR on /revenue/recurring (lib/recurringRevenue.ts).
+    .update({
+      job_status: "upcoming",
+      updated_at: new Date().toISOString(),
+      recurrence_cancelled_at: null,
+    })
     .eq("jobber_job_id", jobId)
     .eq("source", "native");
 

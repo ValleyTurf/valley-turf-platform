@@ -107,7 +107,14 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
     "/visits",
     "/job-costing-analytics/trends",
   ],
-  marketing_analytics: ["/analytics"],
+  // /reports/referrals joins /analytics here rather than getting its own
+  // section -- both are lead-source/attribution reporting with no dollar
+  // figures, and it reuses the same campaigns/QR data /analytics already
+  // covers. Without an entry here, sectionForPath() would return null and
+  // isPathAllowedForRole would treat it as universally visible (see that
+  // function's fallback) -- not what "Internal only" reporting (Ryan's
+  // call) should mean.
+  marketing_analytics: ["/analytics", "/reports/referrals"],
   // /reactivation is grouped here rather than given its own section — it's
   // the outreach-workflow half of the same "who's at risk / who's worth
   // winning back" feature Customer Intelligence's Reactivation Pipeline
@@ -182,6 +189,10 @@ export const MANAGER_PLUS_PREFIXES = [
   "/knowledge-base/new",
   "/copilot",
   "/command-center",
+  // Team Performance (ROADMAP.md Fresh Ideas #8) -- per-crew-member avg
+  // time/tips scorecard, same "comparative crew data a coworker shouldn't
+  // see about coworkers" reasoning as Crew Status/Timecards above.
+  "/reports/team-performance",
 ];
 
 export type RolePermissionsMap = Record<

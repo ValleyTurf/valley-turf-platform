@@ -1,0 +1,21 @@
+-- Recurring-revenue (MRR) dashboard -- companion to lib/recurringRevenue.ts
+-- and app/(platform)/revenue/recurring/page.tsx.
+--
+-- jobber_jobs has never recorded WHEN a recurring job was cancelled --
+-- cancelNativeJob (lib/nativeJobs.ts) only ever flipped job_status to
+-- 'archived'. Rather than fabricate historical churn from updated_at
+-- (unreliable -- that column changes on ANY edit, not just a
+-- cancellation), this adds a real, purpose-built timestamp and starts
+-- populating it from today forward only. Past cancellations stay null
+-- (unknown), which the Lost-MRR-by-month table reports honestly as "not
+-- tracked" rather than a fabricated zero implying no churn happened.
+--
+-- Set by cancelNativeJob, cleared by reopenNativeJob (both
+-- lib/nativeJobs.ts) -- reopening a job un-cancels it, so it shouldn't
+-- still count against Lost MRR for whatever month it was briefly
+-- archived in.
+--
+-- Run this once in the Supabase SQL editor (Project vasskxstyvshfiwgpuxj
+-- -> SQL Editor).
+alter table jobber_jobs
+  add column if not exists recurrence_cancelled_at timestamptz;

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
 import { createNativeCustomer } from "@/lib/nativeCustomers";
+import { isReferralSource } from "@/lib/referralSource";
 import type { ActionState } from "./actionState";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
@@ -44,6 +45,22 @@ export async function createCustomer(
   const state = cleanText(formData.get("state"));
   const zip = cleanText(formData.get("zip"));
 
+  const referralSourceRaw = cleanText(formData.get("referral_source"));
+  const referralSource = isReferralSource(referralSourceRaw)
+    ? referralSourceRaw
+    : null;
+  // Defense in depth -- ReferralSourceField only renders the matching
+  // sub-field for the selected source, but a hidden input value from a
+  // stale render (or a direct POST) shouldn't be trusted either.
+  const referredByCustomerId =
+    referralSource === "referral"
+      ? cleanText(formData.get("referred_by_customer_id"))
+      : null;
+  const referralCampaignId =
+    referralSource === "qr_code"
+      ? cleanText(formData.get("referral_campaign_id"))
+      : null;
+
   if (!fullName) {
     return { error: "Enter the customer's name." };
   }
@@ -56,6 +73,9 @@ export async function createCustomer(
     city,
     state,
     zip,
+    referralSource,
+    referredByCustomerId,
+    referralCampaignId,
   });
 
   if (!result.ok) {
@@ -79,6 +99,9 @@ export async function createCustomer(
       city,
       state,
       postal_code: zip,
+      referral_source: referralSource,
+      referred_by_customer_id: referredByCustomerId,
+      referral_campaign_id: referralCampaignId,
     },
   });
 

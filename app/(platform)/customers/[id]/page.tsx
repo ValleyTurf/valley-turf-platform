@@ -28,6 +28,10 @@ import {
   type ContactHistoryEntry,
 } from "@/lib/contactHistory";
 import TurfSizeField from "./TurfSizeField";
+import ReferralSourceField, {
+  type ReferralPickerCustomer,
+  type ReferralQrCampaign,
+} from "@/app/components/ReferralSourceField";
 import AddVisitNoteForm from "./AddVisitNoteForm";
 import VisitNoteItem from "./VisitNoteItem";
 import PhotoGrid from "@/app/components/PhotoGrid";
@@ -963,6 +967,9 @@ type CustomerProfile = {
   service_instructions: string | null;
   notes: string | null;
   current_property_id: string | null;
+  referral_source: string | null;
+  referred_by_customer_id: string | null;
+  referral_campaign_id: string | null;
 };
 
 async function getCustomerProfile(
@@ -981,7 +988,10 @@ async function getCustomerProfile(
         subscription_plan,
         service_instructions,
         notes,
-        current_property_id
+        current_property_id,
+        referral_source,
+        referred_by_customer_id,
+        referral_campaign_id
       `
     )
     .eq("jobber_client_id", jobberClientId)
@@ -993,6 +1003,62 @@ async function getCustomerProfile(
   }
 
   return data as CustomerProfile | null;
+}
+
+type ReferralCustomerRow = {
+  jobber_client_id: string;
+  full_name: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  company_name: string | null;
+};
+
+function referralCustomerDisplayName(row: ReferralCustomerRow): string {
+  return (
+    row.full_name ||
+    [row.first_name, row.last_name].filter(Boolean).join(" ") ||
+    row.company_name ||
+    "Unnamed Customer"
+  );
+}
+
+// Picker data for the Referral Source field (see
+// app/components/ReferralSourceField.tsx) -- same shape
+// app/(platform)/customers/new/page.tsx builds for the New Customer
+// form, minus the customer being edited (can't refer themselves).
+async function getReferralPickerData(excludeJobberClientId: string): Promise<{
+  customers: ReferralPickerCustomer[];
+  campaigns: ReferralQrCampaign[];
+}> {
+  const [{ data: customersData }, { data: campaignsData }] = await Promise.all([
+    supabaseServer
+      .from("customers")
+      .select("jobber_client_id, full_name, first_name, last_name, company_name")
+      .neq("jobber_client_id", excludeJobberClientId)
+      .order("full_name", { ascending: true })
+      .limit(2000),
+    supabaseServer
+      .from("campaigns")
+      .select("id, name, alias")
+      .eq("channel", "qr")
+      .order("name", { ascending: true }),
+  ]);
+
+  const customers: ReferralPickerCustomer[] = (
+    (customersData ?? []) as ReferralCustomerRow[]
+  ).map((row) => ({
+    id: row.jobber_client_id,
+    name: referralCustomerDisplayName(row),
+  }));
+
+  const campaigns: ReferralQrCampaign[] = (
+    (campaignsData ?? []) as { id: string; name: string; alias: string | null }[]
+  ).map((row) => ({
+    id: row.id,
+    label: row.alias ?? row.name,
+  }));
+
+  return { customers, campaigns };
 }
 
 function formatPhone(phone: string): string {
@@ -1287,6 +1353,7 @@ export default async function CustomerDetailPage({
     contactHistory,
     additionalContacts,
     nativeInvoices,
+    referralPickerData,
   ] = await Promise.all([
     isNativeId(decodedId) ? getLocalClientView(decodedId) : getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
@@ -1304,7 +1371,14 @@ export default async function CustomerDetailPage({
     getContactHistoryForCustomer(decodedId),
     listContactsForCustomer(decodedId),
     getNativeInvoicesForCustomer(decodedId),
+    getReferralPickerData(decodedId),
   ]);
+
+  const referredByCustomer = profile?.referred_by_customer_id
+    ? referralPickerData.customers.find(
+        (c) => c.id === profile.referred_by_customer_id
+      ) ?? null
+    : null;
 
   // Gates the Edit/Delete controls on each visit note below (Ryan's
   // explicit "at the admin level" request) -- a manager or staff member
@@ -1788,6 +1862,14 @@ export default async function CustomerDetailPage({
                     className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
                   />
                 </div>
+
+                <ReferralSourceField
+                  initialSource={profile?.referral_source ?? null}
+                  initialReferredBy={referredByCustomer}
+                  initialCampaignId={profile?.referral_campaign_id ?? null}
+                  customers={referralPickerData.customers}
+                  campaigns={referralPickerData.campaigns}
+                />
 
                 <button
                   type="submit"
