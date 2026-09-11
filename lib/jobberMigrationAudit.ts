@@ -163,11 +163,20 @@ type LocalVisitRow = {
 // recurrence_frequency.
 // ---------------------------------------------------------------------
 
+// biweekly/triannual added 2026-09 (Jobber Independence cutover
+// follow-up, once migration 067's actual run flagged 3 biweekly jobs and
+// 1 "every 4 months" job that didn't fit the original five buckets).
+// Kept in the same ascending-day order as before -- a value near two
+// buckets' shared boundary (e.g. ~100 days, between quarterly and
+// triannual) resolves to whichever bucket's center it's actually closer
+// to under this ordering, same as it always has.
 const CADENCE_BUCKETS: { key: RecurrenceFrequency; days: number }[] = [
   { key: "weekly", days: 7 },
+  { key: "biweekly", days: 14 },
   { key: "monthly", days: 30 },
   { key: "bimonthly", days: 60 },
   { key: "quarterly", days: 90 },
+  { key: "triannual", days: 120 },
   { key: "semiannual", days: 180 },
 ];
 

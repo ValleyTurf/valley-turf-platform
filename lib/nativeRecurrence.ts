@@ -14,9 +14,11 @@
 
 export type RecurrenceFrequency =
   | "weekly"
+  | "biweekly"
   | "bimonthly"
   | "monthly"
   | "quarterly"
+  | "triannual"
   | "semiannual";
 
 function parseDateOnly(date: string): Date {
@@ -46,6 +48,9 @@ export function nextOccurrenceDate(
     case "weekly":
       parsed.setUTCDate(parsed.getUTCDate() + 7);
       break;
+    case "biweekly":
+      parsed.setUTCDate(parsed.getUTCDate() + 14);
+      break;
     case "bimonthly":
       parsed.setUTCMonth(parsed.getUTCMonth() + 2);
       break;
@@ -54,6 +59,9 @@ export function nextOccurrenceDate(
       break;
     case "quarterly":
       parsed.setUTCMonth(parsed.getUTCMonth() + 3);
+      break;
+    case "triannual":
+      parsed.setUTCMonth(parsed.getUTCMonth() + 4);
       break;
     case "semiannual":
       parsed.setUTCMonth(parsed.getUTCMonth() + 6);

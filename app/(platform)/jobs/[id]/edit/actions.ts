@@ -26,9 +26,11 @@ function cleanPrice(value: FormDataEntryValue | null): number | null {
 
 const RECURRENCE_VALUES: RecurrenceFrequency[] = [
   "weekly",
+  "biweekly",
   "bimonthly",
   "monthly",
   "quarterly",
+  "triannual",
   "semiannual",
 ];
 

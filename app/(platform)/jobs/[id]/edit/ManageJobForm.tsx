@@ -23,9 +23,11 @@ type Job = {
 const FREQUENCY_OPTIONS: { value: string; label: string }[] = [
   { value: "one_time", label: "One-Time" },
   { value: "weekly", label: "Weekly" },
+  { value: "biweekly", label: "Biweekly (every 2 weeks)" },
   { value: "bimonthly", label: "Bi-Monthly (every 2 months)" },
   { value: "monthly", label: "Monthly" },
   { value: "quarterly", label: "Quarterly" },
+  { value: "triannual", label: "Every 4 Months" },
   { value: "semiannual", label: "Semi-Annual" },
 ];
 
