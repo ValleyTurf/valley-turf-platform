@@ -10,7 +10,7 @@ import { supabaseServer } from "@/lib/supabase-server";
 
 export type UnknownContact = {
   id: string;
-  channel: "sms" | "email";
+  channel: "sms" | "email" | "call";
   phone: string | null;
   email: string | null;
   summary: string | null;
@@ -19,7 +19,7 @@ export type UnknownContact = {
 
 type UnknownContactRow = {
   id: string;
-  channel: "sms" | "email";
+  channel: "sms" | "email" | "call";
   phone: string | null;
   email: string | null;
   summary: string | null;
@@ -38,13 +38,14 @@ function mapRow(row: UnknownContactRow): UnknownContact {
 }
 
 // Called from the Twilio/Resend webhooks whenever an inbound message
+// (or, since app/api/webhooks/twilio-voice/route.ts, an inbound call)
 // can't be matched to any customer. Best-effort and non-throwing, same
 // as every other webhook-side write in this app (lib/contactHistory.ts's
 // logContactHistory, etc.) -- a logging failure here must never turn
 // into a 500 back to Twilio/Resend, which would just make them retry the
 // same webhook indefinitely.
 export async function logUnknownContact(params: {
-  channel: "sms" | "email";
+  channel: "sms" | "email" | "call";
   phone?: string | null;
   email?: string | null;
   summary: string | null;

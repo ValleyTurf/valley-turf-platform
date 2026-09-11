@@ -87,14 +87,19 @@ export default function UnknownContactsPanel({
       </div>
 
       <p className="mt-2 text-sm text-[#6b705c]">
-        Texts and emails from a phone number or address that doesn&apos;t
-        match anyone on file. Could be a new prospect -- add them as a lead,
-        or dismiss if it&apos;s spam or a wrong number.
+        Texts, calls, and emails from a phone number or address that
+        doesn&apos;t match anyone on file. Could be a new prospect -- add
+        them as a lead, or dismiss if it&apos;s spam or a wrong number.
       </p>
 
       <div className="mt-4 space-y-2">
         {visible.map((contact) => {
-          const icon = contact.channel === "sms" ? "💬" : "✉️";
+          const icon =
+            contact.channel === "sms"
+              ? "💬"
+              : contact.channel === "call"
+                ? "📞"
+                : "✉️";
           const identity = contact.phone || contact.email || "Unknown";
           const busy = isPending && pendingId === contact.id;
           const error = errorById[contact.id];

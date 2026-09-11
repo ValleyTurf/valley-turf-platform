@@ -153,3 +153,15 @@ now).
     curation — turn a freshly featured gallery photo into a drafted GBP
     post (you still review/publish it) instead of writing one from
     scratch.
+17. ~~**Inbound calls, forwarded and logged like everything else.**~~
+    **Done.** A new voice webhook
+    (app/api/webhooks/twilio-voice/route.ts) replaces the quick TwiML
+    Bin forward — set it as the Voice config's webhook (not the TwiML
+    Bin) to switch over. An inbound call still forwards to Ryan's cell,
+    but now also logs to that customer's Contact History (channel:
+    "call") once the call ends, with the outcome (answered + duration,
+    or missed + why) — same as texts and emails already do, so it shows
+    up in the CRM timeline, not just on Ryan's phone. A call from a
+    number that doesn't match any customer lands in the same "Unknown
+    senders" review queue on Messages that unrecognized texts/emails
+    already use (migration 075), instead of vanishing.

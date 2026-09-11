@@ -10,7 +10,7 @@ import { recordAuditLog } from "@/lib/auditLog";
 
 type UnknownContactRow = {
   id: string;
-  channel: "sms" | "email";
+  channel: "sms" | "email" | "call";
   phone: string | null;
   email: string | null;
   summary: string | null;
@@ -47,7 +47,11 @@ export async function addUnknownContactAsLead(
   }
 
   const source =
-    row.channel === "sms" ? "Unknown sender (text)" : "Unknown sender (email)";
+    row.channel === "sms"
+      ? "Unknown sender (text)"
+      : row.channel === "call"
+        ? "Unknown sender (call)"
+        : "Unknown sender (email)";
 
   const { data: lead, error: leadError } = await supabaseServer
     .from("leads")
