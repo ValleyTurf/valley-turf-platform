@@ -77,10 +77,11 @@ now).
    business (Revival plans) — an MRR-style view (new/lost/net recurring
    revenue by month) would sit well next to the existing Revenue
    dashboard.
-5. **Marketing site content/SEO buildout.** Per-city pages exist but
-   are thin; a short FAQ/content block per city plus LocalBusiness
-   schema markup would help local search ranking more than anything
-   else easy to do on the site right now.
+5. ~~**Marketing site content/SEO buildout.**~~ **Done.** Added 62
+   service x city combo pages (`/services/[service]/[city]`), sitewide
+   breadcrumb navigation + BreadcrumbList schema, Service/LocalBusiness
+   schema validated against Google's Rich Results Test, and self-updating
+   `<lastmod>` dates in the sitemap.
 6. **Seasonal promo automation.** Auto-send a targeted email/text
    campaign (e.g. spring startup, fall cleanup) to a filtered customer
    segment, reusing the Compose Email infrastructure that already

@@ -334,6 +334,36 @@ function formatCustomer(
 }
 
 export async function syncSingleCustomer(jobberClientId: string): Promise<void> {
+  // formatCustomer only ever writes address_line_1/city/state/etc -- it
+  // never touches current_property_id itself -- so this lookup just
+  // reads back whatever override staff may have set on the Customer page
+  // and feeds it into address selection below.
+  //
+  // Jobber cutover (2026-09): also doubles as the source guard below --
+  // fetched up front (before the Jobber API call) so a natively-managed
+  // customer skips the round-trip entirely, not just the write.
+  const { data: existingCustomer } = await supabaseServer
+    .from("customers")
+    .select("current_property_id, source")
+    .eq("jobber_client_id", jobberClientId)
+    .maybeSingle();
+
+  // Once a customer is relabeled source='native' by migration 067, this
+  // app is that customer's system of record -- skip rather than overwrite
+  // with Jobber's stale snapshot. Belt-and-suspenders: the callers that
+  // remain after the cutover (setCurrentProperty in
+  // customers/[id]/actions.ts, the migration audit tool's gap-fill) both
+  // already guard on source themselves, and CLIENT_* webhook events no
+  // longer reach this function at all (see processWebhookEvent's shared
+  // no-op case below) -- this is the last line of defense in case a
+  // future caller forgets to check first.
+  if (existingCustomer?.source === "native") {
+    console.log(
+      `Skipping Jobber sync for natively-managed customer ${jobberClientId}.`
+    );
+    return;
+  }
+
   const response = await jobberGraphQL<ClientQueryResponse>(CLIENT_QUERY, {
     id: jobberClientId,
   });
@@ -355,16 +385,6 @@ export async function syncSingleCustomer(jobberClientId: string): Promise<void> 
     throw new Error(`Jobber customer ${jobberClientId} was not found.`);
   }
 
-  // formatCustomer only ever writes address_line_1/city/state/etc -- it
-  // never touches current_property_id itself -- so this lookup just
-  // reads back whatever override staff may have set on the Customer page
-  // and feeds it into address selection below.
-  const { data: existingCustomer } = await supabaseServer
-    .from("customers")
-    .select("current_property_id")
-    .eq("jobber_client_id", jobberClientId)
-    .maybeSingle();
-
   const customerRow = formatCustomer(
     client,
     existingCustomer?.current_property_id ?? null
@@ -384,7 +404,23 @@ export async function syncSingleCustomer(jobberClientId: string): Promise<void> 
   }
 }
 
-async function syncSingleJob(jobberJobId: string): Promise<void> {
+export async function syncSingleJob(jobberJobId: string): Promise<void> {
+  // Jobber cutover (2026-09): same reasoning as syncSingleCustomer's
+  // guard above -- once a job is relabeled source='native' by migration
+  // 067, this app owns it outright. Fetched up front so a natively-
+  // managed job skips the Jobber API round-trip entirely, not just the
+  // write.
+  const { data: existingJob } = await supabaseServer
+    .from("jobber_jobs")
+    .select("source")
+    .eq("jobber_job_id", jobberJobId)
+    .maybeSingle();
+
+  if (existingJob?.source === "native") {
+    console.log(`Skipping Jobber sync for natively-managed job ${jobberJobId}.`);
+    return;
+  }
+
   const response = await jobberGraphQL<{
     job: {
       id: string;
@@ -540,7 +576,23 @@ async function syncSingleInvoice(jobberInvoiceId: string): Promise<void> {
   }
 }
 
-async function syncSingleVisit(jobberVisitId: string): Promise<void> {
+export async function syncSingleVisit(jobberVisitId: string): Promise<void> {
+  // Jobber cutover (2026-09): same reasoning as syncSingleCustomer's
+  // guard above -- once a visit is relabeled source='native' by
+  // migration 067, this app owns it outright. Fetched up front so a
+  // natively-managed visit skips the Jobber API round-trip entirely, not
+  // just the write.
+  const { data: existingVisit } = await supabaseServer
+    .from("jobber_visits")
+    .select("source")
+    .eq("jobber_visit_id", jobberVisitId)
+    .maybeSingle();
+
+  if (existingVisit?.source === "native") {
+    console.log(`Skipping Jobber sync for natively-managed visit ${jobberVisitId}.`);
+    return;
+  }
+
   const response = await jobberGraphQL<{
     visit: {
       id: string;
@@ -611,114 +663,52 @@ async function syncSingleVisit(jobberVisitId: string): Promise<void> {
   }
 }
 
-async function handleDestroyedCustomer(jobberClientId: string): Promise<void> {
-  console.log(
-    `Jobber reported deleted customer ${jobberClientId}. Historical customer data was retained.`
-  );
-
-  // We intentionally do not delete the customer row here — the OS may
-  // hold historical jobs/invoices/revenue/reactivation history tied to
-  // it, and deleting the row would damage historical reporting.
-}
-
-async function handleDestroyedJob(jobberJobId: string): Promise<void> {
-  console.log(
-    `Jobber reported deleted job ${jobberJobId}. Historical job data was retained.`
-  );
-}
-
 async function handleDestroyedInvoice(jobberInvoiceId: string): Promise<void> {
   console.log(
     `Jobber reported deleted invoice ${jobberInvoiceId}. Historical invoice data was retained.`
   );
 }
 
-// Unlike jobs/invoices/customers (see the other handleDestroyed* no-ops
-// above — deliberately retained for historical reporting), a destroyed
-// visit that never happened has no historical value to protect, and
-// leaving it in jobber_visits actively broke things: it kept showing up
-// as a loggable stop on /job-costs (and on /schedule, /my-day) forever,
-// since nothing ever pruned it. This is also exactly what jobClose's
-// COMPLETE_PAST_DESTROY_FUTURE mode does when a recurring job gets
-// canceled from /jobs/[id]/edit — it destroys every not-yet-happened
-// visit in Jobber, and those destructions each fire their own
-// VISIT_DESTROY webhook.
+// Jobber cutover (2026-09): CLIENT_*/JOB_*/VISIT_* webhook events are
+// still queued (app/api/jobber/webhook/route.ts's HMAC-verified handler
+// doesn't filter by topic — it queues everything), but this app no
+// longer wants Jobber writing customers/jobs/visits into it at all, so
+// every event in these three groups is now a shared, logged no-op
+// instead of a sync. This is the actual write-cutover mechanism (roadmap
+// #9) — the source guards inside syncSingleCustomer/syncSingleJob/
+// syncSingleVisit above are belt-and-suspenders for the few remaining
+// direct callers (setCurrentProperty, the migration audit tool), not
+// what stops webhook-driven writes; this switch case is. Marked
+// "processed" (not "failed") same as every other handled topic, so a
+// still-arriving CLIENT_UPDATE/JOB_UPDATE/VISIT_UPDATE from Jobber never
+// piles up retries — Ryan can also unsubscribe these topics entirely in
+// Jobber's Developer Center as optional cleanup (plan section, "hand off
+// to Ryan"), but leaving them subscribed is harmless either way.
 //
-// Cleans up visit_material_usage/visit_equipment_usage too, in case a
-// visit was ever destroyed after costs were already logged against it
-// (unlikely for a future/incomplete visit, but cheap to guard against
-// leaving orphaned rows). visit_material_cost is a view derived from
-// visit_material_usage, not a real table, so it needs no cleanup of its
-// own.
-async function handleDestroyedVisit(jobberVisitId: string): Promise<void> {
-  await supabaseServer
-    .from("visit_material_usage")
-    .delete()
-    .eq("jobber_visit_id", jobberVisitId);
-
-  await supabaseServer
-    .from("visit_equipment_usage")
-    .delete()
-    .eq("jobber_visit_id", jobberVisitId);
-
-  const { error } = await supabaseServer
-    .from("jobber_visits")
-    .delete()
-    .eq("jobber_visit_id", jobberVisitId);
-
-  if (error) {
-    throw new Error(
-      `Unable to delete destroyed Jobber visit ${jobberVisitId}: ${error.message}`
-    );
-  }
-
-  console.log(`Deleted destroyed Jobber visit ${jobberVisitId}.`);
-}
-
+// The old per-topic handlers this replaced (handleDestroyedCustomer,
+// handleDestroyedJob, handleDestroyedVisit — the last of which used to
+// delete the local visit row plus its visit_material_usage/
+// visit_equipment_usage) are gone, not just unreached: destroy events for
+// these three entities are exactly as much "Jobber writing into this
+// app" as create/update ones, so they get the same no-op treatment.
+// INVOICE_* is deliberately untouched below — invoicing/payments stay
+// wired to Jobber until a later, separate migration.
 async function processWebhookEvent(event: WebhookEvent): Promise<void> {
   const topic = normalizeTopic(event.topic);
 
   switch (topic) {
     case "CLIENT_CREATE":
-    case "CLIENT_UPDATE": {
-      if (!event.jobber_item_id) {
-        throw new Error(
-          `${topic} webhook did not contain a Jobber client ID.`
-        );
-      }
-
-      await syncSingleCustomer(event.jobber_item_id);
-
-      return;
-    }
-
-    case "CLIENT_DESTROY": {
-      if (!event.jobber_item_id) {
-        throw new Error(
-          "CLIENT_DESTROY webhook did not contain a Jobber client ID."
-        );
-      }
-
-      await handleDestroyedCustomer(event.jobber_item_id);
-
-      return;
-    }
-
+    case "CLIENT_UPDATE":
+    case "CLIENT_DESTROY":
     case "JOB_CREATE":
-    case "JOB_UPDATE": {
-      if (!event.jobber_item_id) {
-        throw new Error(`${topic} webhook did not contain a Jobber job ID.`);
-      }
-      await syncSingleJob(event.jobber_item_id);
-      return;
-    }
-    case "JOB_DESTROY": {
-      if (!event.jobber_item_id) {
-        throw new Error(
-          "JOB_DESTROY webhook did not contain a Jobber job ID."
-        );
-      }
-      await handleDestroyedJob(event.jobber_item_id);
+    case "JOB_UPDATE":
+    case "JOB_DESTROY":
+    case "VISIT_CREATE":
+    case "VISIT_UPDATE":
+    case "VISIT_DESTROY": {
+      console.log(
+        `Ignoring ${topic} webhook (item ${event.jobber_item_id ?? "unknown"}) — Jobber no longer writes customers/jobs/visits into this app.`
+      );
       return;
     }
 
@@ -742,25 +732,6 @@ async function processWebhookEvent(event: WebhookEvent): Promise<void> {
       return;
     }
 
-    case "VISIT_CREATE":
-    case "VISIT_UPDATE": {
-      if (!event.jobber_item_id) {
-        throw new Error(
-          `${topic} webhook did not contain a Jobber visit ID.`
-        );
-      }
-      await syncSingleVisit(event.jobber_item_id);
-      return;
-    }
-    case "VISIT_DESTROY": {
-      if (!event.jobber_item_id) {
-        throw new Error(
-          "VISIT_DESTROY webhook did not contain a Jobber visit ID."
-        );
-      }
-      await handleDestroyedVisit(event.jobber_item_id);
-      return;
-    }
     default:
       throw new Error(`Unsupported Jobber webhook topic: ${topic}`);
   }

@@ -1,230 +1,28 @@
-﻿import { NextResponse } from "next/server";
-import { jobberGraphQL } from "@/lib/jobber";
-import { supabaseServer } from "@/lib/supabase-server";
+// Jobber Independence Roadmap (2026-09) -- permanently disabled (one of
+// 5 satellite syncs disabled together in this pass, Ryan's call). This
+// route used to upsert latitude/longitude/geo_status onto `customers`
+// from Jobber's property data -- with nothing this app can no longer get
+// elsewhere (this app's own address fields are now authoritative for a
+// migrated customer), leaving it running would risk rolling a manually
+// corrected address's coordinates back to Jobber's stale copy. See
+// sync-customers/route.ts's header comment for the fuller cutover
+// context (roadmap #9).
+//
+// Not on any cron schedule or CRON_PATHS entry (this was always
+// manual-trigger-only), so there's no config cleanup needed beyond this
+// file.
+import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-type JobberCoordinates = {
-  latitude: number | null;
-  longitude: number | null;
-};
-
-type JobberAddress = {
-  coordinates: JobberCoordinates | null;
-  geoStatus: string | null;
-};
-
-type JobberProperty = {
-  address: JobberAddress | null;
-};
-
-type JobberClient = {
-  id: string;
-  clientProperties: {
-    nodes: JobberProperty[];
-  };
-};
-
-type ClientsPage = {
-  clients: {
-    nodes: JobberClient[];
-    pageInfo: {
-      endCursor: string | null;
-      hasNextPage: boolean;
-    };
-  };
-};
-
-async function syncCoordinates() {
-  const batchSize = 50;
-
-  let cursor: string | null = null;
-  let hasNextPage = true;
-  let pageNumber = 0;
-
-  let clientsReceived = 0;
-  let clientsUpdated = 0;
-  let clientsSkipped = 0;
-
-  const warnings: string[] = [];
-
-  while (hasNextPage) {
-    pageNumber += 1;
-
-    if (pageNumber > 150) {
-      warnings.push("Sync stopped after 150 pages for safety.");
-      break;
-    }
-
-    const jobberResponse: {
-      data: ClientsPage | null;
-      errors: Array<{ message: string }> | null;
-    } = await jobberGraphQL<ClientsPage>(
-      `
-        query GetClientsForCoordinates($limit: Int!, $cursor: String) {
-          clients(first: $limit, after: $cursor) {
-            nodes {
-              id
-              clientProperties(first: 1) {
-                nodes {
-                  address {
-                    coordinates {
-                      latitude
-                      longitude
-                    }
-                    geoStatus
-                  }
-                }
-              }
-            }
-
-            pageInfo {
-              endCursor
-              hasNextPage
-            }
-          }
-        }
-      `,
-      {
-        limit: batchSize,
-        cursor,
-      }
-    );
-
-    if (jobberResponse.errors?.length) {
-      const message = jobberResponse.errors
-        .map((error) => error.message)
-        .filter(Boolean)
-        .join(", ");
-
-      throw new Error(message || `Jobber failed on page ${pageNumber}.`);
-    }
-
-    const clients = jobberResponse.data?.clients?.nodes ?? [];
-    const pageInfo = jobberResponse.data?.clients?.pageInfo;
-
-    clientsReceived += clients.length;
-
-    const candidates = clients
-      .map((client) => {
-        const property = client.clientProperties?.nodes?.[0];
-        const address = property?.address;
-        const coordinates = address?.coordinates;
-
-        if (
-          !coordinates ||
-          coordinates.latitude === null ||
-          coordinates.longitude === null
-        ) {
-          return null;
-        }
-
-        return {
-          jobber_client_id: client.id,
-          latitude: coordinates.latitude,
-          longitude: coordinates.longitude,
-          geo_status: address?.geoStatus ?? null,
-        };
-      })
-      .filter((row): row is NonNullable<typeof row> => row !== null);
-
-    clientsSkipped += clients.length - candidates.length;
-
-    if (candidates.length > 0) {
-      // Only upsert rows that already exist as customers — a plain
-      // upsert would happily *insert* a new customer row with nothing
-      // but coordinates on it for any client this sync sees before
-      // sync-customers has ever created that row, which is worse than
-      // just skipping it. One lookup + one batched upsert per page
-      // instead of an individual round-trip update per client.
-      const { data: existingCustomers, error: lookupError } =
-        await supabaseServer
-          .from("customers")
-          .select("jobber_client_id")
-          .in(
-            "jobber_client_id",
-            candidates.map((row) => row.jobber_client_id)
-          );
-
-      if (lookupError) {
-        throw new Error(
-          `Supabase lookup failed on page ${pageNumber}: ${lookupError.message}`
-        );
-      }
-
-      const existingIds = new Set(
-        (existingCustomers ?? []).map((row) => row.jobber_client_id as string)
-      );
-
-      const rowsToUpdate = candidates.filter((row) =>
-        existingIds.has(row.jobber_client_id)
-      );
-
-      clientsSkipped += candidates.length - rowsToUpdate.length;
-
-      if (rowsToUpdate.length > 0) {
-        const { error: upsertError } = await supabaseServer
-          .from("customers")
-          .upsert(rowsToUpdate, {
-            onConflict: "jobber_client_id",
-            ignoreDuplicates: false,
-          });
-
-        if (upsertError) {
-          warnings.push(
-            `Failed to update coordinates on page ${pageNumber}: ${upsertError.message}`
-          );
-        } else {
-          clientsUpdated += rowsToUpdate.length;
-        }
-      }
-    }
-
-    hasNextPage = pageInfo?.hasNextPage ?? false;
-    cursor = pageInfo?.endCursor ?? null;
-
-    if (hasNextPage && !cursor) {
-      warnings.push(
-        `Jobber reported another page after page ${pageNumber}, but no cursor was returned.`
-      );
-      break;
-    }
-
-    if (hasNextPage) {
-      await new Promise((resolve) => setTimeout(resolve, 1800));
-    }
-  }
-
-  return {
-    clientsReceived,
-    clientsUpdated,
-    clientsSkipped,
-    pagesProcessed: pageNumber,
-    warnings,
-  };
-}
-
 export async function GET() {
-  try {
-    const syncResult = await syncCoordinates();
-
-    return NextResponse.json({
-      success: true,
-      message: "Customer coordinates synchronized successfully.",
-      ...syncResult,
-    });
-  } catch (error) {
-    console.error("Customer coordinate sync failed:", error);
-
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "An unknown coordinate sync error occurred.",
-      },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json(
+    {
+      success: false,
+      disabled: true,
+      message:
+        "This sync was permanently disabled as part of the Jobber Independence cutover (2026-09) -- customer addresses/coordinates are now natively owned by this app. See this file's header comment.",
+    },
+    { status: 410 }
+  );
 }

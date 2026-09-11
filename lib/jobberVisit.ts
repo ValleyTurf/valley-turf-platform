@@ -20,7 +20,7 @@
 //     mechanism, and it doesn't touch the job or its other visits.
 import "server-only";
 import { jobberGraphQL } from "@/lib/jobber";
-import { isNativeId } from "@/lib/nativeJobs";
+import { isNativelyManagedVisit } from "@/lib/nativeJobs";
 
 export type MutationOutcome<T> =
   | { ok: true; value: T }
@@ -60,7 +60,11 @@ export async function rescheduleJobberVisit(params: {
   // deliberate "don't make staff wait for the webhook" optimization; for
   // a native visit it's simply the only place that write happens at all.
   // Short-circuiting here means that one shared code path handles both.
-  if (isNativeId(visitId)) {
+  //
+  // Jobber cutover (2026-09): isNativelyManagedVisit also covers a
+  // Jobber-shaped visit id that migration 067 relabeled source='native'
+  // — see that helper's comment in lib/nativeJobs.ts.
+  if (await isNativelyManagedVisit(visitId)) {
     return { ok: true, value: null };
   }
 
@@ -126,7 +130,7 @@ export async function skipJobberVisit(
   // skipVisit already deletes the local jobber_visits row (and its
   // material/equipment usage) itself right after this returns ok, which
   // is exactly what "skip" means for a native visit too.
-  if (isNativeId(visitId)) {
+  if (await isNativelyManagedVisit(visitId)) {
     return { ok: true, value: null };
   }
 
@@ -177,7 +181,7 @@ export async function completeJobberVisit(
   // this returns ok, falling back to "now" when completedAt is null
   // exactly like it already does for a Jobber-sourced visit whenever
   // Jobber's response doesn't include one.
-  if (isNativeId(visitId)) {
+  if (await isNativelyManagedVisit(visitId)) {
     return { ok: true, value: { completedAt: null } };
   }
 

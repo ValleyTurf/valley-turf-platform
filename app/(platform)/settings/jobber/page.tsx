@@ -49,24 +49,21 @@ type SyncConfiguration = {
   endpoint: string;
 };
 
+// customers/jobs removed (Jobber Independence cutover, 2026-09) — both
+// are now natively owned by this app, and their sync routes are
+// permanently disabled (see sync-customers/route.ts and
+// sync-jobs/route.ts). Any historical rows for those sync_types in
+// jobber_sync_runs still render below (formatSyncName falls back to the
+// raw sync_type when there's no SYNC_CONFIG entry) — this only removes
+// the "Sync Now" card for them, it doesn't hide history.
 const SYNC_CONFIG: Record<
   string,
   SyncConfiguration
 > = {
-  customers: {
-    label: "Customers",
-    endpoint:
-      "/api/jobber/sync-customers",
-  },
   invoices: {
     label: "Invoices",
     endpoint:
       "/api/jobber/sync-invoices",
-  },
-  jobs: {
-    label: "Jobs",
-    endpoint:
-      "/api/jobber/sync-jobs",
   },
   payments: {
     label: "Payments",

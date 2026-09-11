@@ -1,0 +1,26 @@
+-- Jobber Independence Roadmap -- captures each job's itemized Jobber
+-- line-item breakdown (name/unitPrice/quantity) before the Jobber
+-- connection stops being a useful source of truth for jobs (see
+-- 067_migrate_jobber_to_native.sql, which flips jobber_jobs.source to
+-- 'native' for the whole existing job history). Native jobs still only
+-- ever show/edit as one flat total (lib/nativeJobs.ts's
+-- fetchNativeJobDetails synthesizes a single line item from `total`) --
+-- this column is seed data for a future "give native jobs real line
+-- items, like Jobber has" feature (Ryan's ask, tracked separately, not
+-- built yet), not something anything reads today.
+--
+-- Populated by the migration audit tool's apply-mode pass
+-- (lib/jobberMigrationAudit.ts / GET /api/jobber/audit-migration?apply=true).
+-- Run THIS migration before that apply-mode pass, not after -- otherwise
+-- the snapshot writes fail individually (reported in
+-- jobs.lineItemsSnapshotErrors in that route's response) while
+-- everything else in that pass still completes fine.
+--
+-- Run order for the full cutover: this migration -> deploy the code ->
+-- GET /api/jobber/audit-migration (read-only, review) -> GET
+-- /api/jobber/audit-migration?apply=true -> 067_migrate_jobber_to_native.sql.
+--
+-- Run this once in the Supabase SQL editor (Project vasskxstyvshfiwgpuxj
+-- -> SQL Editor), before 067_migrate_jobber_to_native.sql.
+alter table jobber_jobs
+  add column if not exists jobber_line_items_snapshot jsonb;

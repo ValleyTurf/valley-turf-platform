@@ -92,13 +92,13 @@ const PUBLIC_PATHS = [
 // cron-triggered requests once CRON_SECRET is set as an env var, so we
 // accept that instead of a session for just these paths.
 const CRON_PATHS = [
-  "/api/jobber/sync-customers",
+  // sync-customers/sync-jobs/sync-visits removed (Jobber Independence
+  // cutover, 2026-09) — those routes are now permanently disabled (see
+  // their own files' header comments), not just off this cron list.
   "/api/jobber/sync-invoices",
-  "/api/jobber/sync-jobs",
   "/api/jobber/sync-payments",
   "/api/jobber/sync-payouts",
   "/api/jobber/sync-payment-fees",
-  "/api/jobber/sync-visits",
   "/api/jobber/process-webhooks",
   // Tier 2 Stage 3 (Jobber Independence Roadmap) — tops up native
   // recurring jobs' future visits. Not a Jobber route at all, but reuses

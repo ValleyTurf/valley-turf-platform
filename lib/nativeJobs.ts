@@ -32,6 +32,67 @@ export function isNativeId(id: string | null | undefined): boolean {
   return typeof id === "string" && id.startsWith(NATIVE_ID_PREFIX);
 }
 
+// Jobber cutover (2026-09): the routing decision at the top of every
+// function in lib/jobberJob.ts/lib/jobberVisit.ts used to be isNativeId()
+// alone -- fine when the only native records were ones this app created
+// itself, but wrong once existing Jobber-sourced jobs/visits/customers get
+// relabeled source='native' by migration 067 without their id ever
+// changing shape (that would require rewriting foreign keys across 13+
+// tables -- out of scope, see the migration's header comment). These two
+// helpers are the real routing check from here on: fast-path on the id
+// prefix first (covers every id this app has ever minted, no DB
+// round-trip), then fall back to the source column for a migrated
+// Jobber-shaped id. Fail closed (false) on any error or not-found so a
+// lookup hiccup falls through to the existing Jobber path rather than
+// accidentally treating something as native.
+export async function isNativelyManagedJob(
+  jobId: string | null | undefined
+): Promise<boolean> {
+  if (isNativeId(jobId)) {
+    return true;
+  }
+
+  if (!jobId) {
+    return false;
+  }
+
+  const { data, error } = await supabaseServer
+    .from("jobber_jobs")
+    .select("source")
+    .eq("jobber_job_id", jobId)
+    .maybeSingle();
+
+  if (error || !data) {
+    return false;
+  }
+
+  return data.source === "native";
+}
+
+export async function isNativelyManagedVisit(
+  visitId: string | null | undefined
+): Promise<boolean> {
+  if (isNativeId(visitId)) {
+    return true;
+  }
+
+  if (!visitId) {
+    return false;
+  }
+
+  const { data, error } = await supabaseServer
+    .from("jobber_visits")
+    .select("source")
+    .eq("jobber_visit_id", visitId)
+    .maybeSingle();
+
+  if (error || !data) {
+    return false;
+  }
+
+  return data.source === "native";
+}
+
 // Exported so lib/nativeCustomers.ts (Tier 4) can mint ids from the exact
 // same convention instead of duplicating it -- a native customer id needs
 // to be indistinguishable in shape from a native job/visit id, since
@@ -300,7 +361,16 @@ export async function generateUpcomingNativeVisits(): Promise<{
       "jobber_job_id, jobber_client_id, customer_name, title, job_number, recurrence_frequency, recurrence_anchor_date, recurrence_generated_through"
     )
     .eq("source", "native")
-    .eq("job_status", "upcoming")
+    // Jobber cutover (2026-09): a brand-new native job only ever carries
+    // job_status 'upcoming' or 'archived', so this used to be an exact
+    // match. Migration 067 relabels existing Jobber-sourced recurring
+    // jobs to source='native' too, and those can carry Jobber's fuller
+    // status set (late, today, action_required, requires_invoicing,
+    // on_hold, unscheduled, completed) -- excluding just the two
+    // "this job is done" statuses (rather than requiring 'upcoming')
+    // keeps those migrated jobs topped up with future visits instead of
+    // silently going dry the first time their status isn't 'upcoming'.
+    .not("job_status", "in", "(archived,completed)")
     .not("recurrence_frequency", "is", null);
 
   if (jobsError) {

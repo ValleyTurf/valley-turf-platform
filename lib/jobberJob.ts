@@ -7,7 +7,7 @@
 import "server-only";
 import { jobberGraphQL } from "@/lib/jobber";
 import {
-  isNativeId,
+  isNativelyManagedJob,
   fetchNativeJobDetails,
   editNativeJob,
   setNativeJobPrice,
@@ -343,7 +343,12 @@ export async function fetchJobDetails(
   // the only thing that changed in this whole file's callers (the
   // Manage Job page, ManageJobForm.tsx) to make native jobs manageable
   // through the exact same UI as Jobber-sourced ones.
-  if (isNativeId(jobId)) {
+  //
+  // Jobber cutover (2026-09): isNativelyManagedJob also covers a
+  // Jobber-shaped id that migration 067 relabeled source='native' — see
+  // that helper's comment in lib/nativeJobs.ts for why the id prefix
+  // alone stopped being enough once existing Jobber jobs got migrated.
+  if (await isNativelyManagedJob(jobId)) {
     return fetchNativeJobDetails(jobId);
   }
 
@@ -407,7 +412,7 @@ export async function editJobberJob(params: {
   const { jobId, title, instructions, startDate, recurrence, updateSchedule } =
     params;
 
-  if (isNativeId(jobId)) {
+  if (await isNativelyManagedJob(jobId)) {
     return editNativeJob(params);
   }
 
@@ -508,7 +513,7 @@ export async function setJobberJobPrice(
   title: string,
   price: number
 ): Promise<MutationOutcome<null>> {
-  if (isNativeId(jobId)) {
+  if (await isNativelyManagedJob(jobId)) {
     return setNativeJobPrice(jobId, price);
   }
 
@@ -612,7 +617,7 @@ const JOB_CLOSE_MUTATION = `
 export async function cancelJobberJob(
   jobId: string
 ): Promise<MutationOutcome<null>> {
-  if (isNativeId(jobId)) {
+  if (await isNativelyManagedJob(jobId)) {
     return cancelNativeJob(jobId);
   }
 
@@ -650,7 +655,7 @@ const JOB_REOPEN_MUTATION = `
 export async function reopenJobberJob(
   jobId: string
 ): Promise<MutationOutcome<null>> {
-  if (isNativeId(jobId)) {
+  if (await isNativelyManagedJob(jobId)) {
     return reopenNativeJob(jobId);
   }
 

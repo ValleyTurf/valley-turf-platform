@@ -363,7 +363,7 @@ export async function setCurrentProperty(
 
   const { data: before } = await supabaseServer
     .from("customers")
-    .select("full_name, current_property_id")
+    .select("full_name, current_property_id, source")
     .eq("jobber_client_id", jobberClientId)
     .maybeSingle();
 
@@ -390,13 +390,22 @@ export async function setCurrentProperty(
   // right away using the new override, so the schedule/my-day/directions
   // links reflect the change immediately instead of waiting for the next
   // scheduled customer sync.
-  try {
-    await syncSingleCustomer(jobberClientId);
-  } catch (syncError) {
-    console.error(
-      `Current property saved, but re-syncing the address failed for ${jobberClientId}:`,
-      syncError
-    );
+  //
+  // Jobber cutover (2026-09): this is an app-initiated pull, not a Jobber
+  // push, so disabling the sync-customers cron/webhook processing doesn't
+  // stop it on its own. A migrated ('native') customer's address is this
+  // app's own data now -- pulling from Jobber here would silently
+  // overwrite it with Jobber's stale snapshot the moment staff pick a
+  // property, so skip the sync entirely for native customers.
+  if (before?.source !== "native") {
+    try {
+      await syncSingleCustomer(jobberClientId);
+    } catch (syncError) {
+      console.error(
+        `Current property saved, but re-syncing the address failed for ${jobberClientId}:`,
+        syncError
+      );
+    }
   }
 
   revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
