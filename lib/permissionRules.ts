@@ -114,7 +114,11 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
   // isPathAllowedForRole would treat it as universally visible (see that
   // function's fallback) -- not what "Internal only" reporting (Ryan's
   // call) should mean.
-  marketing_analytics: ["/analytics", "/reports/referrals"],
+  // /gallery joins the same section -- curating which visit photos are
+  // shown on the marketing site has no customer-facing send risk (unlike
+  // /campaigns below), so it stays a delegable staff permission rather
+  // than manager+.
+  marketing_analytics: ["/analytics", "/reports/referrals", "/gallery"],
   // /reactivation is grouped here rather than given its own section — it's
   // the outreach-workflow half of the same "who's at risk / who's worth
   // winning back" feature Customer Intelligence's Reactivation Pipeline
@@ -189,10 +193,11 @@ export const MANAGER_PLUS_PREFIXES = [
   "/knowledge-base/new",
   "/copilot",
   "/command-center",
-  // Team Performance (ROADMAP.md Fresh Ideas #8) -- per-crew-member avg
-  // time/tips scorecard, same "comparative crew data a coworker shouldn't
-  // see about coworkers" reasoning as Crew Status/Timecards above.
-  "/reports/team-performance",
+  // A mis-targeted mass send to real customers is a bigger risk than the
+  // other manager+ pages above (which are read-only oversight) -- defaults
+  // locked down like the rest of this list rather than the delegable
+  // section-permission system, same reasoning.
+  "/campaigns",
 ];
 
 export type RolePermissionsMap = Record<

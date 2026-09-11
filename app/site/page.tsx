@@ -5,6 +5,7 @@ import { SERVICES, TURF_TASKS } from "./services";
 import { SERVICE_AREAS } from "./serviceAreas";
 import { TESTIMONIALS, GOOGLE_RATING, GOOGLE_REVIEW_COUNT } from "./testimonials";
 import { fetchLatestGoogleReviews } from "@/lib/googleReviews";
+import { getFeaturedGalleryPhotos } from "@/lib/featuredGalleryPhotos";
 
 export const metadata: Metadata = {
   title: "Artificial Turf Cleaning & Pet Odor Removal in Phoenix's East Valley",
@@ -80,6 +81,15 @@ export default async function MarketingHomePage() {
   const testimonials = liveReviews?.reviews.length ? liveReviews.reviews : TESTIMONIALS;
   const rating = liveReviews?.rating || GOOGLE_RATING;
   const reviewCount = liveReviews?.reviewCount || GOOGLE_REVIEW_COUNT;
+
+  // ROADMAP.md Fresh Ideas #6 -- real customer visit photos, staff-curated
+  // at /gallery from consenting customers only (see
+  // lib/featuredGalleryPhotos.ts). Additive to the hand-picked
+  // BEFORE_AFTER_IMAGES/GALLERY_IMAGES sections above/below, not a
+  // replacement (Ryan's call, 2026-09-11) -- renders nothing at all until
+  // at least one photo has actually been featured, so this never leaves
+  // an empty gap on the live site.
+  const featuredPhotos = await getFeaturedGalleryPhotos();
 
   return (
     <div>
@@ -240,6 +250,35 @@ export default async function MarketingHomePage() {
           </div>
         </div>
       </section>
+
+      {/* Real results from our customers -- staff-curated visit photos,
+          only from customers who've consented (see app/(platform)/gallery
+          + lib/featuredGalleryPhotos.ts). Hidden entirely until at least
+          one photo has been featured. */}
+      {featuredPhotos.length > 0 && (
+        <section className="py-14" style={{ background: "#fff" }}>
+          <div className="mx-auto max-w-6xl px-4 sm:px-6">
+            <h2 className="text-center text-3xl font-bold" style={{ color: BRAND_GREEN }}>
+              Real results from our customers
+            </h2>
+            <p className="mx-auto mt-3 max-w-2xl text-center" style={{ color: MUTED_GRAY }}>
+              Straight from the photos our crew takes on real visits.
+            </p>
+            <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3">
+              {featuredPhotos.map((photo) => (
+                <div key={photo.url} className="relative aspect-square overflow-hidden rounded-2xl">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- these live in Supabase Storage, not an optimizable local/remote asset Next's Image config knows about */}
+                  <img
+                    src={photo.url}
+                    alt={photo.alt}
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Reviews */}
       <section className="mx-auto max-w-6xl px-4 py-14 sm:px-6">

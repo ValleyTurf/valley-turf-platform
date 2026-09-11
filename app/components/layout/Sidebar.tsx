@@ -118,6 +118,8 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
     items: [
       { name: "Leads", href: "/leads", icon: "🎯" },
       { name: "Links & QR", href: "/codes", icon: "📱" },
+      { name: "Campaigns", href: "/campaigns", icon: "📢" },
+      { name: "Photo Gallery", href: "/gallery", icon: "🖼️" },
     ],
   },
   {

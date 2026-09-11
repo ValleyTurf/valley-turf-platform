@@ -74,6 +74,30 @@ export async function updateCustomerProfile(
       ? cleanText(formData.get("referral_campaign_id"))
       : null;
 
+  const { data: before } = await supabaseServer
+    .from("customers")
+    .select(
+      "full_name, turf_size_sqft, turf_size_range, gate_code, pet_count, pet_names, odor_level, subscription_plan, service_instructions, referral_source, referred_by_customer_id, referral_campaign_id, gallery_consent, gallery_consent_at"
+    )
+    .eq("jobber_client_id", jobberClientId)
+    .maybeSingle();
+
+  // Standard unchecked-checkbox-omits-the-field HTML behavior -- present
+  // ("on") means checked. gallery_consent_at records when consent was
+  // last actually given: a re-save while already consenting keeps the
+  // original timestamp rather than bumping it on every unrelated profile
+  // edit; unchecking clears both, so a later re-check reads as a fresh
+  // consent with its own timestamp (same reasoning migration
+  // 053_add_lead_sms_consent.sql's sms_consent/sms_consent_at pair keeps
+  // real evidence of when consent happened, not just that it currently
+  // is true).
+  const galleryConsent = formData.get("gallery_consent") === "on";
+  const galleryConsentAt = galleryConsent
+    ? before?.gallery_consent
+      ? before.gallery_consent_at
+      : new Date().toISOString()
+    : null;
+
   const updates = {
     turf_size_sqft: cleanNumber(formData.get("turf_size_sqft")),
     turf_size_range: cleanText(formData.get("turf_size_range")),
@@ -86,15 +110,9 @@ export async function updateCustomerProfile(
     referral_source: referralSource,
     referred_by_customer_id: referredByCustomerId,
     referral_campaign_id: referralCampaignId,
+    gallery_consent: galleryConsent,
+    gallery_consent_at: galleryConsentAt,
   };
-
-  const { data: before } = await supabaseServer
-    .from("customers")
-    .select(
-      "full_name, turf_size_sqft, turf_size_range, gate_code, pet_count, pet_names, odor_level, subscription_plan, service_instructions, referral_source, referred_by_customer_id, referral_campaign_id"
-    )
-    .eq("jobber_client_id", jobberClientId)
-    .maybeSingle();
 
   const { error } = await supabaseServer
     .from("customers")

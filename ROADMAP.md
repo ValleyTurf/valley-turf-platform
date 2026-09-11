@@ -67,30 +67,36 @@ now).
    to a visit reminder/invoice text now gets logged and shown in
    Messages the same way an email reply already was, via a new Twilio
    inbound webhook.
-2. **Referral program.** A trackable referral link/code per customer,
-   a reward when it converts, and a leaderboard/report for you — ties
-   the marketing site and CRM together and is a cheap way to grow.
-3. **Push notifications**, not just the PWA install prompt — a crew
-   member gets pinged the moment they're assigned a new visit; a
-   customer gets a day-of alert beyond the 2-day/4-day email/text.
-4. **Recurring-revenue dashboard.** You're a subscription-style
-   business (Revival plans) — an MRR-style view (new/lost/net recurring
-   revenue by month) would sit well next to the existing Revenue
-   dashboard.
-5. ~~**Marketing site content/SEO buildout.**~~ **Done.** Added 62
+2. ~~**Referral / lead-source tracking.**~~ **Done.** Not a full
+   automated rewards program by design (Ryan's call — manual discounts
+   so the terms can change any time without a rebuild). A "how did you
+   hear about us?" field (Referral, Google, Instagram, Facebook, Word
+   of Mouth, QR Code, Other) lives on the internal New Customer form
+   and each customer's Property Profile — staff-only, never shown to
+   the customer. Picking Referral links to the referring customer;
+   picking QR Code picks from the real QR campaigns already tracked
+   under Links & QR. Reporting is internal-only (Reports → Referral
+   Sources): counts by source plus a top-referrers list.
+3. ~~**Recurring-revenue dashboard.**~~ **Done.** An MRR-style view
+   (Revenue → Recurring Revenue) — current MRR plus new/lost/net by
+   month. Lost MRR tracks going forward only from a real cancellation
+   timestamp (added when this shipped) rather than guessing at
+   pre-existing churn.
+4. ~~**Marketing site content/SEO buildout.**~~ **Done.** Added 62
    service x city combo pages (`/services/[service]/[city]`), sitewide
    breadcrumb navigation + BreadcrumbList schema, Service/LocalBusiness
    schema validated against Google's Rich Results Test, and self-updating
    `<lastmod>` dates in the sitemap.
-6. **Seasonal promo automation.** Auto-send a targeted email/text
+5. **Seasonal promo automation.** Auto-send a targeted email/text
    campaign (e.g. spring startup, fall cleanup) to a filtered customer
    segment, reusing the Compose Email infrastructure that already
    exists.
-7. **Photo-based before/after gallery, sourced from your own visit
+6. **Photo-based before/after gallery, sourced from your own visit
    photos.** My Day already captures visit photos — surfacing the best
    of them (with customer permission) on the marketing site would beat
    hand-picking gallery images.
-8. **Team performance dashboard.** Crew Status and job costing already
-   track time-per-visit and job costs per crew member — rolling that
-   up into a simple per-crew scorecard (avg time, cost accuracy, tips)
-   would help with reviews and scheduling decisions.
+7. ~~**Team performance dashboard.**~~ **Done.** Reports → Team
+   Performance (manager+ only) — avg time per visit and tips per crew
+   member, for reviews and scheduling decisions. Cost accuracy was
+   dropped: there's no expected/budgeted cost per job anywhere in the
+   app to measure against, so it would've had no real benchmark.

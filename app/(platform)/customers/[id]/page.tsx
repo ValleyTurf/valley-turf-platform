@@ -970,6 +970,7 @@ type CustomerProfile = {
   referral_source: string | null;
   referred_by_customer_id: string | null;
   referral_campaign_id: string | null;
+  gallery_consent: boolean;
 };
 
 async function getCustomerProfile(
@@ -991,7 +992,8 @@ async function getCustomerProfile(
         current_property_id,
         referral_source,
         referred_by_customer_id,
-        referral_campaign_id
+        referral_campaign_id,
+        gallery_consent
       `
     )
     .eq("jobber_client_id", jobberClientId)
@@ -1870,6 +1872,29 @@ export default async function CustomerDetailPage({
                   customers={referralPickerData.customers}
                   campaigns={referralPickerData.campaigns}
                 />
+
+                <div className="flex items-start gap-2 rounded-lg border border-[#e7e2d5] bg-[#f7f6f1] p-3">
+                  <input
+                    id="gallery_consent"
+                    name="gallery_consent"
+                    type="checkbox"
+                    defaultChecked={profile?.gallery_consent ?? false}
+                    className="mt-0.5"
+                  />
+
+                  <label
+                    htmlFor="gallery_consent"
+                    className="text-xs text-[#174734]"
+                  >
+                    <span className="font-bold">
+                      OK to feature photos of this property in marketing
+                    </span>
+                    <br />
+                    Ask the customer first. Once checked, staff can pick
+                    visit photos of this property to show on the website
+                    under Marketing → Photo Gallery.
+                  </label>
+                </div>
 
                 <button
                   type="submit"
