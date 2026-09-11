@@ -8,12 +8,17 @@
 // pending/error/result state, not a full-page redirect that would also
 // throw away whatever Ryan had typed if something failed partway.
 //
-// 300s ceiling (Vercel route-segment config) gives a larger audience
-// headroom to finish inside one request -- lib/promoCampaigns.ts sends
-// with bounded concurrency (5 at a time) rather than fully sequential,
-// same reasoning as lib/dailyDigest.ts already doing real per-customer
-// work inside one Vercel function run.
-export const maxDuration = 300;
+// NOTE: the 300s maxDuration for this route lives in page.tsx, not here.
+// A "use server" file's exports are all treated as Server Action
+// references by Next's compiler, which only allows async-function
+// exports from a file marked "use server" -- a plain constant export
+// like `export const maxDuration = 300` alongside it broke that
+// transform (Turbopack silently emitted a module with zero exports,
+// which is what surfaced as the "sendCampaignAction not found" build
+// failure). Route segment config is recognized on page.tsx anyway, and
+// it covers the Server Actions invoked from that page too, so moving it
+// there gives the same 300s ceiling without touching this file's export
+// shape.
 
 import { revalidatePath } from "next/cache";
 import { requireManager } from "@/lib/currentUser";

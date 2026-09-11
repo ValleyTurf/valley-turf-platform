@@ -4,7 +4,8 @@
 // reasoning (look the customer's phone up fresh by jobberClientId rather
 // than trusting a value passed from the client). Used by the Messages
 // per-customer thread's reply box (ReplyForm.tsx) so staff can text back
-// a customer, not just email them.
+// a customer, and by the Reactivation Pipeline's ComposeSmsForm so staff
+// can text a reactivation opportunity without leaving that page.
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
@@ -67,6 +68,10 @@ export async function sendManualSmsToCustomer(
   revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
   revalidatePath(`/messages/${encodeURIComponent(jobberClientId)}`);
   revalidatePath("/messages");
+  // Cheap no-op when sent from the Messages thread instead -- same
+  // "revalidate every page this action might have been called from"
+  // reasoning as sendManualEmailToCustomer.
+  revalidatePath("/reactivation");
 
   return { error: null };
 }

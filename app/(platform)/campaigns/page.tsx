@@ -1,5 +1,13 @@
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+// 300s ceiling (Vercel route-segment config) gives a larger audience
+// headroom to finish inside one request -- lib/promoCampaigns.ts sends
+// with bounded concurrency (5 at a time) rather than fully sequential,
+// same reasoning as lib/dailyDigest.ts already doing real per-customer
+// work inside one Vercel function run. This also covers the
+// sendCampaignAction Server Action invoked from this page (see
+// actions.ts's header comment for why it isn't exported from there).
+export const maxDuration = 300;
 
 // ROADMAP.md Fresh Ideas #5 -- Seasonal promo automation. Manual,
 // one-click campaigns: build an audience filter (this page, plain

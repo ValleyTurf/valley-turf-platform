@@ -1866,6 +1866,20 @@ export default async function CustomerDetailPage({
                 </div>
 
                 <ReferralSourceField
+                  // Forces a fresh remount whenever the saved value
+                  // actually changes (e.g. right after Save Profile).
+                  // ReferralSourceField's <select> is a controlled input
+                  // that seeds its local state from initialSource only
+                  // once, on mount (useState(initialSource ?? "")) --
+                  // every other field on this form uses a plain
+                  // defaultValue instead, so this is the one field that
+                  // needs a key to pick up the newly-saved value instead
+                  // of clinging to whatever it showed before the save
+                  // (which looked like it had reverted to "Not set" when
+                  // a customer had no prior source on file).
+                  key={`${profile?.referral_source ?? "none"}:${
+                    profile?.referred_by_customer_id ?? "none"
+                  }:${profile?.referral_campaign_id ?? "none"}`}
                   initialSource={profile?.referral_source ?? null}
                   initialReferredBy={referredByCustomer}
                   initialCampaignId={profile?.referral_campaign_id ?? null}

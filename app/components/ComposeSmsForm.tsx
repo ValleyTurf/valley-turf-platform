@@ -1,20 +1,16 @@
 "use client";
 
-// Reusable "Compose Email" affordance -- dropped into the Customer page,
-// the Reactivation Pipeline, and Customer Intelligence, all pointed at
-// the same shared action (lib/composeEmailAction.ts). Starts collapsed
-// as a single button so it doesn't add clutter to pages that already
-// show a lot per customer row; opening it reveals a plain subject/body
-// form. Calls the server action directly via useTransition (same
-// pattern as ExclusionSaveForm.tsx) rather than a bare <form
-// action={...}> so a send failure -- no email on file, Resend not
-// configured, etc. -- has somewhere inline to show up instead of just
-// silently not working.
+// SMS counterpart to ComposeEmailForm.tsx -- same collapsed-button ->
+// inline-form pattern, same useTransition-driven submit (so a send
+// failure, e.g. no phone on file or Twilio not configured, has somewhere
+// inline to show up), just a single body field and no subject. Calls
+// lib/composeSmsAction.ts's sendManualSmsToCustomer, the same action the
+// Messages per-customer reply box already uses.
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { sendManualEmailToCustomer } from "@/lib/composeEmailAction";
+import { sendManualSmsToCustomer } from "@/lib/composeSmsAction";
 
-export function ComposeEmailForm({
+export function ComposeSmsForm({
   jobberClientId,
   buttonClassName,
   onSent,
@@ -23,14 +19,13 @@ export function ComposeEmailForm({
   buttonClassName?: string;
   // Optional hook fired after a successful send, before the router
   // refresh -- e.g. the Reactivation Pipeline binds this to mark a
-  // customer "Emailed" automatically, the same status update its
+  // customer "Texted" automatically, the same status update its
   // StatusButton triggers, so sending here doesn't also require a
   // separate manual click.
   onSent?: () => void | Promise<void>;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
@@ -41,14 +36,13 @@ export function ComposeEmailForm({
     setSent(false);
 
     startTransition(async () => {
-      const result = await sendManualEmailToCustomer(jobberClientId, formData);
+      const result = await sendManualSmsToCustomer(jobberClientId, formData);
 
       if (result.error) {
         setError(result.error);
         return;
       }
 
-      setSubject("");
       setBody("");
       setSent(true);
       await onSent?.();
@@ -66,7 +60,7 @@ export function ComposeEmailForm({
           "whitespace-nowrap rounded-lg border border-[#174734] px-3 py-1.5 text-xs font-bold text-[#174734] transition hover:bg-[#174734] hover:text-white"
         }
       >
-        Compose Email
+        Compose Text
       </button>
     );
   }
@@ -76,20 +70,10 @@ export function ComposeEmailForm({
       action={handleSubmit}
       className="mt-2 w-full space-y-2 rounded-xl border border-[#e7e2d5] bg-white p-3"
     >
-      <input
-        type="text"
-        name="subject"
-        placeholder="Subject"
-        value={subject}
-        onChange={(event) => setSubject(event.target.value)}
-        disabled={isPending}
-        className="w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20 disabled:opacity-60"
-      />
-
       <textarea
         name="body"
         rows={4}
-        placeholder="Write your message…"
+        placeholder="Write your text…"
         value={body}
         onChange={(event) => setBody(event.target.value)}
         disabled={isPending}
@@ -106,7 +90,7 @@ export function ComposeEmailForm({
           disabled={isPending}
           className="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246] disabled:opacity-60"
         >
-          {isPending ? "Sending…" : sent ? "Sent ✓" : "Send Email"}
+          {isPending ? "Sending…" : sent ? "Sent ✓" : "Send Text"}
         </button>
 
         <button

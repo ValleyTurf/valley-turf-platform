@@ -5,8 +5,9 @@ Claude to add to it, re-prioritize it, or check something off.
 
 **Standing constraint — never re-suggest these:** Ryan has explicitly
 ruled out (1) same-day/multi-stop route optimization, (2) stock/inventory
-level alerts, and (3) customer self-service features (e.g. self-serve
-reschedule). Do not propose or build any of these three, in this doc or
+level alerts, (3) customer self-service features (e.g. self-serve
+reschedule), and (4) proactive weather-day/schedule-disruption alerts to
+customers. Do not propose or build any of these four, in this doc or
 elsewhere, even if they'd otherwise seem like a natural fit.
 
 ## Where things stand with Jobber today
@@ -87,16 +88,68 @@ now).
    breadcrumb navigation + BreadcrumbList schema, Service/LocalBusiness
    schema validated against Google's Rich Results Test, and self-updating
    `<lastmod>` dates in the sitemap.
-5. **Seasonal promo automation.** Auto-send a targeted email/text
-   campaign (e.g. spring startup, fall cleanup) to a filtered customer
-   segment, reusing the Compose Email infrastructure that already
-   exists.
-6. **Photo-based before/after gallery, sourced from your own visit
-   photos.** My Day already captures visit photos — surfacing the best
-   of them (with customer permission) on the marketing site would beat
-   hand-picking gallery images.
+5. ~~**Seasonal promo automation.**~~ **Done.** Marketing → Campaigns
+   (manager+ only) — build a customer segment (recurring status, plan,
+   city), write a message once, and send it yourself on email and/or
+   text. Manual by design (Ryan's call — nothing runs on a schedule),
+   reuses the same send functions Compose Email/Text already use.
+6. ~~**Photo-based before/after gallery, sourced from your own visit
+   photos.**~~ **Done.** Marketing → Photo Gallery — staff pick the best
+   visit photos from customers who've checked "OK to feature photos" on
+   their Property Profile; featured ones show up in a new "Real results
+   from our customers" section on the homepage, alongside (not
+   replacing) the existing hand-picked galleries.
 7. ~~**Team performance dashboard.**~~ **Done.** Reports → Team
    Performance (manager+ only) — avg time per visit and tips per crew
    member, for reviews and scheduling decisions. Cost accuracy was
    dropped: there's no expected/budgeted cost per job anywhere in the
    app to measure against, so it would've had no real benchmark.
+8. **Referral discount ledger.** Item 2's referral tracking records WHO
+   referred whom, but not whether the manual discount you owe each side
+   has actually been applied yet — a simple "credit owed / credit
+   applied" log per customer would stop a promised discount from
+   getting forgotten a few invoices later. *Not pursuing right now.*
+9. ~~**Private feedback funnel before the public review ask.**~~
+   **Skipped** — superseded by item 10's star rating on the receipt,
+   which already gates on the rating itself rather than needing a
+   separate private-feedback form.
+10. ~~**Post-visit satisfaction rating.**~~ **Done.** The 5-star "Did we
+    do a great job?" block already at the bottom of every invoice email
+    is now clickable — each star links to a new public /rate/[token]
+    page (same link token as Pay Now) with a confirm step before
+    anything is recorded, so an email security scanner pre-fetching the
+    link can't silently log a fake rating. Only a genuine 5-star
+    continues on to the real Google review link (looked up fresh each
+    time, so changing that URL later applies to old emails too); 1-4
+    stays internal, alerts Ryan immediately by text and email, and also
+    shows up in the daily digest's "Low invoice ratings" section as a
+    backstop. Not wired into Customer Intelligence's churn-risk scoring
+    yet — worth revisiting once there's enough rating history to be a
+    meaningful signal.
+11. **Equipment maintenance tracking.** The existing Equipment costing
+    section tracks what equipment costs, not when it was last
+    serviced — a simple maintenance-due list (e.g. "sprayer due for
+    cleaning") would catch wear before it turns into a bigger repair or
+    a bad clean. *Not pursuing right now.*
+12. **Crew service-completion checklist — interested, design TBD.** A
+    short per-visit-type checklist (e.g. brushed, rinsed, photo taken,
+    gate secured) crew check off from My Day — keeps quality consistent
+    across the team and gives you something concrete to point to if a
+    customer ever disputes what was actually done.
+13. **Team incentive/bonus calculator — interested, design TBD.**
+    Builds on the Team Performance scorecard — turn visits/tips/avg
+    time into a suggested bonus number for a pay period, so reviews
+    aren't just "here's your data" but "here's what it's worth."
+14. **Cash flow forecast.** Builds on the Recurring Revenue dashboard —
+    layer in AR aging/expected collections for a near-term "what's
+    actually coming in the next 30/60 days" view, not just MRR. *Not
+    pursuing right now.*
+15. **Warranty / re-clean tracking.** Flag and track visits that were
+    free redo/warranty work separately from normal paid visits — a
+    rising redo rate for a crew member or service type is worth knowing
+    about before customers start mentioning it. *Not pursuing right
+    now.*
+16. **Auto-draft Google Business Profile posts.** Reuses item 6's photo
+    curation — turn a freshly featured gallery photo into a drafted GBP
+    post (you still review/publish it) instead of writing one from
+    scratch.

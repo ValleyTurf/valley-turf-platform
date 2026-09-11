@@ -27,6 +27,7 @@ import {
 import { formatCurrency, formatNumber, formatPercent, toNumber } from "@/lib/format";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
 import { ComposeEmailForm } from "@/app/components/ComposeEmailForm";
+import { ComposeSmsForm } from "@/app/components/ComposeSmsForm";
 
 type Customer = {
   id: string;
@@ -71,6 +72,21 @@ type PipelineEntry = {
 
 function normalizeInterval(raw: string | null): RecontactInterval | null {
   return raw === "3mo" || raw === "6mo" ? raw : null;
+}
+
+// Longest-since-service first within a bucket, so the most overdue
+// customers are the ones staff see right at the top of each group
+// instead of having to scan the whole list. A null daysSinceLastInvoice
+// (never invoiced at all) sorts as "longest" via the Infinity fallback
+// -- only reachable in the 18+ catch-all bucket, since every named time
+// bucket below requires a real daysSinceLastInvoice to land in it.
+function sortByDaysSinceLastInvoiceDesc(
+  entries: PipelineEntry[]
+): PipelineEntry[] {
+  return [...entries].sort(
+    (a, b) =>
+      (b.daysSinceLastInvoice ?? Infinity) - (a.daysSinceLastInvoice ?? Infinity)
+  );
 }
 
 async function updateReactivationStatus(formData: FormData) {
@@ -130,6 +146,27 @@ async function updateReactivationStatus(formData: FormData) {
 
   revalidatePath("/reactivation");
   revalidatePath("/customers/intelligence");
+}
+
+// Bound (customerId, status) and handed to ComposeEmailForm/
+// ComposeSmsForm's onSent prop below, so sending actually reaches a
+// reactivation opportunity now marks them contacted the same way
+// clicking the Emailed/Texted StatusButton already does -- reuses
+// updateReactivationStatus's real logic (contact-attempt counting,
+// next-follow-up scheduling, revalidation) rather than duplicating it,
+// just packaged as plain args instead of a <form>'s FormData since this
+// is invoked from a client component's success handler, not a submit.
+async function markReactivationContacted(
+  customerId: string,
+  status: "contacted_email" | "contacted_text"
+): Promise<void> {
+  "use server";
+
+  const formData = new FormData();
+  formData.set("customer_id", customerId);
+  formData.set("status", status);
+
+  await updateReactivationStatus(formData);
 }
 
 function customerName(customer: Customer) {
@@ -370,17 +407,21 @@ export default async function ReactivationPage({
       key: bucket.key as string,
       title: bucket.title,
       subtitle: bucket.subtitle,
-      entries: filteredPipeline.filter(
-        (entry) =>
-          timeBucketForDays(entry.daysSinceLastInvoice ?? -1) === bucket.key
+      entries: sortByDaysSinceLastInvoiceDesc(
+        filteredPipeline.filter(
+          (entry) =>
+            timeBucketForDays(entry.daysSinceLastInvoice ?? -1) === bucket.key
+        )
       ),
     })),
     {
       key: "18-plus",
       title: "18+ Months",
       subtitle: "Still being worked despite the long gap.",
-      entries: filteredPipeline.filter(
-        (entry) => timeBucketForDays(entry.daysSinceLastInvoice ?? -1) === null
+      entries: sortByDaysSinceLastInvoiceDesc(
+        filteredPipeline.filter(
+          (entry) => timeBucketForDays(entry.daysSinceLastInvoice ?? -1) === null
+        )
       ),
     },
   ].filter((bucket) => activeFilter !== "all" || bucket.entries.length > 0);
@@ -758,8 +799,11 @@ function ReactivationCard({ entry }: { entry: PipelineEntry }) {
           <p className="mt-1 text-sm text-[#6b705c]">
             {formatNumber(entry.invoiceCount)} invoices ·{" "}
             {formatCurrency(entry.lifetimeRevenue)} lifetime · last invoice{" "}
-            {formatDate(entry.latestInvoiceDate)} ·{" "}
-            {customer.reactivation_contact_attempts ?? 0} attempts
+            {formatDate(entry.latestInvoiceDate)}
+            {entry.daysSinceLastInvoice !== null && (
+              <> ({formatNumber(entry.daysSinceLastInvoice)} days since last service)</>
+            )}{" "}
+            · {customer.reactivation_contact_attempts ?? 0} attempts
           </p>
 
           {customer.reactivation_next_follow_up_at && (
@@ -802,7 +846,24 @@ function ReactivationCard({ entry }: { entry: PipelineEntry }) {
         <StatusButton customerId={customer.id} status="removed" label="Remove" tone="negative" />
 
         {customer.jobber_client_id && (
-          <ComposeEmailForm jobberClientId={customer.jobber_client_id} />
+          <>
+            <ComposeEmailForm
+              jobberClientId={customer.jobber_client_id}
+              onSent={markReactivationContacted.bind(
+                null,
+                customer.id,
+                "contacted_email"
+              )}
+            />
+            <ComposeSmsForm
+              jobberClientId={customer.jobber_client_id}
+              onSent={markReactivationContacted.bind(
+                null,
+                customer.id,
+                "contacted_text"
+              )}
+            />
+          </>
         )}
 
         <Link
