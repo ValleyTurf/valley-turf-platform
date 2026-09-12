@@ -139,6 +139,10 @@ export type PaymentReceivedAlert = {
   amount: number;
   method: string | null;
   viaAutopay: boolean;
+  // Derived tip portion of `amount` (lib/payments.ts's markInvoicePaid) --
+  // optional/omitted when there's no tip, so this alert just adds one
+  // more line for Ryan rather than requiring every caller to know about it.
+  tipAmount?: number;
 };
 
 export async function sendPaymentReceivedAlertEmail(
@@ -161,12 +165,18 @@ export async function sendPaymentReceivedAlertEmail(
 
   const subject = `Payment received: $${amountLabel} -- Invoice ${alert.invoiceNumber}`;
 
+  const tipRow =
+    alert.tipAmount && alert.tipAmount > 0
+      ? `<p><strong>Includes tip:</strong> $${alert.tipAmount.toFixed(2)}</p>`
+      : "";
+
   const html = `
     <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
       <p style="font-size: 16px; font-weight: bold;">Payment received</p>
       <p><strong>Customer:</strong> ${escapeHtml(alert.customerName)}</p>
       <p><strong>Invoice:</strong> ${escapeHtml(alert.invoiceNumber)}</p>
       <p><strong>Amount:</strong> $${amountLabel}</p>
+      ${tipRow}
       <p><strong>Method:</strong> ${escapeHtml(methodLabel)}</p>
     </div>
   `;
@@ -1441,7 +1451,16 @@ export type ManualPaymentReceiptEmail = {
   toEmail: string;
   customerName: string | null;
   invoiceNumber: string;
+  // The FULL amount actually captured by Stripe (invoice total plus any
+  // tip added at checkout, app/pay/[token]/TipSelector.tsx) -- NOT
+  // invoice.total. Previously this got invoice.total passed in, which
+  // silently dropped the tip from the amount shown on the receipt (Ryan's
+  // report: customer paid $216 with a tip, receipt showed $180).
   total: number;
+  // Derived by lib/payments.ts's markInvoicePaid as (amount captured -
+  // invoice.total) -- Stripe never tracks a tip as its own figure.
+  // Zero/undefined just omits the tip line below.
+  tipAmount?: number;
   pdfBuffer: Buffer;
   jobberClientId: string | null;
 };
@@ -1457,6 +1476,10 @@ export async function sendManualPaymentReceiptEmail(
   }
 
   const greetingName = firstNameOf(request.customerName);
+  const tipLine =
+    request.tipAmount && request.tipAmount > 0
+      ? `<p>This includes a <strong>$${request.tipAmount.toFixed(2)}</strong> tip -- thank you!</p>`
+      : "";
 
   const html = `
     <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
@@ -1466,6 +1489,7 @@ export async function sendManualPaymentReceiptEmail(
       )}</strong> for invoice <strong>${escapeHtml(
     request.invoiceNumber
   )}</strong> from Valley Turf Revival.</p>
+      ${tipLine}
       <p>Your receipt is attached.</p>
       <p style="color: #6b705c; font-size: 12px;">Questions about this payment? Just reply to this email.</p>
     </div>
@@ -1521,13 +1545,17 @@ export async function sendManualPaymentReceiptEmail(
 }
 
 // Text counterpart to sendManualPaymentReceiptEmail -- same reasoning as
-// sendInvoiceSms alongside sendInvoiceEmail.
+// sendInvoiceSms alongside sendInvoiceEmail. `total` is the FULL amount
+// captured (invoice total + tip, same as the email version -- see that
+// type's comment); `tipAmount` is optional and just adds a short mention
+// when there was one.
 export async function sendManualPaymentReceiptSms(
   toPhone: string,
   customerName: string | null,
   invoiceNumber: string,
   total: number,
-  jobberClientId: string | null
+  jobberClientId: string | null,
+  tipAmount?: number
 ): Promise<boolean> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -1539,9 +1567,10 @@ export async function sendManualPaymentReceiptSms(
   }
 
   const greetingName = firstNameOf(customerName);
+  const tipNote = tipAmount && tipAmount > 0 ? ` (includes a $${tipAmount.toFixed(2)} tip)` : "";
   const body = `Hi ${greetingName}, this is Valley Turf Revival. We've received your payment of $${total.toFixed(
     2
-  )} for invoice ${invoiceNumber}. Thank you!`;
+  )}${tipNote} for invoice ${invoiceNumber}. Thank you!`;
 
   try {
     const response = await fetch(

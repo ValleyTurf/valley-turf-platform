@@ -124,6 +124,10 @@ async function handleCheckoutSessionCompleted(
   }
 
   if (paid && invoiceId) {
+    // checkout.session.completed's own markInvoicePaid call here is best-
+    // effort/early visibility (see the handler's own comment above) --
+    // payment_intent.succeeded below is what actually drives the tip-
+    // aware receipt/alert sends, so the returned tipAmount is unused here.
     await markInvoicePaid({
       invoiceId,
       paidAt,
@@ -139,7 +143,11 @@ async function handleCheckoutSessionCompleted(
 // never fails the webhook processing itself -- the payment is already
 // recorded and the invoice already marked paid by the time this runs;
 // losing a receipt send shouldn't put either of those into a retry loop.
-async function sendManualPaymentReceipt(invoiceId: string): Promise<void> {
+async function sendManualPaymentReceipt(
+  invoiceId: string,
+  amountReceived: number,
+  tipAmount: number
+): Promise<void> {
   try {
     const invoice = await getInvoiceById(invoiceId);
 
@@ -171,13 +179,19 @@ async function sendManualPaymentReceipt(invoiceId: string): Promise<void> {
         ? await generateInvoicePdf(invoice, lineItems)
         : null;
 
+    // Previously passed invoice.total here, which excludes a tip added at
+    // checkout (app/pay/[token]/TipSelector.tsx) -- amountReceived is the
+    // full amount payment_intent.succeeded actually reports as captured,
+    // so the receipt always matches what the customer's card/bank was
+    // actually charged.
     if (pdfBuffer) {
       for (const toEmail of recipients.emails) {
         await sendManualPaymentReceiptEmail({
           toEmail,
           customerName: invoice.customerName,
           invoiceNumber: invoice.invoiceNumber,
-          total: invoice.total,
+          total: amountReceived,
+          tipAmount,
           pdfBuffer,
           jobberClientId: invoice.jobberClientId,
         });
@@ -189,8 +203,9 @@ async function sendManualPaymentReceipt(invoiceId: string): Promise<void> {
         toPhone,
         invoice.customerName,
         invoice.invoiceNumber,
-        invoice.total,
-        invoice.jobberClientId
+        amountReceived,
+        invoice.jobberClientId,
+        tipAmount
       );
     }
   } catch (error) {
@@ -211,7 +226,8 @@ async function notifyStaffOfPayment(
   invoiceId: string,
   amount: number,
   method: string | null,
-  viaAutopay: boolean
+  viaAutopay: boolean,
+  tipAmount: number
 ): Promise<void> {
   try {
     const invoice = await getInvoiceById(invoiceId);
@@ -224,6 +240,7 @@ async function notifyStaffOfPayment(
       amount,
       method,
       viaAutopay,
+      tipAmount,
     });
   } catch (error) {
     console.error(
@@ -302,7 +319,7 @@ async function handlePaymentIntentSucceeded(
   }
 
   if (invoiceId) {
-    await markInvoicePaid({
+    const { tipAmount } = await markInvoicePaid({
       invoiceId,
       paidAt,
       amount,
@@ -313,7 +330,7 @@ async function handlePaymentIntentSucceeded(
 
     // Staff-facing "money came in" alert -- fires either way, unlike the
     // customer-facing receipt below.
-    await notifyStaffOfPayment(invoiceId, amount, method, viaAutopay);
+    await notifyStaffOfPayment(invoiceId, amount, method, viaAutopay, tipAmount);
 
     // Autopay's off-session charge (lib/autopay.ts's attemptAutopayCharge)
     // tags its PaymentIntent with source=autopay and already sent its own
@@ -321,7 +338,7 @@ async function handlePaymentIntentSucceeded(
     // only for a manual Pay Now checkout, which has no other confirmation
     // step.
     if (!viaAutopay) {
-      await sendManualPaymentReceipt(invoiceId);
+      await sendManualPaymentReceipt(invoiceId, amount, tipAmount);
     }
   } else {
     console.error(

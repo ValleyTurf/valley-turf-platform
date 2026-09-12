@@ -143,6 +143,7 @@ async function mirrorNativeInvoicePayment(params: {
   jobberClientId: string;
   stripePaymentIntentId: string;
   amount: number;
+  tipAmount: number;
   paidAt: string;
 }): Promise<void> {
   const mirrorInvoiceId = nativeMirrorInvoiceId(params.invoiceId);
@@ -157,7 +158,11 @@ async function mirrorNativeInvoicePayment(params: {
       payment_method: "Stripe",
       adjustment_type: null,
       transaction_status: "succeeded",
-      tip_amount: 0,
+      // Was hardcoded to 0 -- markInvoicePaid now derives the actual tip
+      // (checkout total minus the invoice's billed total) and passes it
+      // through, so it shows up on the customer card and in the
+      // timecards tip attribution (lib/tips.ts filters on tip_amount > 0).
+      tip_amount: params.tipAmount,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "jobber_payment_id" }
@@ -192,12 +197,19 @@ async function mirrorNativeInvoicePayment(params: {
 // mirror write below -- the native `payments` row itself is already
 // written by upsertPaymentByIntentId before this is called (see both
 // call sites in lib/stripeWebhookProcessor.ts).
+//
+// Returns the derived tip amount so callers (lib/stripeWebhookProcessor.ts)
+// can pass it into the payment-received alert and the receipt email/SMS --
+// Stripe never tracks a tip as its own figure (see app/pay/[token]/TipSelector.tsx
+// and lib/stripeCheckout.ts), it's just folded into the Checkout Session's
+// total, so the only way to recover it is (amount actually captured) minus
+// (the invoice's own billed total).
 export async function markInvoicePaid(params: {
   invoiceId: string;
   paidAt: string;
   amount: number;
   stripePaymentIntentId: string;
-}): Promise<void> {
+}): Promise<{ tipAmount: number }> {
   const { invoiceId, paidAt, amount, stripePaymentIntentId } = params;
 
   const { data: invoiceRow, error } = await supabaseServer
@@ -205,12 +217,17 @@ export async function markInvoicePaid(params: {
     .update({ status: "paid", paid_at: paidAt })
     .eq("id", invoiceId)
     .neq("status", "void")
-    .select("id, jobber_client_id, quickbooks_invoice_id")
+    .select("id, jobber_client_id, quickbooks_invoice_id, total")
     .maybeSingle();
 
   if (error) {
     throw new Error(`Failed to mark invoice ${invoiceId} paid: ${error.message}`);
   }
+
+  const tipAmount =
+    invoiceRow?.total != null
+      ? Math.max(0, Math.round((amount - Number(invoiceRow.total)) * 100) / 100)
+      : 0;
 
   // No row means either the invoice was void (guarded above -- correct
   // to skip) or doesn't exist. Either way there's nothing to mirror.
@@ -220,6 +237,7 @@ export async function markInvoicePaid(params: {
       jobberClientId: invoiceRow.jobber_client_id,
       stripePaymentIntentId,
       amount,
+      tipAmount,
       paidAt,
     });
   }
@@ -251,6 +269,8 @@ export async function markInvoicePaid(params: {
         .eq("id", invoiceId);
     }
   }
+
+  return { tipAmount };
 }
 
 // Looks up an invoice by the Checkout Session id stored on it

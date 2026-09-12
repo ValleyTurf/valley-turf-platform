@@ -915,12 +915,29 @@ async function getInvoiceCostBreakdowns(
   return new Map(rows.map((row) => [row.jobber_invoice_id, row]));
 }
 
+export type NativeInvoiceLineItem = {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+  details: string | null;
+};
+
+export type NativeInvoicePayment = {
+  amount: number;
+  tipAmount: number;
+  paymentDate: string | null;
+  status: string | null;
+};
+
 export type NativeInvoiceSummary = {
   invoiceId: string;
   invoiceNumber: string | null;
   status: string | null;
   total: number | null;
   dueDate: string | null;
+  lineItems: NativeInvoiceLineItem[];
+  payment: NativeInvoicePayment | null;
 };
 
 // Recent Invoices above only shows what's live in Jobber (client.invoices
@@ -932,6 +949,17 @@ export type NativeInvoiceSummary = {
 // jobber_invoices mirror Invoiced History uses, filtered to this
 // customer's synthetic "native-<uuid>" rows, and unwraps the uuid back
 // out for the Resend button below.
+//
+// Also pulls line items + payment/tip info per invoice (batched, not
+// N+1) so the "Native Invoices" section can expand each row into an
+// actual view of the invoice -- previously this only listed the
+// invoice number/total/status with a Resend button and nothing to
+// click to actually see it (Ryan's report: "has an option to resend,
+// but I can't click on it and see the invoice"). Payment/tip comes
+// from the same jobber_payments mirror lib/payments.ts's
+// mirrorNativeInvoicePayment writes (tip_amount included there as of
+// the same fix), so this always agrees with what Timecards' tip
+// attribution sees.
 async function getNativeInvoicesForCustomer(
   jobberClientId: string
 ): Promise<NativeInvoiceSummary[]> {
@@ -947,13 +975,68 @@ async function getNativeInvoicesForCustomer(
     return [];
   }
 
-  return (data ?? []).map((row) => ({
-    invoiceId: (row.jobber_invoice_id as string).slice("native-".length),
-    invoiceNumber: row.invoice_number as string | null,
-    status: row.status as string | null,
-    total: row.total === null ? null : Number(row.total),
-    dueDate: row.due_date as string | null,
-  }));
+  const rows = data ?? [];
+
+  if (rows.length === 0) return [];
+
+  const invoiceIds = rows.map((row) =>
+    (row.jobber_invoice_id as string).slice("native-".length)
+  );
+  const mirrorInvoiceIds = rows.map((row) => row.jobber_invoice_id as string);
+
+  const [{ data: lineItemRows }, { data: paymentRows }] = await Promise.all([
+    supabaseServer
+      .from("invoice_line_items")
+      .select("invoice_id, description, quantity, unit_price, line_total, details")
+      .in("invoice_id", invoiceIds),
+    supabaseServer
+      .from("jobber_payments")
+      .select("jobber_invoice_id, amount, tip_amount, payment_date, transaction_status")
+      .in("jobber_invoice_id", mirrorInvoiceIds),
+  ]);
+
+  const lineItemsByInvoiceId = new Map<string, NativeInvoiceLineItem[]>();
+
+  for (const row of lineItemRows ?? []) {
+    const key = row.invoice_id as string;
+    const list = lineItemsByInvoiceId.get(key) ?? [];
+
+    list.push({
+      description: row.description as string,
+      quantity: Number(row.quantity),
+      unitPrice: Number(row.unit_price),
+      lineTotal: Number(row.line_total),
+      details: row.details as string | null,
+    });
+
+    lineItemsByInvoiceId.set(key, list);
+  }
+
+  const paymentByMirrorId = new Map<string, NativeInvoicePayment>();
+
+  for (const row of paymentRows ?? []) {
+    paymentByMirrorId.set(row.jobber_invoice_id as string, {
+      amount: Number(row.amount),
+      tipAmount: Number(row.tip_amount ?? 0),
+      paymentDate: row.payment_date as string | null,
+      status: row.transaction_status as string | null,
+    });
+  }
+
+  return rows.map((row) => {
+    const mirrorInvoiceId = row.jobber_invoice_id as string;
+    const invoiceId = mirrorInvoiceId.slice("native-".length);
+
+    return {
+      invoiceId,
+      invoiceNumber: row.invoice_number as string | null,
+      status: row.status as string | null,
+      total: row.total === null ? null : Number(row.total),
+      dueDate: row.due_date as string | null,
+      lineItems: lineItemsByInvoiceId.get(invoiceId) ?? [],
+      payment: paymentByMirrorId.get(mirrorInvoiceId) ?? null,
+    };
+  });
 }
 
 type CustomerProfile = {
@@ -2532,18 +2615,19 @@ export default async function CustomerDetailPage({
               <section className="rounded-2xl bg-white p-5 shadow">
                 <h2 className="text-lg font-bold">Native Invoices</h2>
                 <p className="mt-1 text-xs text-[#6b705c]">
-                  Invoices created directly in this app. Resend if a
-                  customer says they never got it -- this doesn&apos;t
-                  attempt another autopay charge.
+                  Invoices created directly in this app. Tap one to see its
+                  line items and payment. Resend if a customer says they
+                  never got it -- this doesn&apos;t attempt another autopay
+                  charge.
                 </p>
 
                 <div className="mt-3 space-y-2">
                   {nativeInvoices.map((invoice) => (
-                    <div
+                    <details
                       key={invoice.invoiceId}
                       className="rounded-xl border border-[#e7e2d5] px-3 py-2"
                     >
-                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                      <summary className="flex cursor-pointer list-none flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-bold">
                             Invoice #{invoice.invoiceNumber ?? "—"}
@@ -2556,30 +2640,77 @@ export default async function CustomerDetailPage({
                           </p>
                         </div>
 
-                        <div className="flex shrink-0 items-center gap-3">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
-                                invoice.status
-                              )}`}
-                            >
-                              {formatStatus(invoice.status)}
-                            </span>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span
+                            className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
+                              invoice.status
+                            )}`}
+                          >
+                            {formatStatus(invoice.status)}
+                          </span>
 
-                            <p className="text-sm font-bold">
-                              {invoice.total !== null
-                                ? formatCurrency(invoice.total)
-                                : "—"}
-                            </p>
-                          </div>
-
-                          <ResendInvoiceButton
-                            jobberClientId={decodedId}
-                            invoiceId={invoice.invoiceId}
-                          />
+                          <p className="text-sm font-bold">
+                            {invoice.total !== null
+                              ? formatCurrency(invoice.total)
+                              : "—"}
+                          </p>
                         </div>
+                      </summary>
+
+                      <div className="mt-3 space-y-3 border-t border-[#f0eee6] pt-3">
+                        {invoice.lineItems.length > 0 ? (
+                          <div className="space-y-1">
+                            {invoice.lineItems.map((item, index) => (
+                              <div
+                                key={index}
+                                className="flex items-start justify-between gap-3 text-sm"
+                              >
+                                <span className="min-w-0 text-[#174734]">
+                                  {item.description}
+                                  {item.quantity !== 1
+                                    ? ` × ${formatNumber(item.quantity)}`
+                                    : ""}
+                                </span>
+                                <span className="shrink-0 font-semibold">
+                                  {formatCurrency(item.lineTotal)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-[#6b705c]">
+                            No line items on file.
+                          </p>
+                        )}
+
+                        {invoice.payment ? (
+                          <div className="rounded-lg bg-[#f7f6f1] px-3 py-2 text-sm">
+                            <p className="font-semibold text-[#174734]">
+                              Paid {formatCurrencyPrecise(invoice.payment.amount)}
+                              {invoice.payment.paymentDate
+                                ? ` on ${formatDate(invoice.payment.paymentDate)}`
+                                : ""}
+                            </p>
+                            {invoice.payment.tipAmount > 0 && (
+                              <p className="mt-1 text-xs text-[#9c7a20]">
+                                Includes a{" "}
+                                {formatCurrencyPrecise(invoice.payment.tipAmount)}{" "}
+                                tip
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-[#6b705c]">
+                            Not paid yet.
+                          </p>
+                        )}
+
+                        <ResendInvoiceButton
+                          jobberClientId={decodedId}
+                          invoiceId={invoice.invoiceId}
+                        />
                       </div>
-                    </div>
+                    </details>
                   ))}
                 </div>
               </section>
