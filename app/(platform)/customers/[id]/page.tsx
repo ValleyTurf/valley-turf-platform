@@ -2391,22 +2391,43 @@ export default async function CustomerDetailPage({
 
               <p className="mt-1 text-xs text-[#6b705c]">
                 Actual money received, synced from Jobber — separate from
-                Recent Invoices below, which shows billing status.
+                Recent Invoices below, which shows billing status. A
+                payment tied to a native invoice (this app, not Jobber)
+                can be clicked to view the receipt/invoice PDF that was
+                actually sent for it.
               </p>
 
               <div className="mt-3 space-y-2">
                 {payments.length > 0 ? (
                   payments.map((payment) => {
-                    const invoiceNumber = invoices.find(
-                      (invoice) => invoice.id === payment.jobber_invoice_id
-                    )?.invoiceNumber;
+                    // Native invoices are mirrored into jobber_invoices
+                    // under a synthetic "native-<uuid>" id (see
+                    // lib/payments.ts's mirrorNativeInvoicePayment) --
+                    // unwrap it back to the real invoice id so this can
+                    // both look up the invoice number from nativeInvoices
+                    // (invoices[] above only has real Jobber invoices,
+                    // which never matches these) and link to the PDF
+                    // route below. A real Jobber-synced payment has
+                    // nothing to link to -- that invoice/receipt lives in
+                    // Jobber itself, not in this app.
+                    const isNativePayment =
+                      payment.jobber_invoice_id.startsWith("native-");
+                    const nativeInvoiceId = isNativePayment
+                      ? payment.jobber_invoice_id.slice("native-".length)
+                      : null;
+
+                    const invoiceNumber = isNativePayment
+                      ? nativeInvoices.find(
+                          (invoice) => invoice.invoiceId === nativeInvoiceId
+                        )?.invoiceNumber
+                      : invoices.find(
+                          (invoice) => invoice.id === payment.jobber_invoice_id
+                        )?.invoiceNumber;
+
                     const tip = toNumber(payment.tip_amount);
 
-                    return (
-                      <div
-                        key={payment.jobber_payment_id}
-                        className="flex items-center justify-between gap-3 rounded-xl bg-[#f7f6f1] px-3 py-2"
-                      >
+                    const rowContent = (
+                      <>
                         <div className="min-w-0">
                           <p className="text-sm font-bold">
                             {formatDate(payment.payment_date)}
@@ -2429,6 +2450,26 @@ export default async function CustomerDetailPage({
                         <p className="shrink-0 text-sm font-bold text-green-700">
                           {formatCurrencyPrecise(payment.amount)}
                         </p>
+                      </>
+                    );
+
+                    return nativeInvoiceId ? (
+                      <a
+                        key={payment.jobber_payment_id}
+                        href={`/api/invoices/${nativeInvoiceId}/pdf`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-between gap-3 rounded-xl bg-[#f7f6f1] px-3 py-2 transition hover:bg-[#efeee4]"
+                        title="View the invoice/receipt PDF"
+                      >
+                        {rowContent}
+                      </a>
+                    ) : (
+                      <div
+                        key={payment.jobber_payment_id}
+                        className="flex items-center justify-between gap-3 rounded-xl bg-[#f7f6f1] px-3 py-2"
+                      >
+                        {rowContent}
                       </div>
                     );
                   })
@@ -2705,10 +2746,21 @@ export default async function CustomerDetailPage({
                           </p>
                         )}
 
-                        <ResendInvoiceButton
-                          jobberClientId={decodedId}
-                          invoiceId={invoice.invoiceId}
-                        />
+                        <div className="flex flex-wrap items-center gap-3">
+                          <a
+                            href={`/api/invoices/${invoice.invoiceId}/pdf`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm font-semibold text-[#174734] underline underline-offset-2 hover:text-[#226246]"
+                          >
+                            View invoice PDF
+                          </a>
+
+                          <ResendInvoiceButton
+                            jobberClientId={decodedId}
+                            invoiceId={invoice.invoiceId}
+                          />
+                        </div>
                       </div>
                     </details>
                   ))}
