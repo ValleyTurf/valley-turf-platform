@@ -19,6 +19,34 @@ function cleanPrice(value: FormDataEntryValue | null): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+// Roadmap item 18 (native multi-line-item jobs) -- only present when
+// NewJobForm.tsx's "+ Add a line item" was actually used; the plain
+// single-price case submits via the ordinary "price" field above
+// instead, unchanged.
+function cleanLineItems(
+  value: FormDataEntryValue | null
+): { name: string; unitPrice: number; quantity: number }[] | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return null;
+
+    return parsed
+      .map((item) => ({
+        name: typeof item?.name === "string" ? item.name.trim() : "",
+        unitPrice:
+          typeof item?.unitPrice === "number" && Number.isFinite(item.unitPrice)
+            ? item.unitPrice
+            : 0,
+        quantity: 1,
+      }))
+      .filter((item) => item.name.length > 0);
+  } catch {
+    return null;
+  }
+}
+
 const RECURRENCE_VALUES: RecurrenceFrequency[] = [
   "weekly",
   "biweekly",
@@ -63,6 +91,7 @@ export async function createJob(
   const title = cleanText(formData.get("title"));
   const instructions = cleanText(formData.get("instructions"));
   const price = cleanPrice(formData.get("price"));
+  const lineItems = cleanLineItems(formData.get("line_items"));
   const startDate = cleanText(formData.get("start_date"));
   const frequencyRaw = cleanText(formData.get("frequency"));
 
@@ -90,6 +119,7 @@ export async function createJob(
     title,
     instructions,
     price,
+    lineItems,
     startDate,
     recurrence: isRecurring && isRecurrenceFrequency(frequencyRaw)
       ? frequencyRaw
@@ -113,6 +143,7 @@ export async function createJob(
       title,
       instructions,
       price,
+      line_items: lineItems,
       start_date: startDate,
       frequency: isRecurring ? frequencyRaw : "one_time",
     },

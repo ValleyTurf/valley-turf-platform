@@ -215,6 +215,12 @@ export type CreateNativeJobParams = {
   title: string;
   instructions?: string | null;
   price?: number | null;
+  // Roadmap item 18 -- when a job is created with more than one line
+  // item (an add-on from day one), these take priority over `price`
+  // above: `total` is the summed line total instead of `price` directly.
+  // A 0-1-item array (or omitting this entirely) is the ordinary simple
+  // path, unchanged.
+  lineItems?: NativeLineItemInput[] | null;
   startDate?: string | null; // YYYY-MM-DD, Phoenix-local
   recurrence?: RecurrenceFrequency | null;
 };
@@ -233,9 +239,27 @@ export async function createNativeJob(
     title,
     instructions,
     price,
+    lineItems,
     startDate,
     recurrence,
   } = params;
+
+  // Roadmap item 18 -- a job created with a real add-on from day one
+  // (more than one valid line item) gets `total` set to the summed line
+  // total instead of `price`, and the rows themselves inserted below
+  // once the job (and its visits) exist. 0-1 items is the ordinary
+  // simple path -- `price` alone, unchanged.
+  const cleanedLineItems = (lineItems ?? [])
+    .map((item) => ({
+      name: item.name.trim(),
+      unitPrice: item.unitPrice,
+      quantity: item.quantity > 0 ? item.quantity : 1,
+    }))
+    .filter((item) => item.name.length > 0);
+  const hasMultipleLineItems = cleanedLineItems.length > 1;
+  const lineItemsTotal = hasMultipleLineItems
+    ? cleanedLineItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
+    : null;
 
   const numberResult = await generateNativeJobNumber();
 
@@ -282,7 +306,11 @@ export async function createNativeJob(
     jobber_web_uri: null,
     end_at: null,
     completed_at: null,
-    total: typeof price === "number" && price > 0 ? price : null,
+    total: hasMultipleLineItems
+      ? lineItemsTotal
+      : typeof price === "number" && price > 0
+        ? price
+        : null,
     source: "native",
     instructions: instructions ?? null,
     recurrence_frequency: isRecurring ? recurrence : null,
@@ -327,6 +355,33 @@ export async function createNativeJob(
       return {
         ok: false,
         error: `Job number reserved but visit creation failed: ${visitError.message}`,
+      };
+    }
+  }
+
+  if (hasMultipleLineItems) {
+    const rows = cleanedLineItems.map((item, index) => ({
+      jobber_job_id: jobId,
+      name: item.name,
+      unit_price: item.unitPrice,
+      quantity: item.quantity,
+      sort_order: index,
+    }));
+
+    const { error: lineItemsError } = await supabaseServer
+      .from("native_job_line_items")
+      .insert(rows);
+
+    if (lineItemsError) {
+      // Same cleanup reasoning as the visits-failed branch above -- a
+      // job whose add-on rows didn't save is confusing to leave sitting
+      // around showing the wrong (or no) price.
+      await supabaseServer.from("jobber_visits").delete().eq("jobber_job_id", jobId);
+      await supabaseServer.from("jobber_jobs").delete().eq("jobber_job_id", jobId);
+
+      return {
+        ok: false,
+        error: `Job number reserved but saving its line items failed: ${lineItemsError.message}`,
       };
     }
   }
@@ -484,28 +539,47 @@ export async function fetchNativeJobDetails(
     return null;
   }
 
+  // Roadmap item 18 (native multi-line-item jobs) -- a job that
+  // genuinely has more than one line item (an add-on layered on the
+  // regular cleaning) has real rows here; see migration
+  // 077_add_native_job_line_items.sql's header comment for the hybrid
+  // design (most jobs never get rows here and keep using `total` alone
+  // below, unchanged).
+  const { data: lineItemRows } = await supabaseServer
+    .from("native_job_line_items")
+    .select("id, name, unit_price")
+    .eq("jobber_job_id", jobId)
+    .order("sort_order", { ascending: true });
+
   return {
     id: data.jobber_job_id,
     jobNumber: data.job_number,
     title: data.title,
     instructions: data.instructions,
     jobStatus: data.job_status,
-    // Synthesizes the single-line-item shape fetchJobDetails() returns
-    // for Jobber jobs (see lib/jobberJob.ts) -- native jobs don't have a
-    // real line-items concept, just the one `total` column, but
-    // ManageJobForm.tsx only ever reads lineItems[0].unitPrice, so this
-    // is enough for that form to keep working unmodified.
     lineItems:
-      data.total != null
-        ? [
-            {
-              id: `${data.jobber_job_id}-price`,
-              name: data.title,
-              unitPrice: Number(data.total),
-              details: null,
-            },
-          ]
-        : [],
+      lineItemRows && lineItemRows.length > 0
+        ? lineItemRows.map((row) => ({
+            id: row.id,
+            name: row.name,
+            unitPrice: row.unit_price != null ? Number(row.unit_price) : null,
+            details: null,
+          }))
+        : // Synthesizes the single-line-item shape fetchJobDetails()
+          // returns for Jobber jobs (see lib/jobberJob.ts) -- a job with
+          // no real add-on just has the one `total` column, but
+          // ManageJobForm.tsx/NewJobForm.tsx read lineItems[0].unitPrice,
+          // so this keeps that simple path working unmodified.
+          data.total != null
+          ? [
+              {
+                id: `${data.jobber_job_id}-price`,
+                name: data.title,
+                unitPrice: Number(data.total),
+                details: null,
+              },
+            ]
+          : [],
   };
 }
 
@@ -618,21 +692,120 @@ export async function editNativeJob(params: {
   return { ok: true, value: { jobId } };
 }
 
+export type NativeLineItemInput = {
+  name: string;
+  unitPrice: number;
+  quantity: number;
+};
+
+// Roadmap item 18 (native multi-line-item jobs). Single entry point for
+// saving a native job's price, whether that's still just one flat number
+// or a real add-on breakdown:
+//   - 0-1 items: the simple, by-far-most-common path -- no rows in
+//     native_job_line_items (deleting any that exist, e.g. an add-on
+//     that got removed), `total` set directly. Identical behavior to
+//     what setNativeJobPrice used to do on its own.
+//   - >1 items: replaces every row for this job (delete + insert) and
+//     sets `total` to the summed line total (unit_price * quantity per
+//     row) -- every existing reader of `total` (MRR, job costing, the
+//     jobs list, invoicing) keeps working unchanged, since it's still
+//     one flat number that happens to be kept in sync here.
+// The Supabase JS client has no multi-statement transaction support
+// (same limitation createNativeJob's own comment notes), so a failure
+// between the delete and the insert can leave a job with no line items
+// for a moment -- acceptable here since the caller (ManageJobForm) shows
+// any error and the next save retries the same all-or-nothing write.
+export async function setNativeJobLineItems(
+  jobId: string,
+  items: NativeLineItemInput[]
+): Promise<MutationOutcome<null>> {
+  const cleaned = items
+    .map((item) => ({
+      name: item.name.trim(),
+      unitPrice: item.unitPrice,
+      quantity: item.quantity > 0 ? item.quantity : 1,
+    }))
+    .filter((item) => item.name.length > 0);
+
+  if (cleaned.length <= 1) {
+    const { error: deleteError } = await supabaseServer
+      .from("native_job_line_items")
+      .delete()
+      .eq("jobber_job_id", jobId);
+
+    if (deleteError) {
+      return { ok: false, error: deleteError.message };
+    }
+
+    const { error } = await supabaseServer
+      .from("jobber_jobs")
+      .update({
+        total: cleaned[0]?.unitPrice ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("jobber_job_id", jobId)
+      .eq("source", "native");
+
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+
+    return { ok: true, value: null };
+  }
+
+  const total = cleaned.reduce(
+    (sum, item) => sum + item.unitPrice * item.quantity,
+    0
+  );
+
+  const { error: deleteError } = await supabaseServer
+    .from("native_job_line_items")
+    .delete()
+    .eq("jobber_job_id", jobId);
+
+  if (deleteError) {
+    return { ok: false, error: deleteError.message };
+  }
+
+  const rows = cleaned.map((item, index) => ({
+    jobber_job_id: jobId,
+    name: item.name,
+    unit_price: item.unitPrice,
+    quantity: item.quantity,
+    sort_order: index,
+  }));
+
+  const { error: insertError } = await supabaseServer
+    .from("native_job_line_items")
+    .insert(rows);
+
+  if (insertError) {
+    return { ok: false, error: insertError.message };
+  }
+
+  const { error: totalError } = await supabaseServer
+    .from("jobber_jobs")
+    .update({ total, updated_at: new Date().toISOString() })
+    .eq("jobber_job_id", jobId)
+    .eq("source", "native");
+
+  if (totalError) {
+    return { ok: false, error: totalError.message };
+  }
+
+  return { ok: true, value: null };
+}
+
+// Thin wrapper kept for every existing single-price caller (createJob's
+// simple path, etc.) -- see setNativeJobLineItems above for the real
+// (multi-item-aware) implementation this delegates to.
 export async function setNativeJobPrice(
   jobId: string,
   price: number
 ): Promise<MutationOutcome<null>> {
-  const { error } = await supabaseServer
-    .from("jobber_jobs")
-    .update({ total: price, updated_at: new Date().toISOString() })
-    .eq("jobber_job_id", jobId)
-    .eq("source", "native");
-
-  if (error) {
-    return { ok: false, error: error.message };
-  }
-
-  return { ok: true, value: null };
+  return setNativeJobLineItems(jobId, [
+    { name: "Service", unitPrice: price, quantity: 1 },
+  ]);
 }
 
 // Same semantics as cancelJobberJob (lib/jobberJob.ts):

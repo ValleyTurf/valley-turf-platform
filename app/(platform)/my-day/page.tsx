@@ -15,6 +15,7 @@ import { Fragment } from "react";
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
+import { fetchJobDetails } from "@/lib/jobberJob";
 import { haversineMiles } from "@/lib/geoDistance";
 import { computeRouteLegs, HOME_BASE_ADDRESS } from "@/lib/googleRoutes";
 import { completeVisit } from "./actions";
@@ -39,6 +40,7 @@ type MyDayPageProps = {
 type VisitRow = {
   jobber_visit_id: string;
   jobber_client_id: string | null;
+  jobber_job_id: string | null;
   customer_name: string | null;
   title: string | null;
   visit_status: string | null;
@@ -255,7 +257,7 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
     supabaseServer
       .from("jobber_visits")
       .select(
-        "jobber_visit_id, jobber_client_id, customer_name, title, visit_status, start_at, end_at, on_way_sent_at, confirmed_at"
+        "jobber_visit_id, jobber_client_id, jobber_job_id, customer_name, title, visit_status, start_at, end_at, on_way_sent_at, confirmed_at"
       )
       // Exclude visits whose job was canceled/archived directly in
       // Jobber's own UI — see 051_add_job_status_to_visits.sql for why
@@ -274,6 +276,31 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
   ) as string[];
 
   const visitIds = allVisits.map((v) => v.jobber_visit_id);
+
+  // Roadmap item 18 (native multi-line-item jobs) -- Ryan's ask: crews
+  // need to see when a job has an add-on layered on top of the regular
+  // cleaning, not just a single generic service label. One fetch per
+  // distinct job behind today's visits (a recurring job's visits all
+  // share one), same batching pattern app/(platform)/invoices/page.tsx
+  // already uses for its own suggested-line-items list.
+  const jobIds = Array.from(
+    new Set(allVisits.map((v) => v.jobber_job_id).filter(Boolean))
+  ) as string[];
+
+  const jobLineItemNamesById = new Map<string, string[]>();
+  await Promise.all(
+    jobIds.map(async (jobId) => {
+      const details = await fetchJobDetails(jobId);
+      if (details && details.lineItems.length > 1) {
+        // Skip the first item (the base cleaning) -- only the extras
+        // beyond it are worth calling out to the crew.
+        jobLineItemNamesById.set(
+          jobId,
+          details.lineItems.slice(1).map((li) => li.name?.trim() || "Service")
+        );
+      }
+    })
+  );
 
   const [
     { data: contactsData },
@@ -708,6 +735,9 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                 : null;
               const badge = statusMeta(visit.visit_status);
               const service = visitServiceLabel(visit.title);
+              const addOnNames = visit.jobber_job_id
+                ? jobLineItemNamesById.get(visit.jobber_job_id)
+                : undefined;
               const address = contact
                 ? [contact.address_line_1, contact.city, contact.state]
                     .filter(Boolean)
@@ -772,6 +802,11 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                       </p>
                       {service && (
                         <p className="text-sm font-bold text-[#174734]">{service}</p>
+                      )}
+                      {addOnNames && addOnNames.length > 0 && (
+                        <p className="mt-0.5 text-xs font-semibold text-[#9c7a20]">
+                          + {addOnNames.join(" + ")}
+                        </p>
                       )}
                       {crewNote.length > 0 && (
                         <p className="mt-1 text-xs font-semibold text-[#9c7a20]">

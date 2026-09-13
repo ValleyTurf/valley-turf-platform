@@ -86,6 +86,8 @@ export type JobberMigrationAuditResult = {
     instructionsBackfillErrors: string[];
     lineItemsSnapshotted: number;
     lineItemsSnapshotErrors: string[];
+    lineItemsBackfilled: number;
+    lineItemsBackfillErrors: string[];
     jobsWithMultipleLineItems: { jobberJobId: string; lineItemCount: number }[];
     // Preview only — the real backfill runs as SQL in migration 067 Part
     // A, computed independently from the same underlying visit spacing.
@@ -156,20 +158,13 @@ type LocalVisitRow = {
 
 // ---------------------------------------------------------------------
 // Cadence preview — loose, report-only bucketing of median visit gap
-// into this app's recurrence enum (weekly/bimonthly/monthly/quarterly/
-// semiannual, migration 054). Deliberately generous tolerance: this is a
-// heads-up for Ryan to review before migration 067's SQL runs its own
-// (independent) computation, not the thing that actually sets
-// recurrence_frequency.
+// into this app's recurrence enum (weekly/biweekly/monthly/bimonthly/
+// quarterly/triannual/semiannual, migration 054, widened by migration
+// 076). Deliberately generous tolerance: this is a heads-up for Ryan to
+// review before migration 067's SQL runs its own (independent)
+// computation, not the thing that actually sets recurrence_frequency.
 // ---------------------------------------------------------------------
 
-// biweekly/triannual added 2026-09 (Jobber Independence cutover
-// follow-up, once migration 067's actual run flagged 3 biweekly jobs and
-// 1 "every 4 months" job that didn't fit the original five buckets).
-// Kept in the same ascending-day order as before -- a value near two
-// buckets' shared boundary (e.g. ~100 days, between quarterly and
-// triannual) resolves to whichever bucket's center it's actually closer
-// to under this ordering, same as it always has.
 const CADENCE_BUCKETS: { key: RecurrenceFrequency; days: number }[] = [
   { key: "weekly", days: 7 },
   { key: "biweekly", days: 14 },
@@ -402,6 +397,21 @@ async function auditJobs(
   const instructionsBackfillErrors: string[] = [];
   let lineItemsSnapshotted = 0;
   const lineItemsSnapshotErrors: string[] = [];
+  // Roadmap item 18 (native multi-line-item jobs) -- writes straight into
+  // native_job_line_items for ANY job with >1 Jobber line item, regardless
+  // of local.source. This used to only happen via the
+  // jobber_line_items_snapshot write below, which is gated on
+  // local.source === "jobber" -- fine when this audit runs before
+  // migration 067's source flip (the intended order per this file's
+  // header comment), but silently a no-op for every job already flipped
+  // to 'native' by the time apply mode actually ran, which is what
+  // happened here: 0 rows ever landed in native_job_line_items or the
+  // snapshot column for real jobs. Re-fetching straight from Jobber
+  // (rather than trusting the never-populated snapshot) and writing
+  // directly to the final table sidesteps that ordering dependency
+  // entirely -- this is also safely re-runnable (delete + insert per job).
+  let lineItemsBackfilled = 0;
+  const lineItemsBackfillErrors: string[] = [];
   const jobsWithMultipleLineItems: { jobberJobId: string; lineItemCount: number }[] = [];
   const recurringCadenceCannotBeInferred: CadenceGuess[] = [];
   const recurringCadenceOutsideEnum: CadenceGuess[] = [];
@@ -466,6 +476,65 @@ async function auditJobs(
         }
 
         continue;
+      }
+
+      // Real native_job_line_items backfill (see comment above
+      // jobsWithMultipleLineItems on why this can't rely on
+      // jobber_line_items_snapshot) -- runs for a local job regardless of
+      // source, so it correctly covers jobs already flipped to 'native' by
+      // migration 067. Delete-then-insert is idempotent, so re-running
+      // apply mode later (e.g. after Jobber-side edits) just refreshes it.
+      if (apply && lineItems.length > 1) {
+        const rows = lineItems.map((item, index) => ({
+          jobber_job_id: job.id,
+          name: item.name?.trim() || "Service",
+          unit_price: item.unitPrice != null ? Number(item.unitPrice) : 0,
+          quantity:
+            item.quantity != null && Number(item.quantity) > 0
+              ? Number(item.quantity)
+              : 1,
+          sort_order: index,
+        }));
+
+        const total = rows.reduce(
+          (sum, row) => sum + row.unit_price * row.quantity,
+          0
+        );
+
+        const { error: deleteError } = await supabaseServer
+          .from("native_job_line_items")
+          .delete()
+          .eq("jobber_job_id", job.id);
+
+        if (deleteError) {
+          lineItemsBackfillErrors.push(`${job.id}: ${deleteError.message}`);
+        } else {
+          const { error: insertError } = await supabaseServer
+            .from("native_job_line_items")
+            .insert(rows);
+
+          if (insertError) {
+            lineItemsBackfillErrors.push(`${job.id}: ${insertError.message}`);
+          } else {
+            // Keeps jobber_jobs.total in sync with the real line-item sum,
+            // same contract lib/nativeJobs.ts's setNativeJobLineItems
+            // makes for every other write path -- this is the one place
+            // that writes native_job_line_items outside that function, so
+            // it has to uphold the same invariant itself.
+            const { error: totalError } = await supabaseServer
+              .from("jobber_jobs")
+              .update({ total })
+              .eq("jobber_job_id", job.id);
+
+            if (totalError) {
+              lineItemsBackfillErrors.push(
+                `${job.id}: total sync failed: ${totalError.message}`
+              );
+            } else {
+              lineItemsBackfilled += 1;
+            }
+          }
+        }
       }
 
       if (local.source === "jobber") {
@@ -571,6 +640,8 @@ async function auditJobs(
     instructionsBackfillErrors,
     lineItemsSnapshotted,
     lineItemsSnapshotErrors,
+    lineItemsBackfilled,
+    lineItemsBackfillErrors,
     jobsWithMultipleLineItems,
     recurringCadenceCannotBeInferred,
     recurringCadenceOutsideEnum,

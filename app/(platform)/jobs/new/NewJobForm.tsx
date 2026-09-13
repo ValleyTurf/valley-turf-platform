@@ -34,6 +34,29 @@ export default function NewJobForm({
   const [frequency, setFrequency] = useState("one_time");
   const isRecurring = frequency !== "one_time";
 
+  // Roadmap item 18 (native multi-line-item jobs) -- same repeatable
+  // name+price editor as ManageJobForm.tsx, so a job can be created with
+  // a real add-on from day one instead of only being able to add one
+  // later. One blank row by default, same as the old plain Price field.
+  const [items, setItems] = useState<{ name: string; unitPrice: string }[]>([
+    { name: "", unitPrice: "" },
+  ]);
+  const hasAddOns = items.length > 1;
+
+  function updateItem(index: number, field: "name" | "unitPrice", value: string) {
+    setItems((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, [field]: value } : item))
+    );
+  }
+
+  function addLineItem() {
+    setItems((prev) => [...prev, { name: "", unitPrice: "" }]);
+  }
+
+  function removeLineItem(index: number) {
+    setItems((prev) => prev.filter((_, i) => i !== index));
+  }
+
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return customers.slice(0, 25);
@@ -121,23 +144,89 @@ export default function NewJobForm({
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label htmlFor="price" className="text-xs font-bold text-[#9c7a20]">
-            Price ($){" "}
-            <span className="font-normal text-[#6b705c]">(optional)</span>
+        <div className="space-y-3 rounded-xl border border-[#eee9dc] p-4">
+          <label className="text-xs font-bold text-[#9c7a20]">
+            {hasAddOns ? "Line Items" : (
+              <>
+                Price ($) <span className="font-normal text-[#6b705c]">(optional)</span>
+              </>
+            )}
           </label>
-          <input
-            id="price"
-            name="price"
-            type="number"
-            step="0.01"
-            min="0"
-            placeholder="0.00"
-            className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-          />
-          <p className="mt-1 text-xs text-[#6b705c]">
-            Added as a single line item using the job title.
+
+          {hasAddOns ? (
+            <div className="space-y-2">
+              {items.map((item, index) => (
+                <div key={index} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={item.name}
+                    onChange={(e) => updateItem(index, "name", e.target.value)}
+                    placeholder={index === 0 ? "e.g. Turf Cleaning" : "e.g. Infill Refresh"}
+                    className="flex-1 rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                  />
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={item.unitPrice}
+                    onChange={(e) => updateItem(index, "unitPrice", e.target.value)}
+                    placeholder="0.00"
+                    className="w-24 rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeLineItem(index)}
+                    aria-label="Remove line item"
+                    className="rounded-lg px-2 text-sm font-bold text-red-600 transition hover:bg-red-50"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            // Plain "price" field, exactly as before -- jobs/actions.ts's
+            // createJob already handles this on its own, so the simple
+            // (by far most common) case doesn't need the line_items JSON
+            // below at all.
+            <input
+              name="price"
+              type="number"
+              step="0.01"
+              min="0"
+              value={items[0].unitPrice}
+              onChange={(e) => updateItem(0, "unitPrice", e.target.value)}
+              placeholder="0.00"
+              className="w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+            />
+          )}
+
+          <button
+            type="button"
+            onClick={addLineItem}
+            className="text-xs font-semibold text-[#9c7a20] hover:underline"
+          >
+            + Add a line item{hasAddOns ? "" : " (e.g. an add-on)"}
+          </button>
+
+          <p className="text-xs text-[#6b705c]">
+            {hasAddOns
+              ? "The job's total is the sum of every line item above."
+              : "Added as a single line item using the job title."}
           </p>
+
+          {hasAddOns && (
+            <input
+              type="hidden"
+              name="line_items"
+              value={JSON.stringify(
+                items.map((item) => ({
+                  name: item.name.trim() || "Service",
+                  unitPrice: item.unitPrice.trim() === "" ? 0 : Number(item.unitPrice),
+                }))
+              )}
+            />
+          )}
         </div>
 
         <div>

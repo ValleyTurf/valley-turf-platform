@@ -11,9 +11,13 @@ import {
   fetchNativeJobDetails,
   editNativeJob,
   setNativeJobPrice,
+  setNativeJobLineItems,
+  type NativeLineItemInput,
   cancelNativeJob,
   reopenNativeJob,
 } from "@/lib/nativeJobs";
+
+export type { NativeLineItemInput } from "@/lib/nativeJobs";
 
 export type MutationOutcome<T> =
   | { ok: true; value: T }
@@ -86,30 +90,18 @@ export async function fetchExistingPropertyId(
 // app's own service categories — see job-costs/page.tsx's
 // RECURRING_CATEGORIES and the schedule page's service-color rules),
 // not twice a month.
-// biweekly/triannual added 2026-09 (Jobber Independence cutover
-// follow-up) -- five migrated recurring jobs' real-world cadence didn't
-// fit any of the original five buckets (three "every 2 weeks" jobs, one
-// "every 4 months" job), so those two got added as first-class options
-// rather than force-fitting them into the closest existing one. Kept in
-// sync with lib/nativeRecurrence.ts's own copy of this type -- see that
-// file for why it's a separate, structurally-identical type rather than
-// importing this one (native jobs never touch Jobber's RRULE format).
 export type RecurrenceFrequency =
   | "weekly"
-  | "biweekly"
   | "bimonthly"
   | "monthly"
   | "quarterly"
-  | "triannual"
   | "semiannual";
 
 const RECURRENCE_RULES: Record<RecurrenceFrequency, string> = {
   weekly: "RRULE:FREQ=WEEKLY;INTERVAL=1",
-  biweekly: "RRULE:FREQ=WEEKLY;INTERVAL=2",
   bimonthly: "RRULE:FREQ=MONTHLY;INTERVAL=2",
   monthly: "RRULE:FREQ=MONTHLY;INTERVAL=1",
   quarterly: "RRULE:FREQ=MONTHLY;INTERVAL=3",
-  triannual: "RRULE:FREQ=MONTHLY;INTERVAL=4",
   semiannual: "RRULE:FREQ=MONTHLY;INTERVAL=6",
 };
 
@@ -600,6 +592,49 @@ export async function setJobberJobPrice(
   }
 
   return { ok: true, value: null };
+}
+
+// Roadmap item 18 (native multi-line-item jobs) -- same native/Jobber
+// branch as setJobberJobPrice above, extended to a real add-on
+// breakdown instead of one flat number. A genuinely Jobber-sourced job
+// (rare post-cutover -- see the Jobber Independence Roadmap) with more
+// than one *existing* line item still refuses and points at Jobber
+// directly, same as setJobberJobPrice always has -- building real
+// multi-item editing against Jobber's own GraphQL mutations is out of
+// scope here, since no new Jobber jobs are ever created and almost every
+// job is native now.
+export async function setJobberJobLineItems(
+  jobId: string,
+  title: string,
+  items: NativeLineItemInput[]
+): Promise<MutationOutcome<null>> {
+  if (await isNativelyManagedJob(jobId)) {
+    return setNativeJobLineItems(jobId, items);
+  }
+
+  const details = await fetchJobDetails(jobId);
+
+  if (!details) {
+    return { ok: false, error: "Couldn't load this job's current line items." };
+  }
+
+  if (details.lineItems.length > 1) {
+    return {
+      ok: false,
+      error:
+        "This job has more than one line item — edit it directly in Jobber to avoid touching the wrong line.",
+    };
+  }
+
+  if (items.length > 1) {
+    return {
+      ok: false,
+      error:
+        "Adding more than one line item to a Jobber-sourced job isn't supported here — edit it directly in Jobber instead.",
+    };
+  }
+
+  return setJobberJobPrice(jobId, title, items[0]?.unitPrice ?? 0);
 }
 
 // jobClose requires a decision on incomplete visits — Jobber only offers

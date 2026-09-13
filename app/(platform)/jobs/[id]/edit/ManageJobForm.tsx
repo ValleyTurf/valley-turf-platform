@@ -17,7 +17,12 @@ type Job = {
   title: string | null;
   instructions: string | null;
   jobStatus: string | null;
-  lineItems: { id: string; name: string | null; unitPrice: number | null }[];
+  lineItems: {
+    id: string;
+    name: string | null;
+    unitPrice: number | null;
+    details: string | null;
+  }[];
 };
 
 const FREQUENCY_OPTIONS: { value: string; label: string }[] = [
@@ -40,9 +45,48 @@ export default function ManageJobForm({ job }: { job: Job }) {
   const [frequency, setFrequency] = useState("one_time");
   const isRecurring = frequency !== "one_time";
 
-  const singleLineItem =
-    job.lineItems.length === 1 ? job.lineItems[0] : null;
-  const priceLocked = job.lineItems.length > 1;
+  // Roadmap item 18 (native multi-line-item jobs) -- one row per line
+  // item, always at least one. A job with a real add-on (an extra
+  // service beyond the regular cleaning) has more than one row here and
+  // gets the full name+price editor below; an ordinary job has exactly
+  // one and keeps the plain single Price field it always had.
+  const [items, setItems] = useState<{ name: string; unitPrice: string }[]>(
+    () =>
+      job.lineItems.length > 1
+        ? job.lineItems.map((li) => ({
+            name: li.name ?? "",
+            unitPrice: li.unitPrice != null ? String(li.unitPrice) : "",
+          }))
+        : [
+            {
+              name: job.lineItems[0]?.name ?? job.title ?? "",
+              unitPrice:
+                job.lineItems[0]?.unitPrice != null
+                  ? String(job.lineItems[0].unitPrice)
+                  : "",
+            },
+          ]
+  );
+  const hasAddOns = items.length > 1;
+  // Same "leave blank to leave the current price alone" behavior as
+  // before -- only actually submit a price/line-items change when
+  // there's more than one row (an active add-on edit) or the single
+  // price field has something typed into it.
+  const shouldSubmitLineItems = hasAddOns || items[0].unitPrice.trim() !== "";
+
+  function updateItem(index: number, field: "name" | "unitPrice", value: string) {
+    setItems((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, [field]: value } : item))
+    );
+  }
+
+  function addLineItem() {
+    setItems((prev) => [...prev, { name: "", unitPrice: "" }]);
+  }
+
+  function removeLineItem(index: number) {
+    setItems((prev) => prev.filter((_, i) => i !== index));
+  }
 
   function confirmCancel(e: FormEvent<HTMLFormElement>) {
     if (
@@ -98,27 +142,91 @@ export default function ManageJobForm({ job }: { job: Job }) {
           />
         </div>
 
-        <div>
-          <label htmlFor="price" className="text-xs font-bold text-[#9c7a20]">
-            Price ($){" "}
-            <span className="font-normal text-[#6b705c]">
-              {priceLocked ? "(multiple line items — edit in Jobber)" : "(optional)"}
-            </span>
+        <div className="space-y-3 rounded-xl border border-[#eee9dc] p-4">
+          <label className="text-xs font-bold text-[#9c7a20]">
+            {hasAddOns ? "Line Items" : (
+              <>
+                Price ($) <span className="font-normal text-[#6b705c]">(optional)</span>
+              </>
+            )}
           </label>
-          <input
-            id="price"
-            name="price"
-            type="number"
-            step="0.01"
-            min="0"
-            disabled={priceLocked}
-            defaultValue={singleLineItem?.unitPrice ?? ""}
-            placeholder="0.00"
-            className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20 disabled:bg-[#f5f4ef] disabled:text-[#9c9887]"
-          />
-          <p className="mt-1 text-xs text-[#6b705c]">
-            Leave blank to leave the current price alone.
+
+          {hasAddOns ? (
+            <div className="space-y-2">
+              {items.map((item, index) => (
+                <div key={index}>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={item.name}
+                      onChange={(e) => updateItem(index, "name", e.target.value)}
+                      placeholder={index === 0 ? "e.g. Turf Cleaning" : "e.g. Infill Refresh"}
+                      className="flex-1 rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                    />
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={item.unitPrice}
+                      onChange={(e) => updateItem(index, "unitPrice", e.target.value)}
+                      placeholder="0.00"
+                      className="w-28 rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeLineItem(index)}
+                      aria-label="Remove line item"
+                      className="rounded-lg px-2 text-sm font-bold text-red-600 transition hover:bg-red-50"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  {job.lineItems[index]?.details && (
+                    <p className="mt-1 pl-1 text-xs text-[#6b705c]">
+                      {job.lineItems[index]?.details}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={items[0].unitPrice}
+              onChange={(e) => updateItem(0, "unitPrice", e.target.value)}
+              placeholder="0.00"
+              className="w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+            />
+          )}
+
+          <button
+            type="button"
+            onClick={addLineItem}
+            className="text-xs font-semibold text-[#9c7a20] hover:underline"
+          >
+            + Add a line item{hasAddOns ? "" : " (e.g. an add-on)"}
+          </button>
+
+          <p className="text-xs text-[#6b705c]">
+            {hasAddOns
+              ? "The job's total is the sum of every line item above."
+              : "Leave blank to leave the current price alone."}
           </p>
+
+          {shouldSubmitLineItems && (
+            <input
+              type="hidden"
+              name="line_items"
+              value={JSON.stringify(
+                items.map((item, index) => ({
+                  name: item.name.trim() || (index === 0 ? job.title || "Service" : "Service"),
+                  unitPrice: item.unitPrice.trim() === "" ? 0 : Number(item.unitPrice),
+                }))
+              )}
+            />
+          )}
         </div>
 
         <div className="rounded-xl border border-[#eee9dc] p-4">

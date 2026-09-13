@@ -5,10 +5,11 @@ import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
 import {
   editJobberJob,
-  setJobberJobPrice,
+  setJobberJobLineItems,
   cancelJobberJob,
   reopenJobberJob,
   type RecurrenceFrequency,
+  type NativeLineItemInput,
 } from "@/lib/jobberJob";
 import type { ActionState } from "./actionState";
 
@@ -18,10 +19,31 @@ function cleanText(value: FormDataEntryValue | null): string | null {
   return trimmed ? trimmed : null;
 }
 
-function cleanPrice(value: FormDataEntryValue | null): number | null {
+// Roadmap item 18 (native multi-line-item jobs) -- ManageJobForm.tsx only
+// renders this hidden field at all when there's something to actually
+// change (a filled-in price, or an active add-on edit), so an absent
+// field here means "leave the current price alone" -- same behavior the
+// old plain "price" field had.
+function cleanLineItems(value: FormDataEntryValue | null): NativeLineItemInput[] | null {
   if (typeof value !== "string" || value.trim() === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return null;
+
+    return parsed
+      .map((item) => ({
+        name: typeof item?.name === "string" ? item.name.trim() : "",
+        unitPrice:
+          typeof item?.unitPrice === "number" && Number.isFinite(item.unitPrice)
+            ? item.unitPrice
+            : 0,
+        quantity: 1,
+      }))
+      .filter((item) => item.name.length > 0);
+  } catch {
+    return null;
+  }
 }
 
 const RECURRENCE_VALUES: RecurrenceFrequency[] = [
@@ -40,10 +62,10 @@ function isRecurrenceFrequency(
   return value !== null && (RECURRENCE_VALUES as string[]).includes(value);
 }
 
-// Edits an existing Jobber job's title/instructions/price and, optionally,
+// Edits an existing job's title/instructions/line items and, optionally,
 // its recurring schedule — see lib/jobberJob.ts's editJobberJob/
-// setJobberJobPrice for exactly which mutations get called and why price
-// lives on a separate call from everything else.
+// setJobberJobLineItems for exactly which mutations get called and why
+// line items live on a separate call from everything else.
 export async function updateJob(
   _prevState: ActionState,
   formData: FormData
@@ -59,7 +81,7 @@ export async function updateJob(
   const instructionsRaw = formData.get("instructions");
   const instructions =
     typeof instructionsRaw === "string" ? instructionsRaw.trim() : null;
-  const price = cleanPrice(formData.get("price"));
+  const lineItems = cleanLineItems(formData.get("line_items"));
   const updateSchedule = formData.get("update_schedule") === "on";
   const startDate = cleanText(formData.get("start_date"));
   const frequencyRaw = cleanText(formData.get("frequency"));
@@ -95,11 +117,11 @@ export async function updateJob(
     return { error: `Couldn't update the job: ${editResult.error}` };
   }
 
-  if (price !== null) {
-    const priceResult = await setJobberJobPrice(
+  if (lineItems !== null && lineItems.length > 0) {
+    const priceResult = await setJobberJobLineItems(
       jobId,
       title ?? "Service",
-      price
+      lineItems
     );
 
     if (!priceResult.ok) {
@@ -116,7 +138,7 @@ export async function updateJob(
     after: {
       title,
       instructions,
-      price,
+      line_items: lineItems,
       schedule_updated: updateSchedule,
       start_date: updateSchedule ? startDate : null,
       frequency: updateSchedule ? (isRecurring ? frequencyRaw : "one_time") : null,
