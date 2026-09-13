@@ -17,6 +17,10 @@ type JobberClient = {
   name: string | null;
 };
 
+type JobberVisitRef = {
+  id: string;
+};
+
 type JobberInvoice = {
   id: string;
   invoiceNumber: string | number | null;
@@ -28,6 +32,14 @@ type JobberInvoice = {
   total: number | string | null;
   jobberWebUri: string | null;
   client: JobberClient | null;
+  // Roadmap fix (2026-09): re-links jobber_visits.jobber_invoice_id for
+  // every visit this invoice covers, regardless of the visit's source.
+  // Running this sync once retroactively corrects every visit that was
+  // already invoiced directly in Jobber before this fix existed -- see
+  // lib/jobberWebhookProcessor.ts's syncSingleInvoice header comment for
+  // the full story (that function does the same thing, but only for
+  // invoices created/updated after this fix shipped).
+  visits: { nodes: JobberVisitRef[] } | null;
 };
 
 type InvoicesPage = {
@@ -68,6 +80,8 @@ type InvoiceUpsert = {
 type SyncResult = {
   invoicesReceived: number;
   invoicesSaved: number;
+  visitsLinked: number;
+  visitLinkErrors: string[];
   pagesProcessed: number;
   throttleRetries: number;
   warnings: string[];
@@ -103,6 +117,12 @@ const INVOICES_QUERY = `
         client {
           id
           name
+        }
+
+        visits(first: 50) {
+          nodes {
+            id
+          }
         }
       }
 
@@ -196,6 +216,8 @@ async function syncInvoices(): Promise<SyncResult> {
 
   let invoicesReceived = 0;
   let invoicesSaved = 0;
+  let visitsLinked = 0;
+  const visitLinkErrors: string[] = [];
   let throttleRetries = 0;
 
   const warnings: string[] = [];
@@ -269,6 +291,30 @@ async function syncInvoices(): Promise<SyncResult> {
 
       invoicesSaved +=
         invoiceRows.length;
+
+      // Re-link jobber_visits.jobber_invoice_id for every visit each
+      // invoice on this page covers -- see the JobberInvoice type's
+      // header comment above for why. One update per visit (not a batch
+      // .in(...) call) since different visits on the same page can need
+      // different invoice ids.
+      for (const invoice of invoices) {
+        const visitIds = (invoice.visits?.nodes ?? []).map((v) => v.id);
+
+        for (const visitId of visitIds) {
+          const { error: linkError } = await supabaseServer
+            .from("jobber_visits")
+            .update({ jobber_invoice_id: invoice.id })
+            .eq("jobber_visit_id", visitId);
+
+          if (linkError) {
+            visitLinkErrors.push(
+              `${invoice.id} -> ${visitId}: ${linkError.message}`
+            );
+          } else {
+            visitsLinked += 1;
+          }
+        }
+      }
     }
 
     console.log(
@@ -297,6 +343,8 @@ async function syncInvoices(): Promise<SyncResult> {
   return {
     invoicesReceived,
     invoicesSaved,
+    visitsLinked,
+    visitLinkErrors,
     pagesProcessed: pageNumber,
     throttleRetries,
     warnings,

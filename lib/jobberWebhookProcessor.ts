@@ -166,6 +166,20 @@ const JOB_QUERY = `
   }
 `;
 
+// visits (confirmed live via the diagnose-invoice-schema route, since
+// deleted -- Invoice.visits: VisitConnection) is what lets
+// syncSingleInvoice below re-link an invoice back to the visit(s) it
+// covers. This is the fix for a real gap the Jobber Independence cutover
+// left behind: jobber_visits.jobber_invoice_id used to only ever get set
+// by syncSingleVisit's own fetch of visit.invoice.id, but that function
+// now no-ops for every native visit (see its own source guard below) --
+// meaning an invoice created directly in Jobber (bypassing this app)
+// could never clear the visit off /invoices' "not yet invoiced" list,
+// risking a customer getting double-invoiced. Invoicing is the one area
+// deliberately still wired to Jobber post-cutover (see
+// processWebhookEvent's own comment on INVOICE_* below), so writing
+// jobber_invoice_id here — regardless of the visit's source — is the
+// correct exception, not a violation of the native-visit ownership rule.
 const INVOICE_QUERY = `
   query GetInvoice($id: EncodedId!) {
     invoice(id: $id) {
@@ -179,6 +193,11 @@ const INVOICE_QUERY = `
       client {
         id
         name
+      }
+      visits(first: 50) {
+        nodes {
+          id
+        }
       }
     }
   }
@@ -528,6 +547,7 @@ async function syncSingleInvoice(jobberInvoiceId: string): Promise<void> {
       dueDate: string | null;
       total: number | string | null;
       client: { id: string; name: string | null } | null;
+      visits: { nodes: { id: string }[] } | null;
     } | null;
   }>(INVOICE_QUERY, { id: jobberInvoiceId });
 
@@ -573,6 +593,28 @@ async function syncSingleInvoice(jobberInvoiceId: string): Promise<void> {
     throw new Error(
       `Unable to save Jobber invoice ${jobberInvoiceId}: ${upsertError.message}`
     );
+  }
+
+  // Re-link every visit this invoice covers -- deliberately NOT gated on
+  // source (unlike syncSingleCustomer/syncSingleJob/syncSingleVisit's own
+  // guards above), since invoicing is still Jobber's job to report post-
+  // cutover. Each visit gets its own update rather than a single .in(...)
+  // call because they may need different jobber_invoice_id values on a
+  // shared invoice (rare, but cheaper to just always do this per-visit
+  // than to assume it can't happen).
+  const visitIds = (invoice.visits?.nodes ?? []).map((v) => v.id);
+
+  for (const visitId of visitIds) {
+    const { error: visitLinkError } = await supabaseServer
+      .from("jobber_visits")
+      .update({ jobber_invoice_id: invoice.id })
+      .eq("jobber_visit_id", visitId);
+
+    if (visitLinkError) {
+      console.error(
+        `Unable to link invoice ${invoice.id} to visit ${visitId}: ${visitLinkError.message}`
+      );
+    }
   }
 }
 
@@ -667,6 +709,21 @@ async function handleDestroyedInvoice(jobberInvoiceId: string): Promise<void> {
   console.log(
     `Jobber reported deleted invoice ${jobberInvoiceId}. Historical invoice data was retained.`
   );
+
+  // Un-link it from any visit that pointed to it -- a voided/deleted
+  // invoice means that visit is (once again) not actually invoiced, so it
+  // should reappear on /invoices' "not yet invoiced" list rather than
+  // staying permanently hidden behind a since-destroyed invoice id.
+  const { error } = await supabaseServer
+    .from("jobber_visits")
+    .update({ jobber_invoice_id: null })
+    .eq("jobber_invoice_id", jobberInvoiceId);
+
+  if (error) {
+    console.error(
+      `Unable to un-link destroyed invoice ${jobberInvoiceId} from its visits: ${error.message}`
+    );
+  }
 }
 
 // Jobber cutover (2026-09): CLIENT_*/JOB_*/VISIT_* webhook events are

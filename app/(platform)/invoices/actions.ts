@@ -407,7 +407,12 @@ async function createNativeInvoiceForVisit(
     },
   });
 
+  // Invoices hub (2026-09 reorg): /invoices is now the report (former
+  // /invoices/history), and /invoices/create is the completed-visits
+  // list this action's own visit just came off of -- both need to
+  // reflect a freshly created invoice.
   revalidatePath("/invoices");
+  revalidatePath("/invoices/create");
   revalidatePath("/job-costs");
   revalidatePath("/job-costing-analytics");
   revalidatePath("/revenue");
@@ -574,6 +579,7 @@ export async function createInvoice(
   });
 
   revalidatePath("/invoices");
+  revalidatePath("/invoices/create");
   revalidatePath("/job-costs");
   revalidatePath("/job-costing-analytics");
   revalidatePath("/revenue");
