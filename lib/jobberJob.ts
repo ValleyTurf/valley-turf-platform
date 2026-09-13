@@ -90,18 +90,30 @@ export async function fetchExistingPropertyId(
 // app's own service categories — see job-costs/page.tsx's
 // RECURRING_CATEGORIES and the schedule page's service-color rules),
 // not twice a month.
+// Widened (migration 076) to match lib/nativeRecurrence.ts's
+// RecurrenceFrequency -- this file defines its own copy rather than
+// importing that one, since createJobberJob/editJobberJob below need a
+// literal RRULE string per value (native jobs use occurrencesInWindow()
+// instead, no RRULE involved), but the two types have to stay in lockstep
+// or a value valid everywhere else in the app fails to type-check the
+// moment it flows through here (e.g. app/(platform)/jobs/[id]/edit/actions.ts
+// imports this file's RecurrenceFrequency, not nativeJobs.ts's).
 export type RecurrenceFrequency =
   | "weekly"
+  | "biweekly"
   | "bimonthly"
   | "monthly"
   | "quarterly"
+  | "triannual"
   | "semiannual";
 
 const RECURRENCE_RULES: Record<RecurrenceFrequency, string> = {
   weekly: "RRULE:FREQ=WEEKLY;INTERVAL=1",
+  biweekly: "RRULE:FREQ=WEEKLY;INTERVAL=2",
   bimonthly: "RRULE:FREQ=MONTHLY;INTERVAL=2",
   monthly: "RRULE:FREQ=MONTHLY;INTERVAL=1",
   quarterly: "RRULE:FREQ=MONTHLY;INTERVAL=3",
+  triannual: "RRULE:FREQ=MONTHLY;INTERVAL=4",
   semiannual: "RRULE:FREQ=MONTHLY;INTERVAL=6",
 };
 
