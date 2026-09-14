@@ -5,7 +5,7 @@
 // is: needs inline error/success feedback without a full page
 // navigation, and calls the Server Action directly via useTransition.
 import { useState, useTransition } from "react";
-import { createInvoice } from "./actions";
+import { createInvoice, dismissVisitInvoice, undoDismissVisitInvoice } from "./actions";
 
 const DUE_OPTIONS: { label: string; value: number }[] = [
   { label: "Due on Receipt", value: 0 },
@@ -99,6 +99,45 @@ export default function InvoiceCard({
     autopayCharged?: boolean;
     delivered?: boolean;
   } | null>(null);
+
+  // "Invoiced in Jobber" -- a manual escape hatch for customers whose
+  // Jobber-side monthly billing links its invoice to the wrong visit
+  // (see migration 078's header comment), so this app's automatic
+  // linking can never clear their current visit off this list on its
+  // own even after Jobber really has billed and been paid for it.
+  // Separate from `success` above (that's this app creating a real
+  // invoice; this is staff attesting one already exists in Jobber).
+  const [isDismissPending, startDismissTransition] = useTransition();
+  const [dismissed, setDismissed] = useState(false);
+  const [dismissError, setDismissError] = useState<string | null>(null);
+
+  function dismissAsInvoicedInJobber() {
+    setDismissError(null);
+    startDismissTransition(async () => {
+      const result = await dismissVisitInvoice(visit.jobber_visit_id);
+
+      if (result.error) {
+        setDismissError(result.error);
+        return;
+      }
+
+      setDismissed(true);
+    });
+  }
+
+  function undoDismiss() {
+    setDismissError(null);
+    startDismissTransition(async () => {
+      const result = await undoDismissVisitInvoice(visit.jobber_visit_id);
+
+      if (result.error) {
+        setDismissError(result.error);
+        return;
+      }
+
+      setDismissed(false);
+    });
+  }
 
   const defaultTitle = visitServiceLabel(visit.title) ?? "Service";
 
@@ -200,6 +239,33 @@ export default function InvoiceCard({
     });
   }
 
+  if (dismissed) {
+    return (
+      <article className="rounded-2xl border border-[#e2e6e0] bg-[#f6f7f4] p-4 shadow">
+        <p className="font-bold text-[#56655c]">Marked as invoiced in Jobber</p>
+        <p className="mt-1 text-sm text-[#6b705c]">
+          {visit.customer_name} — {visitServiceLabel(visit.title) ?? defaultTitle}
+        </p>
+        <p className="mt-1 text-xs text-[#6b705c]">
+          Removed from this list. No invoice was created here.
+        </p>
+
+        {dismissError && (
+          <p className="mt-2 text-xs font-semibold text-red-600">{dismissError}</p>
+        )}
+
+        <button
+          type="button"
+          disabled={isDismissPending}
+          onClick={undoDismiss}
+          className="mt-2 text-xs font-semibold text-[#9c7a20] hover:underline disabled:opacity-60"
+        >
+          {isDismissPending ? "Undoing…" : "Undo"}
+        </button>
+      </article>
+    );
+  }
+
   if (success) {
     return (
       <article className="rounded-2xl border border-green-200 bg-green-50 p-4 shadow">
@@ -263,13 +329,28 @@ export default function InvoiceCard({
       </div>
 
       {!expanded ? (
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="mt-3 w-full rounded-xl border border-[#174734] px-4 py-2.5 text-sm font-bold transition hover:bg-[#f7f6f1]"
-        >
-          Create Invoice
-        </button>
+        <div className="mt-3 space-y-2">
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="w-full rounded-xl border border-[#174734] px-4 py-2.5 text-sm font-bold transition hover:bg-[#f7f6f1]"
+          >
+            Create Invoice
+          </button>
+
+          <button
+            type="button"
+            disabled={isDismissPending}
+            onClick={dismissAsInvoicedInJobber}
+            className="w-full text-center text-xs font-semibold text-[#9c7a20] hover:underline disabled:opacity-60"
+          >
+            {isDismissPending ? "Marking…" : "Already invoiced in Jobber — remove from this list"}
+          </button>
+
+          {dismissError && (
+            <p className="text-xs font-semibold text-red-600">{dismissError}</p>
+          )}
+        </div>
       ) : (
         <div className="mt-3 space-y-3 border-t border-[#f0eee6] pt-3">
           <div>

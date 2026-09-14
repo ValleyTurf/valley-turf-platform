@@ -730,3 +730,120 @@ export async function resendInvoice(invoiceId: string): Promise<ResendInvoiceRes
 
   return { error: null, delivered: true };
 }
+
+export type DismissVisitInvoiceResult = { error: string | null };
+
+// Manual escape hatch for visits Jobber itself already invoiced but
+// won't ever link back to via Invoice.visits (see migration 078's
+// header comment -- Jobber's own monthly-billing invoices link to the
+// WRONG visit for some customers, e.g. Darcy Wearing/Patricia Bach/
+// Dawn Kamal, confirmed via a since-removed diagnostic route). This
+// never touches jobber_invoice_id -- doing so would make the visit look
+// like it has a real linked invoice, which would be wrong for anything
+// that reads that column expecting an actual jobber_invoices row (the
+// Customer page, invoice ratings, etc.). invoice_dismissed_at is a
+// deliberately separate signal: "excluded from this list", not
+// "invoiced here."
+export async function dismissVisitInvoice(
+  visitId: string
+): Promise<DismissVisitInvoiceResult> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    return { error: "You must be signed in." };
+  }
+
+  if (!visitId) {
+    return { error: "Missing visit." };
+  }
+
+  const { data: visitRow, error: fetchError } = await supabaseServer
+    .from("jobber_visits")
+    .select("customer_name, title")
+    .eq("jobber_visit_id", visitId)
+    .maybeSingle();
+
+  if (fetchError) {
+    return { error: `Could not look up visit: ${fetchError.message}` };
+  }
+
+  const { error } = await supabaseServer
+    .from("jobber_visits")
+    .update({
+      invoice_dismissed_at: new Date().toISOString(),
+      invoice_dismissed_by: actor.id,
+      invoice_dismissed_by_name: actor.name,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("jobber_visit_id", visitId);
+
+  if (error) {
+    return { error: `Could not dismiss this visit: ${error.message}` };
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "visit_invoice_dismissal",
+    entityId: visitId,
+    entityLabel: `${visitRow?.customer_name ?? "Customer"} — ${visitRow?.title ?? "Visit"}`,
+    note: "Marked as already invoiced in Jobber",
+  });
+
+  revalidatePath("/invoices/create");
+
+  return { error: null };
+}
+
+// Reverses dismissVisitInvoice -- the visit goes back to showing up on
+// the main Create Invoices list, same as if it had never been touched.
+export async function undoDismissVisitInvoice(
+  visitId: string
+): Promise<DismissVisitInvoiceResult> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    return { error: "You must be signed in." };
+  }
+
+  if (!visitId) {
+    return { error: "Missing visit." };
+  }
+
+  const { data: visitRow, error: fetchError } = await supabaseServer
+    .from("jobber_visits")
+    .select("customer_name, title")
+    .eq("jobber_visit_id", visitId)
+    .maybeSingle();
+
+  if (fetchError) {
+    return { error: `Could not look up visit: ${fetchError.message}` };
+  }
+
+  const { error } = await supabaseServer
+    .from("jobber_visits")
+    .update({
+      invoice_dismissed_at: null,
+      invoice_dismissed_by: null,
+      invoice_dismissed_by_name: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("jobber_visit_id", visitId);
+
+  if (error) {
+    return { error: `Could not undo this dismissal: ${error.message}` };
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "visit_invoice_dismissal",
+    entityId: visitId,
+    entityLabel: `${visitRow?.customer_name ?? "Customer"} — ${visitRow?.title ?? "Visit"}`,
+    note: "Undid \"invoiced in Jobber\" dismissal",
+  });
+
+  revalidatePath("/invoices/create");
+
+  return { error: null };
+}

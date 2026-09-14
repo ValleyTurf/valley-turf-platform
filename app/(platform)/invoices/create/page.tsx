@@ -11,10 +11,34 @@ import { fetchJobDetails } from "@/lib/jobberJob";
 import { escapeSearchValue } from "@/lib/searchUtils";
 import CustomerTypeahead from "@/app/components/CustomerTypeahead";
 import InvoiceCard, { type ReadyToInvoiceVisit } from "../InvoiceCard";
+import DismissedVisitCard from "./DismissedVisitCard";
 
 type InvoicesPageProps = {
-  searchParams: Promise<{ page?: string; q?: string }>;
+  searchParams: Promise<{ page?: string; q?: string; view?: string }>;
 };
+
+type DismissedVisitRow = {
+  jobber_visit_id: string;
+  customer_name: string | null;
+  title: string | null;
+  completed_at: string | null;
+  invoice_dismissed_at: string | null;
+  invoice_dismissed_by_name: string | null;
+};
+
+// Same "{Customer} - {Service}" convention as InvoiceCard.tsx's own
+// visitServiceLabel -- duplicated rather than imported since that one
+// lives in a "use client" file.
+function visitServiceLabel(title: string | null): string | null {
+  const trimmed = (title ?? "").trim();
+  if (!trimmed) return null;
+
+  const separatorIndex = trimmed.indexOf(" - ");
+  if (separatorIndex === -1) return trimmed;
+
+  const service = trimmed.slice(separatorIndex + 3).trim();
+  return service || trimmed;
+}
 
 type VisitRow = ReadyToInvoiceVisit & {
   jobber_job_id: string | null;
@@ -32,8 +56,12 @@ function toNumber(value: number | string | null | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function buildInvoicesUrl(page: number, search: string): string {
+function buildInvoicesUrl(page: number, search: string, view?: string): string {
   const params = new URLSearchParams();
+
+  if (view === "dismissed") {
+    params.set("view", "dismissed");
+  }
 
   if (search) {
     params.set("q", search);
@@ -53,12 +81,21 @@ export default async function CreateInvoicesPage({
 }: InvoicesPageProps) {
   const params = await searchParams;
   const search = String(params.q ?? "").trim();
+  const view = params.view === "dismissed" ? "dismissed" : "pending";
   const requestedPage = Number.parseInt(params.page ?? "1", 10);
   const currentPage =
     Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
 
   const from = (currentPage - 1) * PAGE_SIZE;
   const to = from + PAGE_SIZE - 1;
+
+  // Dismissed count for the toggle nav -- cheap head-only count, fetched
+  // regardless of which view is showing so the tab label always reads
+  // correctly.
+  const { count: dismissedCount } = await supabaseServer
+    .from("jobber_visits")
+    .select("jobber_visit_id", { count: "exact", head: true })
+    .not("invoice_dismissed_at", "is", null);
 
   let visitsQuery = supabaseServer
     .from("jobber_visits")
@@ -68,25 +105,47 @@ export default async function CreateInvoicesPage({
     )
     .eq("visit_status", "COMPLETED")
     .is("jobber_invoice_id", null)
+    .is("invoice_dismissed_at", null)
     .order("completed_at", { ascending: false })
+    .range(from, to);
+
+  let dismissedQuery = supabaseServer
+    .from("jobber_visits")
+    .select(
+      "jobber_visit_id, customer_name, title, completed_at, invoice_dismissed_at, invoice_dismissed_by_name",
+      { count: "exact" }
+    )
+    .not("invoice_dismissed_at", "is", null)
+    .order("invoice_dismissed_at", { ascending: false })
     .range(from, to);
 
   if (search) {
     const safeSearch = escapeSearchValue(search);
+    const searchFilter = [
+      `customer_name.ilike.%${safeSearch}%`,
+      `title.ilike.%${safeSearch}%`,
+      `job_number.ilike.%${safeSearch}%`,
+    ].join(",");
 
-    visitsQuery = visitsQuery.or(
-      [
-        `customer_name.ilike.%${safeSearch}%`,
-        `title.ilike.%${safeSearch}%`,
-        `job_number.ilike.%${safeSearch}%`,
-      ].join(",")
+    visitsQuery = visitsQuery.or(searchFilter);
+    dismissedQuery = dismissedQuery.or(
+      [`customer_name.ilike.%${safeSearch}%`, `title.ilike.%${safeSearch}%`].join(",")
     );
   }
 
-  const { data: visitsData, count, error } = await visitsQuery;
+  const { data: visitsData, count, error } =
+    view === "dismissed"
+      ? { data: null, count: null, error: null }
+      : await visitsQuery;
+
+  const { data: dismissedData, count: dismissedViewCount, error: dismissedError } =
+    view === "dismissed"
+      ? await dismissedQuery
+      : { data: null, count: null, error: null };
 
   const visits = (visitsData ?? []) as VisitRow[];
-  const totalVisits = count ?? 0;
+  const dismissedVisits = (dismissedData ?? []) as DismissedVisitRow[];
+  const totalVisits = view === "dismissed" ? dismissedViewCount ?? 0 : count ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalVisits / PAGE_SIZE));
 
   const visitIds = visits.map((v) => v.jobber_visit_id);
@@ -138,10 +197,11 @@ export default async function CreateInvoicesPage({
     jobLineItemsMap.set(jobId, items);
   }
 
-  const previousPageUrl = buildInvoicesUrl(Math.max(1, currentPage - 1), search);
+  const previousPageUrl = buildInvoicesUrl(Math.max(1, currentPage - 1), search, view);
   const nextPageUrl = buildInvoicesUrl(
     Math.min(totalPages, currentPage + 1),
-    search
+    search,
+    view
   );
 
   return (
@@ -193,10 +253,38 @@ export default async function CreateInvoicesPage({
               Stage 7: Invoicing Routing
             </Link>
           </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href={buildInvoicesUrl(1, "", "pending")}
+              className={`rounded-full px-4 py-1.5 text-xs font-bold transition ${
+                view === "pending"
+                  ? "bg-[#174734] text-white"
+                  : "border border-[#174734] hover:bg-white"
+              }`}
+            >
+              Needs Invoice
+            </Link>
+
+            <Link
+              href={buildInvoicesUrl(1, "", "dismissed")}
+              className={`rounded-full px-4 py-1.5 text-xs font-bold transition ${
+                view === "dismissed"
+                  ? "bg-[#174734] text-white"
+                  : "border border-[#174734] hover:bg-white"
+              }`}
+            >
+              Dismissed ({dismissedCount ?? 0})
+            </Link>
+          </div>
         </header>
 
         <section className="mt-5 rounded-2xl bg-white p-4 shadow">
           <form action="/invoices/create" method="GET" className="flex gap-2">
+            {view === "dismissed" && (
+              <input type="hidden" name="view" value="dismissed" />
+            )}
+
             <CustomerTypeahead
               name="q"
               defaultValue={search}
@@ -215,7 +303,7 @@ export default async function CreateInvoicesPage({
 
             {search && (
               <Link
-                href="/invoices/create"
+                href={buildInvoicesUrl(1, "", view)}
                 className="rounded-xl border border-[#d9d4c6] px-4 py-2.5 text-sm font-bold transition hover:bg-[#f7f6f1]"
               >
                 Clear
@@ -224,7 +312,36 @@ export default async function CreateInvoicesPage({
           </form>
         </section>
 
-        {error ? (
+        {view === "dismissed" ? (
+          dismissedError ? (
+            <section className="mt-5 rounded-2xl border border-red-200 bg-white p-5 shadow">
+              <p className="font-bold text-red-700">Dismissed visits could not be loaded</p>
+              <p className="mt-1 text-sm text-red-600">{dismissedError.message}</p>
+            </section>
+          ) : dismissedVisits.length === 0 ? (
+            <section className="mt-5 rounded-2xl bg-white p-5 shadow">
+              <p className="text-sm text-[#6b705c]">
+                {search
+                  ? "No dismissed visits found for that search."
+                  : "Nothing dismissed — every \"Already invoiced in Jobber\" click shows up here."}
+              </p>
+            </section>
+          ) : (
+            <div className="mt-5 space-y-3">
+              {dismissedVisits.map((visit) => (
+                <DismissedVisitCard
+                  key={visit.jobber_visit_id}
+                  visitId={visit.jobber_visit_id}
+                  customerName={visit.customer_name}
+                  serviceLabel={visitServiceLabel(visit.title)}
+                  completedAt={visit.completed_at}
+                  dismissedAt={visit.invoice_dismissed_at}
+                  dismissedByName={visit.invoice_dismissed_by_name}
+                />
+              ))}
+            </div>
+          )
+        ) : error ? (
           <section className="mt-5 rounded-2xl border border-red-200 bg-white p-5 shadow">
             <p className="font-bold text-red-700">Visits could not be loaded</p>
             <p className="mt-1 text-sm text-red-600">{error.message}</p>
