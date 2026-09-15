@@ -4,8 +4,7 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
-import { listNewUnknownContacts } from "@/lib/unknownContacts";
-import UnknownContactsPanel from "./UnknownContactsPanel";
+import NewMessageButton from "./NewMessageButton";
 
 type PortalMessageRow = {
   jobber_client_id: string;
@@ -94,13 +93,8 @@ function formatInboxTimestamp(iso: string, todayPhoenix: string | null): string 
 }
 
 export default async function MessagesInboxPage() {
-  const [
-    messagesResult,
-    requestsResult,
-    inboundMessagesResult,
-    outboundResult,
-    unknownContacts,
-  ] = await Promise.all([
+  const [messagesResult, requestsResult, inboundMessagesResult, outboundResult] =
+    await Promise.all([
       supabaseServer
         .from("portal_messages")
         .select("jobber_client_id, sender, body, read_at, created_at")
@@ -139,13 +133,6 @@ export default async function MessagesInboxPage() {
         .in("channel", ["email", "sms"])
         .order("created_at", { ascending: false })
         .limit(1000),
-
-      // Unrecognized inbound texts/emails -- see lib/unknownContacts.ts
-      // and migration 066_add_unknown_contacts.sql. Rendered in its own
-      // panel below (UnknownContactsPanel) rather than folded into the
-      // main inbox loop, since these aren't tied to any jobber_client_id
-      // yet -- that's the whole point of "Add as Lead."
-      listNewUnknownContacts(),
     ]);
 
   const messages = (messagesResult.data ?? []) as PortalMessageRow[];
@@ -308,15 +295,21 @@ export default async function MessagesInboxPage() {
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
       <div className="mx-auto max-w-4xl">
-        <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
-          Valley Turf Revival OS
-        </p>
-        <h1 className="mt-2 text-3xl font-bold">Messages</h1>
-        <p className="mt-2 text-[#6b705c]">
-          Portal chat, service requests, and every outbound text/email
-          (visit reminders, invoices, receipts, and more), all in one
-          place.
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
+              Valley Turf Revival OS
+            </p>
+            <h1 className="mt-2 text-3xl font-bold">Messages</h1>
+            <p className="mt-2 max-w-xl text-[#6b705c]">
+              Portal chat, service requests, and every outbound text/email
+              (visit reminders, invoices, receipts, and more), all in one
+              place.
+            </p>
+          </div>
+
+          <NewMessageButton />
+        </div>
 
         <section className="mt-8 rounded-3xl bg-white p-5 shadow sm:p-8">
           <div className="flex items-center justify-between gap-3">
@@ -367,8 +360,6 @@ export default async function MessagesInboxPage() {
             </div>
           )}
         </section>
-
-        <UnknownContactsPanel contacts={unknownContacts} />
 
         <section className="mt-6 rounded-3xl bg-white p-5 shadow sm:p-8">
           {inboxRows.length === 0 ? (

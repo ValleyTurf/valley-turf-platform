@@ -36,6 +36,7 @@ import AddVisitNoteForm from "./AddVisitNoteForm";
 import VisitNoteItem from "./VisitNoteItem";
 import PhotoGrid from "@/app/components/PhotoGrid";
 import { ComposeEmailForm } from "@/app/components/ComposeEmailForm";
+import { ComposeSmsForm } from "@/app/components/ComposeSmsForm";
 import CustomerContactsSection from "./CustomerContactsSection";
 import { listContactsForCustomer } from "@/lib/customerContacts";
 import ResendInvoiceButton from "./ResendInvoiceButton";
@@ -2200,8 +2201,9 @@ export default async function CustomerDetailPage({
                 </button>
               </form>
 
-              <div className="mt-3">
+              <div className="mt-3 flex flex-wrap gap-2">
                 <ComposeEmailForm jobberClientId={decodedId} />
+                <ComposeSmsForm jobberClientId={decodedId} />
               </div>
 
               <div className="mt-4 max-h-[500px] space-y-2 overflow-y-auto border-t border-[#e7e2d5] pt-4 pr-1">

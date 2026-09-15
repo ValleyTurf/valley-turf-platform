@@ -38,6 +38,13 @@ type CustomerTypeaheadProps = {
   // than jumping to a customer record.
   navigateOnSelect?: boolean;
   autoFocus?: boolean;
+  // Escape hatch for a caller that needs to do something other than
+  // "go to /customers/[id]" or "submit the surrounding form" on a pick
+  // -- e.g. Messages' New Message button, which needs to route to
+  // /messages/[id] instead. Takes priority over navigateOnSelect when
+  // supplied; the caller owns the resulting navigation/state update
+  // entirely.
+  onSelect?: (result: CustomerSearchResult) => void;
 };
 
 export default function CustomerTypeahead({
@@ -49,6 +56,7 @@ export default function CustomerTypeahead({
   inputClassName = "",
   navigateOnSelect = true,
   autoFocus = false,
+  onSelect,
 }: CustomerTypeaheadProps) {
   const router = useRouter();
   const [value, setValue] = useState(defaultValue);
@@ -114,6 +122,11 @@ export default function CustomerTypeahead({
   function selectResult(result: CustomerSearchResult) {
     setOpen(false);
     setValue(result.name);
+
+    if (onSelect) {
+      onSelect(result);
+      return;
+    }
 
     if (navigateOnSelect) {
       router.push(`/customers/${encodeURIComponent(result.jobberClientId)}`);
