@@ -158,7 +158,11 @@ export default function InvoiceCard({
   const [subject, setSubject] = useState(
     `${visit.customer_name ?? "Customer"} — ${defaultTitle}`
   );
-  const [dueNetDays, setDueNetDays] = useState(15);
+  // Ryan (2026-09-15): every new invoice should default to Due on
+  // Receipt rather than a net term -- staff can still pick a longer
+  // term from the dropdown (DUE_OPTIONS above) when a customer
+  // actually needs one.
+  const [dueNetDays, setDueNetDays] = useState(0);
 
   const total = lineItems.reduce((sum, item) => {
     const qty = Number(item.quantity);
