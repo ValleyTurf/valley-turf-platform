@@ -333,6 +333,7 @@ export default async function CrewStatusPage() {
           title: null,
           visit_status: null,
           start_at: null,
+          completed_at: null,
         },
       };
     }
