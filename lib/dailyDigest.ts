@@ -131,18 +131,38 @@ async function countUnloggedJobCosts(): Promise<{
   // Cross-referenced against jobber_visits by id rather than touching
   // the view, since job-costs/page.tsx also reads visit_costing_list and
   // shouldn't be affected by a digest-only concern.
+  //
+  // Also pull completed_at: Jobber archives a one-off job as soon as
+  // it's completed/invoiced (normal closure, not cancellation), so
+  // job_status === "archived" alone can't tell a truly-canceled visit
+  // apart from a legitimately-finished one-off. A visit that already
+  // has completed_at set actually happened and still needs its costs
+  // logged -- only treat "archived" as exclusion-worthy when the visit
+  // never completed (the real cancellation case).
   const rawVisitIds = rawVisits.map((visit) => visit.jobber_visit_id);
   const { data: statusRows } =
     rawVisitIds.length > 0
       ? await supabaseServer
           .from("jobber_visits")
-          .select("jobber_visit_id, job_status")
+          .select("jobber_visit_id, job_status, completed_at")
           .in("jobber_visit_id", rawVisitIds)
-      : { data: [] as { jobber_visit_id: string; job_status: string | null }[] };
+      : {
+          data: [] as {
+            jobber_visit_id: string;
+            job_status: string | null;
+            completed_at: string | null;
+          }[],
+        };
 
   const archivedVisitIds = new Set(
-    ((statusRows ?? []) as { jobber_visit_id: string; job_status: string | null }[])
-      .filter((row) => row.job_status === "archived")
+    (
+      (statusRows ?? []) as {
+        jobber_visit_id: string;
+        job_status: string | null;
+        completed_at: string | null;
+      }[]
+    )
+      .filter((row) => row.job_status === "archived" && !row.completed_at)
       .map((row) => row.jobber_visit_id)
   );
 
@@ -219,14 +239,20 @@ async function countVisitsMissingPhotos(): Promise<{
   if (!todayPhoenix) return { count: 0, sample: [] };
   const windowStart = addDaysToPhoenixDate(todayPhoenix, -MISSING_PHOTOS_LOOKBACK_DAYS);
 
+  // No job_status filter here: every row already satisfies
+  // visit_status = COMPLETED with completed_at in-window, so it happened
+  // regardless of what its job's status later became. Jobber archives a
+  // one-off job as soon as it's completed/invoiced, so filtering out
+  // job_status = "archived" would silently drop most completed one-off
+  // visits from this check -- exactly the visits most likely to need a
+  // photo reminder.
   const { data: visitsData } = await supabaseServer
     .from("jobber_visits")
     .select("jobber_visit_id, jobber_client_id, customer_name, title")
     .eq("visit_status", "COMPLETED")
     .gte("completed_at", `${windowStart}T00:00:00${BUSINESS_UTC_OFFSET}`)
     .lt("completed_at", `${todayPhoenix}T00:00:00${BUSINESS_UTC_OFFSET}`)
-    .not("jobber_client_id", "is", null)
-    .or("job_status.is.null,job_status.neq.archived");
+    .not("jobber_client_id", "is", null);
 
   const visits = (visitsData ?? []) as CompletedVisitRow[];
   if (visits.length === 0) return { count: 0, sample: [] };

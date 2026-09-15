@@ -46,6 +46,7 @@ type VisitRow = {
   visit_status: string | null;
   start_at: string | null;
   end_at: string | null;
+  completed_at: string | null;
   on_way_sent_at: string | null;
   confirmed_at: string | null;
 };
@@ -257,12 +258,18 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
     supabaseServer
       .from("jobber_visits")
       .select(
-        "jobber_visit_id, jobber_client_id, jobber_job_id, customer_name, title, visit_status, start_at, end_at, on_way_sent_at, confirmed_at"
+        "jobber_visit_id, jobber_client_id, jobber_job_id, customer_name, title, visit_status, start_at, end_at, completed_at, on_way_sent_at, confirmed_at"
       )
       // Exclude visits whose job was canceled/archived directly in
       // Jobber's own UI — see 051_add_job_status_to_visits.sql for why
       // that requires a stored job_status rather than a live check.
-      .or("job_status.is.null,job_status.neq.archived")
+      // completed_at.not.is.null carves out an exception (see
+      // schedule/page.tsx's fuller comment on this same pattern): a
+      // one-off job gets legitimately archived in Jobber once it's done
+      // and invoiced, which cascades onto its visit too, but a visit
+      // that already happened should never disappear from a past day's
+      // My Day view just because its job closed out afterward.
+      .or("job_status.is.null,job_status.neq.archived,completed_at.not.is.null")
       .gte("start_at", queryStart)
       .lte("start_at", queryEnd)
       .order("start_at", { ascending: true }),

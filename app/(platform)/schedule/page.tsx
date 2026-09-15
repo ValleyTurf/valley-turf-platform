@@ -29,6 +29,7 @@ type VisitRow = {
   visit_status: string | null;
   start_at: string | null;
   end_at: string | null;
+  completed_at: string | null;
   duration_minutes: number | string | null;
   confirmed_at: string | null;
 };
@@ -543,7 +544,7 @@ export default async function SchedulePage({
     supabaseServer
       .from("jobber_visits")
       .select(
-        "jobber_visit_id, jobber_job_id, jobber_client_id, jobber_invoice_id, customer_name, job_number, job_status, title, visit_status, start_at, end_at, duration_minutes, confirmed_at"
+        "jobber_visit_id, jobber_job_id, jobber_client_id, jobber_invoice_id, customer_name, job_number, job_status, title, visit_status, start_at, end_at, completed_at, duration_minutes, confirmed_at"
       )
       // Job canceled directly in Jobber's own UI (not through this app)
       // only fires a job-level webhook — it never touches the visit rows
@@ -553,7 +554,22 @@ export default async function SchedulePage({
       // OR job_status.neq.archived (not a plain .neq()) because a bare
       // <> comparison excludes NULL rows in SQL, which would hide every
       // visit not yet backfilled/synced with a job_status at all.
-      .or("job_status.is.null,job_status.neq.archived")
+      //
+      // completed_at.not.is.null is the third branch, added after Ryan's
+      // report (2026-09-15): a one-off job (an Initial or Returning Full
+      // Clean, never recurring) gets closed out and archived in Jobber
+      // once it's done and invoiced — completely normal, not a
+      // cancellation — and the JOB_UPDATE webhook cascades that
+      // job_status='archived' onto its already-completed visit too (see
+      // jobberWebhookProcessor.ts's syncSingleJob). Without this branch,
+      // that legitimately-completed historical visit would silently drop
+      // off the schedule the moment Jobber closed the job, even for past
+      // dates — which is exactly what made these one-off jobs look like
+      // they were never on the schedule at all. A visit that already
+      // happened should always still show, regardless of what its job's
+      // status becomes afterward; only a still-upcoming visit on an
+      // archived (truly canceled) job should stay hidden.
+      .or("job_status.is.null,job_status.neq.archived,completed_at.not.is.null")
       .gte("start_at", queryStart)
       .lte("start_at", queryEnd)
       .order("start_at", { ascending: true }),

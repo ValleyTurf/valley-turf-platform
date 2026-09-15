@@ -30,6 +30,7 @@ type VisitRow = {
   title: string | null;
   visit_status: string | null;
   start_at: string | null;
+  completed_at: string | null;
 };
 
 type AssignmentRow = {
@@ -155,10 +156,15 @@ export default async function CrewStatusPage() {
         .order("name", { ascending: true }),
       supabaseServer
         .from("jobber_visits")
-        .select("jobber_visit_id, customer_name, title, visit_status, start_at")
+        .select("jobber_visit_id, customer_name, title, visit_status, start_at, completed_at")
         // Exclude visits whose job was canceled/archived directly in
         // Jobber's own UI — see 051_add_job_status_to_visits.sql.
-        .or("job_status.is.null,job_status.neq.archived")
+        // completed_at.not.is.null exempts a visit that already
+        // happened today (see schedule/page.tsx's fuller comment): a
+        // one-off job closing out and archiving in Jobber right after
+        // completion shouldn't make an already-finished visit vanish
+        // from today's board.
+        .or("job_status.is.null,job_status.neq.archived,completed_at.not.is.null")
         .gte("start_at", queryStart)
         .lte("start_at", queryEnd)
         .order("start_at", { ascending: true }),
