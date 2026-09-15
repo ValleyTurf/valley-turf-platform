@@ -34,6 +34,11 @@ type LeadRow = {
   last_name: string | null;
   email: string | null;
   phone: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  address_formatted: string | null;
 };
 
 function customerDisplayName(row: CustomerRow): string {
@@ -60,14 +65,31 @@ function leadDisplayName(row: LeadRow): string {
   return name || row.email || row.phone || "Unnamed Lead";
 }
 
+// Same "formatted, falling back to the raw parts" convention as
+// /leads' own displayAddress.
+function leadDisplayAddress(row: LeadRow): string | null {
+  return (
+    row.address_formatted ||
+    [row.address, row.city, row.state, row.zip].filter(Boolean).join(", ") ||
+    null
+  );
+}
+
 function defaultExpiresAt(): string {
   const date = new Date();
   date.setDate(date.getDate() + 30);
   return date.toISOString().slice(0, 10);
 }
 
-export default async function NewQuotePage() {
-  const [customersResult, leadsResult, servicePricingResult] = await Promise.all([
+type NewQuotePageProps = {
+  searchParams: Promise<{ leadId?: string }>;
+};
+
+export default async function NewQuotePage({ searchParams }: NewQuotePageProps) {
+  const params = await searchParams;
+  const preselectedLeadId = params.leadId?.trim() || null;
+
+  const [customersResult, leadsResult, servicePricingResult, preselectedLeadResult] = await Promise.all([
     supabaseServer
       .from("customers")
       .select(
@@ -78,13 +100,28 @@ export default async function NewQuotePage() {
 
     supabaseServer
       .from("leads")
-      .select("id, first_name, last_name, email, phone")
+      .select(
+        "id, first_name, last_name, email, phone, address, city, state, zip, address_formatted"
+      )
       .order("created_at", { ascending: false })
       .limit(500),
 
     supabaseServer
       .from("service_pricing")
       .select("service_name, turf_size_range, price"),
+
+    // A dedicated lookup rather than relying on the capped/recent-500
+    // leads list above -- a lead reached via its own "Create Quote"
+    // button (however old) still needs to resolve here.
+    preselectedLeadId
+      ? supabaseServer
+          .from("leads")
+          .select(
+            "id, first_name, last_name, email, phone, address, city, state, zip, address_formatted"
+          )
+          .eq("id", preselectedLeadId)
+          .maybeSingle()
+      : Promise.resolve({ data: null as LeadRow | null }),
   ]);
 
   const customers: PickerCustomer[] = ((customersResult.data ??
@@ -110,8 +147,20 @@ export default async function NewQuotePage() {
       name: leadDisplayName(row),
       email: row.email,
       phone: row.phone,
+      address: leadDisplayAddress(row),
     })
   );
+
+  const preselectedLeadRow = preselectedLeadResult.data as LeadRow | null;
+  const initialLead: PickerLead | null = preselectedLeadRow
+    ? {
+        id: preselectedLeadRow.id,
+        name: leadDisplayName(preselectedLeadRow),
+        email: preselectedLeadRow.email,
+        phone: preselectedLeadRow.phone,
+        address: leadDisplayAddress(preselectedLeadRow),
+      }
+    : null;
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
@@ -155,6 +204,7 @@ export default async function NewQuotePage() {
           <NewQuoteForm
             customers={customers}
             leads={leads}
+            initialLead={initialLead}
             defaultExpiresAt={defaultExpiresAt()}
             servicePrices={servicePrices}
           />

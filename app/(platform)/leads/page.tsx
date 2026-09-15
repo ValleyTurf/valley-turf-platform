@@ -191,6 +191,7 @@ export default async function LeadsPage() {
           ? { slug: campaign.slug, label: campaignLabel }
           : null,
       status,
+      rawStatus: (lead.status || "new").toLowerCase(),
       statusClassName: statusBadge(lead.status),
       scanCount: lead.scan_count,
       customerMatch:

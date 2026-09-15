@@ -10,6 +10,8 @@
 // search elsewhere in the app has, just without a network call.
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { setLeadStatus, deleteLead } from "./actions";
+import ConfirmSubmitButton from "@/app/components/ConfirmSubmitButton";
 
 export type LeadRow = {
   id: string;
@@ -22,6 +24,11 @@ export type LeadRow = {
   source: string | null;
   campaign: { slug: string; label: string } | null;
   status: string;
+  // Lowercased raw status ("new" / "contacted" / "lost" / whatever else
+  // is already on the row from Jobber-era data) -- drives which quick
+  // status buttons show, separate from `status` above which is just the
+  // as-stored display label.
+  rawStatus: string;
   statusClassName: string;
   scanCount: number | null;
   customerMatch: { jobberClientId: string; label: string } | null;
@@ -79,6 +86,7 @@ export default function LeadsTable({ rows }: { rows: LeadRow[] }) {
                 <th className="pb-2 pr-4">Status</th>
                 <th className="pb-2 pr-4">Scans</th>
                 <th className="pb-2 pr-4">Customer Match</th>
+                <th className="pb-2 pr-4">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -148,6 +156,60 @@ export default function LeadsTable({ rows }: { rows: LeadRow[] }) {
                     ) : (
                       <span className="text-[#6b705c]">Not a customer yet</span>
                     )}
+                  </td>
+                  <td className="py-2 pr-4">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Link
+                        href={`/quotes/new?leadId=${encodeURIComponent(row.id)}`}
+                        className="rounded-lg bg-[#174734] px-2.5 py-1 text-xs font-bold text-white transition hover:bg-[#226246]"
+                      >
+                        Create Quote
+                      </Link>
+
+                      {row.rawStatus !== "contacted" && (
+                        <form
+                          action={setLeadStatus.bind(null, row.id, "contacted")}
+                        >
+                          <button
+                            type="submit"
+                            className="rounded-lg border border-[#d8d3c6] bg-white px-2.5 py-1 text-xs font-bold text-[#174734] transition hover:border-[#d4af37]"
+                          >
+                            Mark Contacted
+                          </button>
+                        </form>
+                      )}
+
+                      {row.rawStatus !== "lost" && (
+                        <form action={setLeadStatus.bind(null, row.id, "lost")}>
+                          <button
+                            type="submit"
+                            className="rounded-lg border border-[#d8d3c6] bg-white px-2.5 py-1 text-xs font-bold text-[#6b705c] transition hover:border-red-300 hover:text-red-700"
+                          >
+                            Mark Lost
+                          </button>
+                        </form>
+                      )}
+
+                      {row.rawStatus !== "new" && (
+                        <form action={setLeadStatus.bind(null, row.id, "new")}>
+                          <button
+                            type="submit"
+                            className="rounded-lg border border-[#d8d3c6] bg-white px-2.5 py-1 text-xs font-semibold text-[#6b705c] transition hover:border-[#d4af37]"
+                          >
+                            Reset to New
+                          </button>
+                        </form>
+                      )}
+
+                      <form action={deleteLead.bind(null, row.id)}>
+                        <ConfirmSubmitButton
+                          confirmMessage={`Delete the lead for ${row.name}? This can't be undone.`}
+                          className="rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-bold text-red-700 transition hover:bg-red-50"
+                        >
+                          Delete
+                        </ConfirmSubmitButton>
+                      </form>
+                    </div>
                   </td>
                 </tr>
               ))}

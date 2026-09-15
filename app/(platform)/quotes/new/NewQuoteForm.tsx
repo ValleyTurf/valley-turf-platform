@@ -18,11 +18,13 @@ import { TIER_KEYS, DEFAULT_TIER_NAMES, type TierKey } from "@/lib/quotes";
 export default function NewQuoteForm({
   customers,
   leads,
+  initialLead,
   defaultExpiresAt,
   servicePrices,
 }: {
   customers: PickerCustomer[];
   leads: PickerLead[];
+  initialLead?: PickerLead | null;
   defaultExpiresAt: string;
   servicePrices: ServicePriceRow[];
 }) {
@@ -52,6 +54,7 @@ export default function NewQuoteForm({
       <QuoteRecipientPicker
         customers={customers}
         leads={leads}
+        initialLead={initialLead}
         onTurfSizeChange={(range) => setTurfSizeRange(range ?? "")}
       />
 

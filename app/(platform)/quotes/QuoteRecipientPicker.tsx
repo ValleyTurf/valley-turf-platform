@@ -16,6 +16,7 @@ export type PickerLead = {
   name: string;
   email: string | null;
   phone: string | null;
+  address: string | null;
 };
 
 type Mode = "customer" | "lead" | "new";
@@ -28,25 +29,33 @@ type Mode = "customer" | "lead" | "new";
 // round-trip per keystroke) and it fills the name/email/phone fields
 // below, still left editable in case the quote needs slightly different
 // contact details than what's on file.
+//
+// initialLead: set when this page was reached via a lead's own "Create
+// Quote" button (/quotes/new?leadId=...) — pre-selects that lead instead
+// of making staff search for the one they just clicked from.
 export default function QuoteRecipientPicker({
   customers,
   leads,
+  initialLead,
   onTurfSizeChange,
 }: {
   customers: PickerCustomer[];
   leads: PickerLead[];
+  initialLead?: PickerLead | null;
   onTurfSizeChange?: (range: string | null) => void;
 }) {
-  const [mode, setMode] = useState<Mode>("new");
+  const [mode, setMode] = useState<Mode>(initialLead ? "lead" : "new");
   const [search, setSearch] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(
     null
   );
-  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(
+    initialLead?.id ?? null
+  );
+  const [name, setName] = useState(initialLead?.name ?? "");
+  const [email, setEmail] = useState(initialLead?.email ?? "");
+  const [phone, setPhone] = useState(initialLead?.phone ?? "");
+  const [address, setAddress] = useState(initialLead?.address ?? "");
 
   const filteredCustomers = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -94,6 +103,7 @@ export default function QuoteRecipientPicker({
     setName(lead.name);
     setEmail(lead.email ?? "");
     setPhone(lead.phone ?? "");
+    setAddress(lead.address ?? "");
     onTurfSizeChange?.(null);
   }
 
