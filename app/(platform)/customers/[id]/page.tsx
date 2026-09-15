@@ -850,6 +850,81 @@ async function getLocalClientView(id: string): Promise<{
   return { client, error: null };
 }
 
+type LocalNativeJobRow = {
+  jobber_job_id: string;
+  job_number: string | null;
+  title: string | null;
+  job_status: string | null;
+  job_type: string | null;
+  total: number | string | null;
+  end_at: string | null;
+  completed_at: string | null;
+  jobber_web_uri: string | null;
+};
+
+// Recent Jobs below (for an ordinary, non-native customer) comes from
+// client.jobs -- a live Jobber GraphQL query -- so it only ever shows
+// jobs that actually exist in Jobber. A job created natively in this
+// app for an existing Jobber-sourced customer never gets written back
+// to Jobber (see lib/nativeJobs.ts's header comment on the cutover), so
+// without this it would be completely invisible on that customer's own
+// page -- Ryan's report (2026-09-15): created a one-off native job,
+// then couldn't find it on the customer's profile to rename it. Native
+// customers (isNativeId(decodedId) below) don't need this merged in --
+// getLocalClientView's own job query already reads straight from this
+// same table with no source filter, so it already includes every job a
+// native customer has.
+async function getNativeJobsForCustomer(
+  jobberClientId: string
+): Promise<JobberJob[]> {
+  const { data, error } = await supabaseServer
+    .from("jobber_jobs")
+    .select(
+      "jobber_job_id, job_number, title, job_status, job_type, total, end_at, completed_at, jobber_web_uri"
+    )
+    .eq("jobber_client_id", jobberClientId)
+    .eq("source", "native")
+    .order("end_at", { ascending: false, nullsFirst: false })
+    .limit(10);
+
+  if (error) {
+    console.error("Native jobs for customer query failed:", error.message);
+    return [];
+  }
+
+  return ((data ?? []) as LocalNativeJobRow[]).map((job) => ({
+    id: job.jobber_job_id,
+    jobNumber: job.job_number,
+    title: job.title,
+    jobStatus: job.job_status,
+    jobType: job.job_type,
+    total: job.total,
+    startAt: null,
+    endAt: job.end_at,
+    completedAt: job.completed_at,
+    jobberWebUri: job.jobber_web_uri,
+  }));
+}
+
+// Merges live-Jobber jobs with natively-created ones for the Recent Jobs
+// list (see getNativeJobsForCustomer above) -- id collisions are
+// impossible (native ids are always "native-<uuid>", never a shape
+// Jobber's own opaque ids can take), so this is a plain concatenate +
+// recency sort, newest first, using whichever date each job actually
+// has.
+function mergeRecentJobs(
+  jobberJobs: JobberJob[],
+  nativeJobs: JobberJob[]
+): JobberJob[] {
+  function sortKey(job: JobberJob): string {
+    return job.endAt || job.startAt || job.completedAt || "";
+  }
+
+  return [...jobberJobs, ...nativeJobs]
+    .sort((a, b) => (sortKey(b) > sortKey(a) ? 1 : -1))
+    .slice(0, 15);
+}
+
 async function getCustomerFinancials(
   jobberClientId: string
 ): Promise<CustomerFinancials | null> {
@@ -1440,6 +1515,7 @@ export default async function CustomerDetailPage({
     additionalContacts,
     nativeInvoices,
     referralPickerData,
+    nativeJobsForCustomer,
   ] = await Promise.all([
     isNativeId(decodedId) ? getLocalClientView(decodedId) : getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
@@ -1458,6 +1534,7 @@ export default async function CustomerDetailPage({
     listContactsForCustomer(decodedId),
     getNativeInvoicesForCustomer(decodedId),
     getReferralPickerData(decodedId),
+    getNativeJobsForCustomer(decodedId),
   ]);
 
   const referredByCustomer = profile?.referred_by_customer_id
@@ -1522,7 +1599,14 @@ export default async function CustomerDetailPage({
   const attributionLeads = await getAttributionLeads(email, phone);
 
   const properties = client.clientProperties?.nodes ?? [];
-  const jobs = client.jobs?.nodes ?? [];
+  // For a native customer, getLocalClientView's own job query already
+  // covers every native job (no source filter) -- merging would just
+  // duplicate them. For an ordinary Jobber-sourced customer, client.jobs
+  // only ever reflects what's actually in Jobber, so native jobs need to
+  // be merged in separately (see getNativeJobsForCustomer above).
+  const jobs = isNativeId(decodedId)
+    ? client.jobs?.nodes ?? []
+    : mergeRecentJobs(client.jobs?.nodes ?? [], nativeJobsForCustomer);
   const quotes = client.quotes?.nodes ?? [];
   const invoices = client.invoices?.nodes ?? [];
 
