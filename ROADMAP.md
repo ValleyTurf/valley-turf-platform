@@ -42,25 +42,37 @@ now).
    on the Messages page with the sender's phone number or email, where
    it can be turned into a real Leads row with one click ("Add as
    Lead") or dismissed as noise.
-2. **Full one-time data migration off Jobber.** Audit every
-   Jobber-sourced customer/job/visit/quote record, confirm nothing is
-   missing from the local mirror (some older/edge-case records may
-   predate a given sync route), then re-label them as natively-owned
-   going forward — so this app's database becomes the actual system of
-   record, not just a mirror of one.
-3. **Stop Jobber from writing into this app, except invoicing/payments.**
-   Turn off the daily customer/job/visit sync crons and the
-   corresponding live webhook handlers (client/job/visit
-   create/update/delete), while leaving invoice, payment, payout, and
-   payment-fee syncing exactly as-is.
+2. ~~**Full one-time data migration off Jobber.**~~ **Done.** Migration
+   067 relabeled every existing customer/job/visit from
+   `source: 'jobber'` to `source: 'native'` in one pass — this app's
+   database is now the system of record for all three, not just a
+   mirror. Quotes (no source column) and invoicing/payments were
+   deliberately untouched — invoicing/payments stay wired to Jobber
+   until a later, separate migration (tracked by the Stage 7 rollout at
+   /invoices/routing).
 
-   **Before this is safe to flip on, we need to know:** does anyone —
-   you or the crew — still create or edit a customer, job, or visit
-   *directly inside Jobber's own app or website*? If yes, those edits
-   would stop showing up here the moment we cut the sync, and this app
-   would quietly drift out of sync with reality. If everything's
-   already being done through this app day-to-day, we're clear to
-   proceed.
+   **Still open:** job 1269 was the one active recurring job whose
+   cadence couldn't be auto-inferred from visit history at migration
+   time — confirm whether its recurring schedule was ever set to
+   semiannual by hand via its "Update recurring schedule" toggle; if
+   not, that's still outstanding.
+3. ~~**Stop Jobber from writing into this app, except
+   invoicing/payments.**~~ **Done**, same cutover. The daily
+   customer/job/visit sync crons and their live webhook handlers
+   (client/job/visit create/update/delete) are now no-ops — an edit made
+   directly in Jobber no longer reaches this app. Invoice, payment,
+   payout, and payment-fee syncing are untouched.
+
+   **Side effect confirmed with Ryan (2026-09-15):** this also silently
+   stopped the *other* direction — completing/rescheduling/skipping a
+   visit in this app no longer pushes that change into Jobber either,
+   since `lib/jobberVisit.ts`'s mutations skip calling Jobber for any
+   visit whose `source` is `'native'`, which is now everything (see
+   `isNativelyManagedVisit`). Confirmed this is fine to leave as-is —
+   Jobber-side jobs/visits will just show as perpetually open/incomplete
+   going forward, which doesn't matter since Jobber is only still relied
+   on for invoicing/payments on customers not yet moved to native
+   invoicing.
 
 ## Fresh ideas (CRM + website)
 
@@ -165,3 +177,26 @@ now).
     number that doesn't match any customer lands in the same "Unknown
     senders" review queue on Messages that unrecognized texts/emails
     already use (migration 075), instead of vanishing.
+18. ~~**Native multi-line-item jobs.**~~ **Done.** Jobs can now carry a
+    real ordered list of line items (name + price each) instead of one
+    flat total — migration 077's `native_job_line_items` table,
+    backfilled from the ~26 legacy Jobber jobs that already had more
+    than one item snapshotted (migration 068). Manage Job and New Job
+    both show a repeatable add/remove line-item editor in place of the
+    old locked "(multiple line items — edit in Jobber)" message; My Day
+    surfaces any extra item beyond the base service on a visit's card so
+    the crew sees an add-on without opening the job; invoice creation
+    already consumed job line items generically, so it started reflecting
+    real multi-item native jobs with no changes needed there.
+19. **Auto-flip Monthly Maintenance jobs to Full for the right months —
+    interested, design TBD.** Some Monthly Maintenance Plan customers
+    also get a periodic Full Cleaning layered on top — e.g. Kaleen
+    Carter gets Full cleanings in March/June/September/December (a
+    quarterly cadence) and regular Maintenance the other 8 months;
+    others have a triannual Full cadence, others no Full at all. Ryan
+    wants the system to automatically figure out, for each occurrence of
+    a Monthly Maintenance Plan job, whether that month should be labeled
+    "Maintenance - Monthly" or "Full - Monthly" — instead of tracking it
+    by hand. Needs a look at how Full vs. Maintenance visits are
+    actually modeled today (separate recurring jobs vs. a per-visit
+    label) before this can be properly scoped.
