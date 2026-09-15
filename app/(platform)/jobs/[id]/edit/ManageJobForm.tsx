@@ -124,6 +124,14 @@ export default function ManageJobForm({ job }: { job: Job }) {
             defaultValue={job.title ?? ""}
             className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
           />
+          <p className="mt-1 text-xs text-[#6b705c]">
+            For the Schedule&apos;s color-coding to match, format as
+            &ldquo;Customer Name - Service&rdquo; and include the frequency
+            word (Quarterly, Bimonthly, Monthly, Weekly, Semi-Annual, Spray
+            Only) — e.g. &ldquo;Tina Aghassi - Quarterly Turf
+            Cleaning&rdquo;. Saving here updates this job&apos;s upcoming
+            visits on the schedule too.
+          </p>
         </div>
 
         <div>

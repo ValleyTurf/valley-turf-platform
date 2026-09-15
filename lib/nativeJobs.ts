@@ -647,6 +647,29 @@ export async function editNativeJob(params: {
     return { ok: false, error: error.message };
   }
 
+  // Visit titles are snapshotted onto jobber_visits at generation time
+  // (buildVisitRow) rather than read live from jobber_jobs.title, so a
+  // plain title edit here — the common case: fixing a typo, or matching
+  // the schedule's "{Customer} - {Service}" color-coding convention (see
+  // app/(platform)/schedule/page.tsx's classifyService) — would
+  // otherwise never reach the visits actually shown on the schedule.
+  // Ryan's report (2026-09-15): renamed a job's title expecting the
+  // schedule color to update, and it didn't, for exactly this reason.
+  // Synced unconditionally whenever a title was provided, independent of
+  // whether the schedule itself is also being changed below — a title
+  // fix shouldn't require touching (and risking) the recurrence cadence
+  // just to take effect. Only not-yet-completed visits: a finished
+  // visit's title is history, not something a later rename should
+  // rewrite.
+  if (title) {
+    await supabaseServer
+      .from("jobber_visits")
+      .update({ title, updated_at: new Date().toISOString() })
+      .eq("jobber_job_id", jobId)
+      .eq("source", "native")
+      .is("completed_at", null);
+  }
+
   // A schedule change on a recurring job means the old future visits
   // (generated against the old cadence/anchor) are stale. Same
   // conceptual tradeoff Jobber's own jobEdit makes (this app has no
