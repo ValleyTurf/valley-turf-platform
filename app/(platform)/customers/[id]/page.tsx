@@ -648,11 +648,11 @@ async function getJobberClient(id: string): Promise<{
             }
           }
 
-          // Bumped from 10 (Ryan, 2026-09-17): the new Open Jobs section
-          // below needs every currently-open job, not just the most
-          // recent ones, and an ongoing job can have a null endAt that
-          // sorts it past a small cap. Recent Jobs' own display is still
-          // sliced back down to 10 further down this file.
+          # Bumped from 10 (Ryan, 2026-09-17): the new Open Jobs section
+          # below needs every currently-open job, not just the most
+          # recent ones, and an ongoing job can have a null endAt that
+          # sorts it past a small cap. Recent Jobs' own display is still
+          # sliced back down to 10 further down this file.
           jobs(first: 20) {
             nodes {
               id
