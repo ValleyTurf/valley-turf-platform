@@ -14,7 +14,6 @@ import {
   removeImportedJobNotePhoto,
   generateAutopayLink,
   toggleAutopay,
-  setCurrentProperty,
   logPhoneCall,
   updateVisitNoteText,
   deleteVisitNoteAction,
@@ -39,6 +38,7 @@ import { ComposeEmailForm } from "@/app/components/ComposeEmailForm";
 import { ComposeSmsForm } from "@/app/components/ComposeSmsForm";
 import CustomerContactsSection from "./CustomerContactsSection";
 import { listContactsForCustomer } from "@/lib/customerContacts";
+import { listAddressesForCustomer } from "@/lib/customerAddresses";
 import ResendInvoiceButton from "./ResendInvoiceButton";
 import {
   toNumber,
@@ -47,6 +47,16 @@ import {
   formatDateOnly as formatDate,
   formatNumber,
 } from "@/lib/format";
+
+// Ryan (2026-09-17): Payment History and Native Invoices had no cap at
+// all -- for a long-tenured customer (his example: Sarah Gombert) that
+// meant every payment/native invoice ever, rendered flat with no
+// scrolling or pagination. Recent Jobs/Quotes/Invoices below were
+// already capped at 10 (via Jobber's own `first: 10` / a local
+// `.limit(10)`) and stayed reasonable regardless of tenure, so this
+// picks a tighter number for the two sections that had none at all --
+// easy to bump if 5 feels too short in practice.
+const HISTORY_ROW_LIMIT = 5;
 
 type CustomerDetailPageProps = {
   params: Promise<{
@@ -638,7 +648,12 @@ async function getJobberClient(id: string): Promise<{
             }
           }
 
-          jobs(first: 10) {
+          // Bumped from 10 (Ryan, 2026-09-17): the new Open Jobs section
+          // below needs every currently-open job, not just the most
+          // recent ones, and an ongoing job can have a null endAt that
+          // sorts it past a small cap. Recent Jobs' own display is still
+          // sliced back down to 10 further down this file.
+          jobs(first: 20) {
             nodes {
               id
               jobNumber
@@ -767,7 +782,9 @@ async function getLocalClientView(id: string): Promise<{
         )
         .eq("jobber_client_id", id)
         .order("end_at", { ascending: false, nullsFirst: false })
-        .limit(10),
+        // Bumped from 10 alongside getJobberClient's jobs(first: 20) and
+        // getNativeJobsForCustomer's limit below -- see that comment.
+        .limit(20),
       supabaseServer
         .from("jobber_invoices")
         .select(
@@ -885,7 +902,8 @@ async function getNativeJobsForCustomer(
     .eq("jobber_client_id", jobberClientId)
     .eq("source", "native")
     .order("end_at", { ascending: false, nullsFirst: false })
-    .limit(10);
+    // Bumped from 10 -- see getJobberClient's jobs(first: 20) comment.
+    .limit(20);
 
   if (error) {
     console.error("Native jobs for customer query failed:", error.message);
@@ -922,7 +940,7 @@ function mergeRecentJobs(
 
   return [...jobberJobs, ...nativeJobs]
     .sort((a, b) => (sortKey(b) > sortKey(a) ? 1 : -1))
-    .slice(0, 15);
+    .slice(0, 25);
 }
 
 async function getCustomerFinancials(
@@ -1222,24 +1240,6 @@ async function getReferralPickerData(excludeJobberClientId: string): Promise<{
   return { customers, campaigns };
 }
 
-function formatPhone(phone: string): string {
-  const digits = phone.replace(/\D/g, "");
-
-  const normalized =
-    digits.length === 11 && digits.startsWith("1")
-      ? digits.slice(1)
-      : digits;
-
-  if (normalized.length !== 10) {
-    return phone;
-  }
-
-  return `(${normalized.slice(0, 3)}) ${normalized.slice(
-    3,
-    6
-  )}-${normalized.slice(6)}`;
-}
-
 function decimalHoursToHMM(decimalHours: number): string {
   if (!decimalHours) {
     return "";
@@ -1339,26 +1339,6 @@ function formatStatus(value: string | null): string {
     .toLowerCase()
     .split("_")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-}
-
-function formatAddress(property: JobberProperty): string {
-  const address = property.address;
-
-  if (!address) {
-    return "Address unavailable";
-  }
-
-  const street = [address.street1, address.street2]
-    .filter(Boolean)
-    .join(" ");
-
-  const cityState = [address.city, address.province]
-    .filter(Boolean)
-    .join(", ");
-
-  return [street, cityState, address.postalCode, address.country]
-    .filter(Boolean)
     .join(" ");
 }
 
@@ -1513,6 +1493,7 @@ export default async function CustomerDetailPage({
     autopayPaymentMethod,
     contactHistory,
     additionalContacts,
+    additionalAddresses,
     nativeInvoices,
     referralPickerData,
     nativeJobsForCustomer,
@@ -1532,6 +1513,7 @@ export default async function CustomerDetailPage({
     getPaymentMethodByClientId(decodedId),
     getContactHistoryForCustomer(decodedId),
     listContactsForCustomer(decodedId),
+    listAddressesForCustomer(decodedId),
     getNativeInvoicesForCustomer(decodedId),
     getReferralPickerData(decodedId),
     getNativeJobsForCustomer(decodedId),
@@ -1607,6 +1589,16 @@ export default async function CustomerDetailPage({
   const jobs = isNativeId(decodedId)
     ? client.jobs?.nodes ?? []
     : mergeRecentJobs(client.jobs?.nodes ?? [], nativeJobsForCustomer);
+  // Ryan (2026-09-17): wanted Open Jobs surfaced near the top instead of
+  // buried at the bottom of Recent Jobs. Same "archived" check jobs/page.tsx
+  // already uses (job_status is upper-snake-case from Jobber or lowercase
+  // for a native job -- .toUpperCase().includes keeps both working) run
+  // over the wider `jobs` fetch above so a currently-open job with an old
+  // or null end date isn't missed just because Recent Jobs only displays
+  // the most recent 10.
+  const openJobs = jobs.filter(
+    (job) => !(job.jobStatus ?? "").toUpperCase().includes("ARCHIVED")
+  );
   const quotes = client.quotes?.nodes ?? [];
   const invoices = client.invoices?.nodes ?? [];
 
@@ -1696,162 +1688,16 @@ export default async function CustomerDetailPage({
 
         <div className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
           <div className="space-y-6">
-            <section className="rounded-2xl bg-white p-5 shadow">
-              <h2 className="text-lg font-bold">
-                Contact Information
-              </h2>
-
-              <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-xs font-bold text-[#9c7a20]">
-                      Email
-                    </p>
-
-                    {email ? (
-                      <a
-                        href={`mailto:${email}`}
-                        className="mt-0.5 block break-words text-sm font-semibold hover:underline"
-                      >
-                        {email}
-                      </a>
-                    ) : (
-                      <p className="mt-0.5 text-sm text-[#6b705c]">
-                        No email
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    <p className="text-xs font-bold text-[#9c7a20]">
-                      Phone
-                    </p>
-
-                    {phone ? (
-                      <a
-                        href={`tel:${phone.replace(/[^\d+]/g, "")}`}
-                        className="mt-0.5 block text-sm font-semibold hover:underline"
-                      >
-                        {formatPhone(phone)}
-                      </a>
-                    ) : (
-                      <p className="mt-0.5 text-sm text-[#6b705c]">
-                        No phone
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="sm:text-right">
-                  <p className="text-xs font-bold text-[#9c7a20]">
-                    Lifetime Collected
-                  </p>
-
-                  <p className="mt-0.5 text-2xl font-bold">
-                    {formatCurrency(lifetimeCollected)}
-                  </p>
-
-                  {estimatedProfit !== null && (
-                    <>
-                      <p className="mt-3 text-xs font-bold text-[#9c7a20]">
-                        Estimated Profit
-                      </p>
-
-                      <p
-                        className={`mt-0.5 text-lg font-bold ${
-                          estimatedProfit >= 0
-                            ? "text-green-700"
-                            : "text-red-600"
-                        }`}
-                      >
-                        {formatCurrency(estimatedProfit)}
-                      </p>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-5 space-y-2 border-t border-[#e7e2d5] pt-4">
-                {properties.length > 1 && (
-                  <p className="text-xs text-[#6b705c]">
-                    This customer has multiple properties on file. Mark
-                    which one is current so the customer card and
-                    directions use the right address.
-                  </p>
-                )}
-
-                {properties.length > 0 ? (
-                  properties.map((property) => {
-                    // Jobber has no "primary property" concept, so when
-                    // no manual override is saved yet, the first property
-                    // is the one actually used (see getCustomerAddress in
-                    // lib/jobberWebhookProcessor.ts) -- this mirrors that
-                    // default so the badge always matches reality.
-                    const isCurrent = profile?.current_property_id
-                      ? property.id === profile.current_property_id
-                      : property.id === properties[0]?.id;
-
-                    const content = (
-                      <p className="text-sm font-semibold">
-                        {formatAddress(property)}
-                      </p>
-                    );
-
-                    const addressBlock = property.jobberWebUri ? (
-                      <a
-                        href={property.jobberWebUri}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="block min-w-0 flex-1 hover:underline"
-                      >
-                        {content}
-                      </a>
-                    ) : (
-                      <div className="min-w-0 flex-1">{content}</div>
-                    );
-
-                    return (
-                      <div
-                        key={property.id}
-                        className="flex items-center justify-between gap-3 rounded-xl bg-[#f7f6f1] px-3 py-2 transition hover:bg-[#efeadf]"
-                      >
-                        {addressBlock}
-
-                        {properties.length > 1 &&
-                          (isCurrent ? (
-                            <span className="shrink-0 rounded-full bg-[#174734] px-2 py-0.5 text-[10px] font-bold text-white">
-                              Current
-                            </span>
-                          ) : (
-                            <form
-                              action={setCurrentProperty.bind(
-                                null,
-                                decodedId,
-                                property.id
-                              )}
-                            >
-                              <button
-                                type="submit"
-                                className="shrink-0 rounded-full border border-[#174734] px-2 py-0.5 text-[10px] font-bold text-[#174734] transition hover:bg-[#174734] hover:text-white"
-                              >
-                                Set current
-                              </button>
-                            </form>
-                          ))}
-                      </div>
-                    );
-                  })
-                ) : (
-                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
-                    No properties found.
-                  </p>
-                )}
-              </div>
-            </section>
-
             <CustomerContactsSection
               jobberClientId={decodedId}
+              email={email}
+              phone={phone}
+              lifetimeCollected={lifetimeCollected}
+              estimatedProfit={estimatedProfit}
+              properties={properties}
+              currentPropertyId={profile?.current_property_id ?? null}
               contacts={additionalContacts}
+              addresses={additionalAddresses}
             />
 
             <section className="rounded-2xl bg-white p-5 shadow">
@@ -1903,6 +1749,72 @@ export default async function CustomerDetailPage({
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">Open Jobs</h2>
+
+              <div className="mt-3 space-y-2">
+                {openJobs.length > 0 ? (
+                  openJobs.map((job) => (
+                    <div
+                      key={job.id}
+                      className="rounded-xl border border-[#e7e2d5] px-3 py-2"
+                    >
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold">
+                            Job #{job.jobNumber ?? "—"}
+                            {job.title ? ` — ${job.title}` : ""}
+                          </p>
+
+                          <p className="text-xs text-[#6b705c]">
+                            {formatDate(job.startAt)}
+                          </p>
+                        </div>
+
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span
+                            className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
+                              job.jobStatus
+                            )}`}
+                          >
+                            {formatStatus(job.jobStatus)}
+                          </span>
+
+                          <p className="text-sm font-bold">
+                            {formatCurrency(job.total)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-2 flex flex-wrap gap-3 border-t border-[#f0eee6] pt-2">
+                        <Link
+                          href={`/jobs/${encodeURIComponent(job.id)}/edit`}
+                          className="text-xs font-semibold text-[#9c7a20] hover:underline"
+                        >
+                          Manage →
+                        </Link>
+
+                        {job.jobberWebUri && (
+                          <a
+                            href={job.jobberWebUri}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs font-semibold text-[#6b705c] hover:underline"
+                          >
+                            Open in Jobber ↗
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                    No open jobs right now.
+                  </p>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">
                 Property Profile
               </h2>
@@ -1915,103 +1827,24 @@ export default async function CustomerDetailPage({
                 action={updateCustomerProfile.bind(null, decodedId)}
                 className="mt-4 space-y-4"
               >
-                <div className="grid grid-cols-2 gap-3">
-                  <TurfSizeField
-                    initialRange={profile?.turf_size_range ?? null}
-                    initialExact={profile?.turf_size_sqft ?? null}
-                  />
-
-                  <div>
-                    <label
-                      htmlFor="pet_count"
-                      className="text-xs font-bold text-[#9c7a20]"
-                    >
-                      Pet Count
-                    </label>
-
-                    <input
-                      id="pet_count"
-                      name="pet_count"
-                      type="number"
-                      min="0"
-                      defaultValue={profile?.pet_count ?? ""}
-                      className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-                    />
-                  </div>
-                </div>
+                <TurfSizeField
+                  initialRange={profile?.turf_size_range ?? null}
+                  initialExact={profile?.turf_size_sqft ?? null}
+                />
 
                 <div>
                   <label
-                    htmlFor="pet_names"
+                    htmlFor="gate_code"
                     className="text-xs font-bold text-[#9c7a20]"
                   >
-                    Pet Names
+                    Gate Code
                   </label>
 
                   <input
-                    id="pet_names"
-                    name="pet_names"
+                    id="gate_code"
+                    name="gate_code"
                     type="text"
-                    defaultValue={profile?.pet_names ?? ""}
-                    placeholder="e.g. Max, Bella"
-                    className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label
-                      htmlFor="gate_code"
-                      className="text-xs font-bold text-[#9c7a20]"
-                    >
-                      Gate Code
-                    </label>
-
-                    <input
-                      id="gate_code"
-                      name="gate_code"
-                      type="text"
-                      defaultValue={profile?.gate_code ?? ""}
-                      className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-                    />
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor="odor_level"
-                      className="text-xs font-bold text-[#9c7a20]"
-                    >
-                      Odor Level
-                    </label>
-
-                    <select
-                      id="odor_level"
-                      name="odor_level"
-                      defaultValue={profile?.odor_level ?? ""}
-                      className="mt-1 w-full rounded-lg border border-[#d9d4c6] bg-white px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-                    >
-                      <option value="">Not set</option>
-                      <option value="None">None</option>
-                      <option value="Mild">Mild</option>
-                      <option value="Moderate">Moderate</option>
-                      <option value="Severe">Severe</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="subscription_plan"
-                    className="text-xs font-bold text-[#9c7a20]"
-                  >
-                    Subscription / Plan Notes
-                  </label>
-
-                  <input
-                    id="subscription_plan"
-                    name="subscription_plan"
-                    type="text"
-                    defaultValue={profile?.subscription_plan ?? ""}
+                    defaultValue={profile?.gate_code ?? ""}
                     className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
                   />
                 </div>
@@ -2033,50 +1866,143 @@ export default async function CustomerDetailPage({
                   />
                 </div>
 
-                <ReferralSourceField
-                  // Forces a fresh remount whenever the saved value
-                  // actually changes (e.g. right after Save Profile).
-                  // ReferralSourceField's <select> is a controlled input
-                  // that seeds its local state from initialSource only
-                  // once, on mount (useState(initialSource ?? "")) --
-                  // every other field on this form uses a plain
-                  // defaultValue instead, so this is the one field that
-                  // needs a key to pick up the newly-saved value instead
-                  // of clinging to whatever it showed before the save
-                  // (which looked like it had reverted to "Not set" when
-                  // a customer had no prior source on file).
-                  key={`${profile?.referral_source ?? "none"}:${
-                    profile?.referred_by_customer_id ?? "none"
-                  }:${profile?.referral_campaign_id ?? "none"}`}
-                  initialSource={profile?.referral_source ?? null}
-                  initialReferredBy={referredByCustomer}
-                  initialCampaignId={profile?.referral_campaign_id ?? null}
-                  customers={referralPickerData.customers}
-                  campaigns={referralPickerData.campaigns}
-                />
+                {/* Ryan (2026-09-17): Property Profile was a long form,
+                   always fully open. Collapsing it by default cleans up
+                   the page, but Turf Size, Gate Code, and Service
+                   Instructions (above) stay visible even when closed --
+                   the fields staff need at a glance most often. A plain
+                   <details> keeps this simple: fields inside stay in the
+                   DOM and still submit with the rest of the form even
+                   while collapsed, so Save Profile needs no changes. */}
+                <details className="rounded-xl border border-[#e7e2d5] px-3 py-2">
+                  <summary className="cursor-pointer text-xs font-bold text-[#9c7a20]">
+                    More property details
+                  </summary>
 
-                <div className="flex items-start gap-2 rounded-lg border border-[#e7e2d5] bg-[#f7f6f1] p-3">
-                  <input
-                    id="gallery_consent"
-                    name="gallery_consent"
-                    type="checkbox"
-                    defaultChecked={profile?.gallery_consent ?? false}
-                    className="mt-0.5"
-                  />
+                  <div className="mt-3 space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label
+                          htmlFor="pet_count"
+                          className="text-xs font-bold text-[#9c7a20]"
+                        >
+                          Pet Count
+                        </label>
 
-                  <label
-                    htmlFor="gallery_consent"
-                    className="text-xs text-[#174734]"
-                  >
-                    <span className="font-bold">
-                      OK to feature photos of this property in marketing
-                    </span>
-                    <br />
-                    Ask the customer first. Once checked, staff can pick
-                    visit photos of this property to show on the website
-                    under Marketing → Photo Gallery.
-                  </label>
-                </div>
+                        <input
+                          id="pet_count"
+                          name="pet_count"
+                          type="number"
+                          min="0"
+                          defaultValue={profile?.pet_count ?? ""}
+                          className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                        />
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="odor_level"
+                          className="text-xs font-bold text-[#9c7a20]"
+                        >
+                          Odor Level
+                        </label>
+
+                        <select
+                          id="odor_level"
+                          name="odor_level"
+                          defaultValue={profile?.odor_level ?? ""}
+                          className="mt-1 w-full rounded-lg border border-[#d9d4c6] bg-white px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                        >
+                          <option value="">Not set</option>
+                          <option value="None">None</option>
+                          <option value="Mild">Mild</option>
+                          <option value="Moderate">Moderate</option>
+                          <option value="Severe">Severe</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="pet_names"
+                        className="text-xs font-bold text-[#9c7a20]"
+                      >
+                        Pet Names
+                      </label>
+
+                      <input
+                        id="pet_names"
+                        name="pet_names"
+                        type="text"
+                        defaultValue={profile?.pet_names ?? ""}
+                        placeholder="e.g. Max, Bella"
+                        className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="subscription_plan"
+                        className="text-xs font-bold text-[#9c7a20]"
+                      >
+                        Subscription / Plan Notes
+                      </label>
+
+                      <input
+                        id="subscription_plan"
+                        name="subscription_plan"
+                        type="text"
+                        defaultValue={profile?.subscription_plan ?? ""}
+                        className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                      />
+                    </div>
+
+                    <ReferralSourceField
+                      // Forces a fresh remount whenever the saved value
+                      // actually changes (e.g. right after Save Profile).
+                      // ReferralSourceField's <select> is a controlled input
+                      // that seeds its local state from initialSource only
+                      // once, on mount (useState(initialSource ?? "")) --
+                      // every other field on this form uses a plain
+                      // defaultValue instead, so this is the one field that
+                      // needs a key to pick up the newly-saved value instead
+                      // of clinging to whatever it showed before the save
+                      // (which looked like it had reverted to "Not set" when
+                      // a customer had no prior source on file).
+                      key={`${profile?.referral_source ?? "none"}:${
+                        profile?.referred_by_customer_id ?? "none"
+                      }:${profile?.referral_campaign_id ?? "none"}`}
+                      initialSource={profile?.referral_source ?? null}
+                      initialReferredBy={referredByCustomer}
+                      initialCampaignId={profile?.referral_campaign_id ?? null}
+                      customers={referralPickerData.customers}
+                      campaigns={referralPickerData.campaigns}
+                    />
+
+                    <div className="flex items-start gap-2 rounded-lg border border-[#e7e2d5] bg-[#f7f6f1] p-3">
+                      <input
+                        id="gallery_consent"
+                        name="gallery_consent"
+                        type="checkbox"
+                        defaultChecked={profile?.gallery_consent ?? false}
+                        className="mt-0.5"
+                      />
+
+                      <label
+                        htmlFor="gallery_consent"
+                        className="text-xs text-[#174734]"
+                      >
+                        <span className="font-bold">
+                          OK to feature photos of this property in marketing
+                        </span>
+                        <br />
+                        Ask the customer first. Once checked, staff can pick
+                        visit photos of this property to show on the website
+                        under Marketing → Photo Gallery.
+                      </label>
+                    </div>
+                  </div>
+                </details>
 
                 <button
                   type="submit"
@@ -2485,7 +2411,7 @@ export default async function CustomerDetailPage({
 
               <div className="mt-3 space-y-2">
                 {payments.length > 0 ? (
-                  payments.map((payment) => {
+                  payments.slice(0, HISTORY_ROW_LIMIT).map((payment) => {
                     // Native invoices are mirrored into jobber_invoices
                     // under a synthetic "native-<uuid>" id (see
                     // lib/payments.ts's mirrorNativeInvoicePayment) --
@@ -2565,6 +2491,13 @@ export default async function CustomerDetailPage({
                   </p>
                 )}
               </div>
+
+              {payments.length > HISTORY_ROW_LIMIT && (
+                <p className="mt-2 text-xs text-[#6b705c]">
+                  Showing the {HISTORY_ROW_LIMIT} most recent of{" "}
+                  {payments.length} payments.
+                </p>
+              )}
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">
@@ -2749,7 +2682,7 @@ export default async function CustomerDetailPage({
                 </p>
 
                 <div className="mt-3 space-y-2">
-                  {nativeInvoices.map((invoice) => (
+                  {nativeInvoices.slice(0, HISTORY_ROW_LIMIT).map((invoice) => (
                     <details
                       key={invoice.invoiceId}
                       className="rounded-xl border border-[#e7e2d5] px-3 py-2"
@@ -2851,6 +2784,13 @@ export default async function CustomerDetailPage({
                     </details>
                   ))}
                 </div>
+
+                {nativeInvoices.length > HISTORY_ROW_LIMIT && (
+                  <p className="mt-2 text-xs text-[#6b705c]">
+                    Showing the {HISTORY_ROW_LIMIT} most recent of{" "}
+                    {nativeInvoices.length} native invoices.
+                  </p>
+                )}
               </section>
             )}
 
@@ -2861,7 +2801,7 @@ export default async function CustomerDetailPage({
 
               <div className="mt-3 space-y-2">
                 {jobs.length > 0 ? (
-                  jobs.map((job) => (
+                  jobs.slice(0, 10).map((job) => (
                     <div
                       key={job.id}
                       className="rounded-xl border border-[#e7e2d5] px-3 py-2"
@@ -2920,6 +2860,12 @@ export default async function CustomerDetailPage({
                   </p>
                 )}
               </div>
+
+              {jobs.length > 10 && (
+                <p className="mt-2 text-xs text-[#6b705c]">
+                  Showing the 10 most recent of {jobs.length} jobs.
+                </p>
+              )}
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">

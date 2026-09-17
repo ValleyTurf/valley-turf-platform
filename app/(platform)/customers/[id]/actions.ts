@@ -20,6 +20,7 @@ import {
   deleteContact,
   updateContact,
 } from "@/lib/customerContacts";
+import { addAddress, deleteAddress } from "@/lib/customerAddresses";
 import { resendInvoice, type ResendInvoiceResult } from "../../invoices/actions";
 import { isReferralSource } from "@/lib/referralSource";
 
@@ -595,6 +596,65 @@ export async function deleteCustomerContact(
     action: "delete",
     entityType: "customer_contact",
     entityId: contactId,
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+
+  return { error: null };
+}
+
+// Same shape as addCustomerContact/deleteCustomerContact above, for
+// lib/customerAddresses.ts instead -- see that file and migration 079
+// for why this stays reference-only rather than touching
+// customers.address_line_1/latitude/longitude.
+export async function addCustomerAddress(
+  jobberClientId: string,
+  params: {
+    label: string | null;
+    addressLine1: string;
+    addressLine2: string | null;
+    city: string | null;
+    state: string | null;
+    postalCode: string | null;
+  }
+): Promise<{ error: string | null }> {
+  const actor = await getCurrentUser();
+  const result = await addAddress({ jobberClientId, ...params });
+
+  if (!result.ok) {
+    return { error: result.error };
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "create",
+    entityType: "customer_address",
+    entityId: jobberClientId,
+    entityLabel: params.label || params.addressLine1,
+    after: params,
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+
+  return { error: null };
+}
+
+export async function deleteCustomerAddress(
+  jobberClientId: string,
+  addressId: string
+): Promise<{ error: string | null }> {
+  const actor = await getCurrentUser();
+  const result = await deleteAddress(addressId);
+
+  if (!result.ok) {
+    return { error: result.error };
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "delete",
+    entityType: "customer_address",
+    entityId: addressId,
   });
 
   revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
