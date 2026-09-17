@@ -13,7 +13,11 @@
 --      routes, the webhook no-ops in lib/jobberWebhookProcessor.ts). Safe
 --      to deploy any time before this runs -- everything is still
 --      source='jobber' until Part B below, so behavior is unchanged.
---   2. 068_add_job_line_items_snapshot.sql has been run.
+--   2. 068_add_job_line_items_snapshot.sql AND
+--      076_widen_recurrence_frequency_enum.sql have both been run (076
+--      widens the recurrence_frequency check constraint to match this
+--      migration's own bucket list below -- without it, Part A's
+--      biweekly/triannual backfills would fail the old constraint).
 --   3. GET /api/jobber/audit-migration has been reviewed (read-only) and
 --      then GET /api/jobber/audit-migration?apply=true has been run, with
 --      missingLocallyTotal at zero for customers/jobs/visits. If it's not
@@ -50,11 +54,12 @@ begin;
 -- the visit history locally). Every non-archived, still-Jobber-sourced
 -- job whose type looks recurring and doesn't already have a
 -- recurrence_frequency gets the closest cadence bucket
--- (weekly/bimonthly/monthly/quarterly/semiannual -- migration 054's
--- enum) inferred from the median gap between its visits, with generous
--- (+/-25%) tolerance on each bucket -- same tolerance the migration
--- audit tool's read-only cadence preview already used, so nothing here
--- should surprise you if you reviewed that report first.
+-- (weekly/biweekly/monthly/bimonthly/quarterly/triannual/semiannual --
+-- migration 054's enum, widened by migration 076) inferred from the
+-- median gap between its visits, with generous (+/-25%) tolerance on
+-- each bucket -- same tolerance the migration audit tool's read-only
+-- cadence preview already used, so nothing here should surprise you if
+-- you reviewed that report first.
 --
 -- recurrence_anchor_date/recurrence_generated_through are both set to
 -- the LATEST existing visit's date, not the first -- this keeps cadence
@@ -102,9 +107,11 @@ bucketed as (
     jobber_job_id,
     case
       when median_gap_days between 7 * 0.75 and 7 * 1.25 then 'weekly'
+      when median_gap_days between 14 * 0.75 and 14 * 1.25 then 'biweekly'
       when median_gap_days between 30 * 0.75 and 30 * 1.25 then 'monthly'
       when median_gap_days between 60 * 0.75 and 60 * 1.25 then 'bimonthly'
       when median_gap_days between 90 * 0.75 and 90 * 1.25 then 'quarterly'
+      when median_gap_days between 120 * 0.75 and 120 * 1.25 then 'triannual'
       when median_gap_days between 180 * 0.75 and 180 * 1.25 then 'semiannual'
       else null
     end as recurrence_bucket
