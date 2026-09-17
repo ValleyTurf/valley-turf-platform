@@ -410,12 +410,16 @@ async function createNativeInvoiceForVisit(
   // Invoices hub (2026-09 reorg): /invoices is now the report (former
   // /invoices/history), and /invoices/create is the completed-visits
   // list this action's own visit just came off of -- both need to
-  // reflect a freshly created invoice.
+  // reflect a freshly created invoice. /my-day too, now that this same
+  // InvoiceCard flow can also be triggered from a crew member's own
+  // visit card there (native-invoicing customers only -- see my-day's
+  // own comment on this).
   revalidatePath("/invoices");
   revalidatePath("/invoices/create");
   revalidatePath("/job-costs");
   revalidatePath("/job-costing-analytics");
   revalidatePath("/revenue");
+  revalidatePath("/my-day");
 
   return {
     error: null,
@@ -791,6 +795,7 @@ export async function dismissVisitInvoice(
   });
 
   revalidatePath("/invoices/create");
+  revalidatePath("/my-day");
 
   return { error: null };
 }
@@ -844,6 +849,7 @@ export async function undoDismissVisitInvoice(
   });
 
   revalidatePath("/invoices/create");
+  revalidatePath("/my-day");
 
   return { error: null };
 }

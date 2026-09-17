@@ -18,11 +18,18 @@ import { getCurrentUser } from "@/lib/currentUser";
 import { fetchJobDetails } from "@/lib/jobberJob";
 import { haversineMiles } from "@/lib/geoDistance";
 import { computeRouteLegs, HOME_BASE_ADDRESS } from "@/lib/googleRoutes";
+import { getRolePermissions, isPathAllowedForRole } from "@/lib/permissions";
 import { completeVisit } from "./actions";
 import VisitTimer from "./VisitTimer";
 import VisitNoteForm from "./VisitNoteForm";
 import OnWayButton from "./OnWayButton";
 import JobCostQuickEntryForm from "./JobCostQuickEntryForm";
+// Reused as-is from /invoices/create, not reimplemented -- same card,
+// same createInvoice/dismissVisitInvoice server actions (imported by
+// InvoiceCard itself from its own directory, so those still resolve
+// correctly here). Native-invoicing customers only -- see the
+// nativeInvoicingClientIds comment below for why.
+import InvoiceCard from "../invoices/InvoiceCard";
 
 // Fixed, curated subset of materials/equipment shown right on the crew
 // card — not the full Materials & Costs list (that stays on the
@@ -42,6 +49,7 @@ type VisitRow = {
   jobber_client_id: string | null;
   jobber_job_id: string | null;
   customer_name: string | null;
+  job_number: string | null;
   title: string | null;
   visit_status: string | null;
   start_at: string | null;
@@ -49,6 +57,8 @@ type VisitRow = {
   completed_at: string | null;
   on_way_sent_at: string | null;
   confirmed_at: string | null;
+  jobber_invoice_id: string | null;
+  invoice_dismissed_at: string | null;
 };
 
 type CustomerContact = {
@@ -61,6 +71,18 @@ type CustomerContact = {
   service_instructions: string | null;
   latitude: number | string | null;
   longitude: number | string | null;
+  // Ryan (2026-09-17): invoice-from-the-field should only ever show for
+  // a customer already bucketed onto this app's own native invoicing
+  // (Stage 7 cutover, see invoices/actions.ts's createInvoice) -- anyone
+  // still on Jobber's own billing keeps being invoiced there, same as
+  // today, so this stays false/null for them and the Ready to Invoice
+  // block below just never renders for that visit.
+  native_invoicing_enabled: boolean | null;
+};
+
+type VisitCostRow = {
+  jobber_visit_id: string;
+  material_cost: number | string;
 };
 
 type VisitAssignmentRow = {
@@ -254,11 +276,11 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
   const queryStart = `${dateStr}T00:00:00-07:00`;
   const queryEnd = `${dateStr}T23:59:59-07:00`;
 
-  const [{ data, error }, currentUser] = await Promise.all([
+  const [{ data, error }, currentUser, rolePermissions] = await Promise.all([
     supabaseServer
       .from("jobber_visits")
       .select(
-        "jobber_visit_id, jobber_client_id, jobber_job_id, customer_name, title, visit_status, start_at, end_at, completed_at, on_way_sent_at, confirmed_at"
+        "jobber_visit_id, jobber_client_id, jobber_job_id, customer_name, job_number, title, visit_status, start_at, end_at, completed_at, on_way_sent_at, confirmed_at, jobber_invoice_id, invoice_dismissed_at"
       )
       // Exclude visits whose job was canceled/archived directly in
       // Jobber's own UI — see 051_add_job_status_to_visits.sql for why
@@ -274,9 +296,18 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
       .lte("start_at", queryEnd)
       .order("start_at", { ascending: true }),
     getCurrentUser(),
+    getRolePermissions(),
   ]);
 
   const allVisits = (data ?? []) as VisitRow[];
+
+  // Same "job_costing" permission that gates /invoices already —
+  // reused rather than invented, so whoever Ryan has already allowed to
+  // invoice (per role, in Team settings) is exactly who sees the Ready
+  // to Invoice block here too, no separate toggle to manage.
+  const canInvoice = currentUser
+    ? isPathAllowedForRole("/invoices/create", currentUser.role, rolePermissions)
+    : false;
 
   const clientIds = Array.from(
     new Set(allVisits.map((v) => v.jobber_client_id).filter(Boolean))
@@ -295,10 +326,21 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
   ) as string[];
 
   const jobLineItemNamesById = new Map<string, string[]>();
+  // Same shape InvoiceCard/createInvoice expect (see
+  // invoices/create/page.tsx's own jobLineItemsMap) -- built off the
+  // same fetchJobDetails call as jobLineItemNamesById above rather than
+  // a second round of calls, so a job with an add-on shows up correctly
+  // pre-filled if/when its visit becomes invoiceable below.
+  const jobInvoiceLineItemsMap = new Map<
+    string,
+    { description: string; quantity: number; unitPrice: number; details: string | null }[]
+  >();
   await Promise.all(
     jobIds.map(async (jobId) => {
       const details = await fetchJobDetails(jobId);
-      if (details && details.lineItems.length > 1) {
+      if (!details) return;
+
+      if (details.lineItems.length > 1) {
         // Skip the first item (the base cleaning) -- only the extras
         // beyond it are worth calling out to the crew.
         jobLineItemNamesById.set(
@@ -306,6 +348,16 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
           details.lineItems.slice(1).map((li) => li.name?.trim() || "Service")
         );
       }
+
+      const invoiceItems = details.lineItems
+        .filter((li) => li.unitPrice != null && li.unitPrice > 0)
+        .map((li) => ({
+          description: li.name?.trim() || "Service",
+          quantity: 1,
+          unitPrice: li.unitPrice as number,
+          details: li.details,
+        }));
+      jobInvoiceLineItemsMap.set(jobId, invoiceItems);
     })
   );
 
@@ -315,12 +367,13 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
     { data: usersData },
     { data: timeLogsData },
     { data: myActiveTimer },
+    { data: visitCostData },
   ] = await Promise.all([
     clientIds.length > 0
       ? supabaseServer
           .from("customers")
           .select(
-            "jobber_client_id, phone, address_line_1, city, state, gate_code, service_instructions, latitude, longitude"
+            "jobber_client_id, phone, address_line_1, city, state, gate_code, service_instructions, latitude, longitude, native_invoicing_enabled"
           )
           .in("jobber_client_id", clientIds)
       : Promise.resolve({ data: [] as CustomerContact[] }),
@@ -345,11 +398,25 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
           .is("stopped_at", null)
           .maybeSingle()
       : Promise.resolve({ data: null as { id: string; jobber_visit_id: string; started_at: string } | null }),
+    // Direct cost, shown on a Ready to Invoice card the same way
+    // /invoices/create's own InvoiceCard shows it -- same table, same
+    // "Direct cost $X" badge (see InvoiceCard.tsx).
+    visitIds.length > 0
+      ? supabaseServer
+          .from("visit_material_cost")
+          .select("jobber_visit_id, material_cost")
+          .in("jobber_visit_id", visitIds)
+      : Promise.resolve({ data: [] as VisitCostRow[] }),
   ]);
 
   const contactMap = new Map<string, CustomerContact>(
     ((contactsData ?? []) as CustomerContact[]).map((c) => [c.jobber_client_id, c])
   );
+
+  const visitCostMap = new Map<string, number>();
+  for (const row of (visitCostData ?? []) as VisitCostRow[]) {
+    visitCostMap.set(row.jobber_visit_id, Number(row.material_cost ?? 0));
+  }
 
   const userNameById = new Map<string, string>(
     ((usersData ?? []) as UserRow[]).map((u) => [u.id, u.name])
@@ -740,6 +807,19 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
               const contact = visit.jobber_client_id
                 ? contactMap.get(visit.jobber_client_id) ?? null
                 : null;
+              // Ready to Invoice only shows for a completed visit that
+              // hasn't already been billed or waved off, and only for a
+              // customer this app actually invoices natively -- someone
+              // still on Jobber's own billing gets invoiced there, same
+              // as always, so this stays hidden for them rather than
+              // risking a duplicate or a Jobber-side invoice this app
+              // can't actually create.
+              const readyToInvoice =
+                canInvoice &&
+                (visit.visit_status ?? "").toUpperCase() === "COMPLETED" &&
+                !visit.jobber_invoice_id &&
+                !visit.invoice_dismissed_at &&
+                Boolean(contact?.native_invoicing_enabled);
               const badge = statusMeta(visit.visit_status);
               const service = visitServiceLabel(visit.title);
               const addOnNames = visit.jobber_job_id
@@ -967,6 +1047,31 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
                         Mark Complete
                       </button>
                     </form>
+                  )}
+
+                  {readyToInvoice && (
+                    <div className="mt-3">
+                      <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-[#9c7a20]">
+                        Ready to Invoice
+                      </p>
+                      <InvoiceCard
+                        visit={{
+                          jobber_visit_id: visit.jobber_visit_id,
+                          jobber_client_id: visit.jobber_client_id,
+                          customer_name: visit.customer_name,
+                          job_number: visit.job_number,
+                          title: visit.title,
+                          start_at: visit.start_at,
+                          completed_at: visit.completed_at,
+                        }}
+                        directCost={visitCostMap.get(visit.jobber_visit_id) ?? 0}
+                        suggestedLineItems={
+                          visit.jobber_job_id
+                            ? jobInvoiceLineItemsMap.get(visit.jobber_job_id) ?? []
+                            : []
+                        }
+                      />
+                    </div>
                   )}
                   </div>
                   </details>
