@@ -36,7 +36,11 @@ import {
   sendAutopayReceiptEmail,
   sendAutopayReceiptSms,
 } from "@/lib/notifications";
-import { attemptAutopayCharge, getPaymentMethodByClientId } from "@/lib/autopay";
+import {
+  attemptAutopayCharge,
+  getPaymentMethodByClientId,
+  getOrCreateEnrollmentToken,
+} from "@/lib/autopay";
 import { getBaseUrl } from "@/lib/baseUrl";
 import { getNotificationRecipients } from "@/lib/customerContacts";
 
@@ -325,6 +329,17 @@ async function createNativeInvoiceForVisit(
             )) || delivered;
         }
       } else if (payUrl) {
+        // Ryan (2026-09-18): offer autopay enrollment right on the
+        // invoice itself, not just via a separately-shared link -- only
+        // reached here because autopay DIDN'T just charge this invoice
+        // (not enrolled, no card, declined, needs 3DS, etc.), so there's
+        // always something useful for the customer to do with it.
+        // Best-effort: a failure here shouldn't block invoice delivery.
+        const enrollment = await getOrCreateEnrollmentToken(clientId);
+        const autopayUrl = enrollment.ok
+          ? `${baseUrl}/autopay/${enrollment.token}`
+          : null;
+
         if (pdfBuffer) {
           for (const toEmail of recipients.emails) {
             delivered =
@@ -338,6 +353,7 @@ async function createNativeInvoiceForVisit(
                 jobberClientId: clientId,
                 logoUrl,
                 rateUrl,
+                autopayUrl,
               })) || delivered;
           }
         }
@@ -349,7 +365,8 @@ async function createNativeInvoiceForVisit(
               customerName,
               invoice.invoiceNumber,
               payUrl,
-              clientId
+              clientId,
+              autopayUrl
             )) || delivered;
         }
       }
@@ -676,6 +693,13 @@ export async function resendInvoice(invoiceId: string): Promise<ResendInvoiceRes
   const logoUrl = `${baseUrl}/branding/logo.png`;
   const rateUrl = `${baseUrl}/rate/${invoice.publicToken}`;
 
+  // Same autopay-enrollment CTA as the original send (see
+  // createNativeInvoiceForVisit above) -- invoice.jobberClientId is
+  // already confirmed non-null by the check earlier in this function.
+  // Best-effort: a failure here shouldn't block resending the invoice.
+  const enrollment = await getOrCreateEnrollmentToken(invoice.jobberClientId);
+  const autopayUrl = enrollment.ok ? `${baseUrl}/autopay/${enrollment.token}` : null;
+
   let delivered = false;
 
   try {
@@ -697,6 +721,7 @@ export async function resendInvoice(invoiceId: string): Promise<ResendInvoiceRes
             jobberClientId: invoice.jobberClientId,
             logoUrl,
             rateUrl,
+            autopayUrl,
           })) || delivered;
       }
     }
@@ -708,7 +733,8 @@ export async function resendInvoice(invoiceId: string): Promise<ResendInvoiceRes
           invoice.customerName,
           invoice.invoiceNumber,
           payUrl,
-          invoice.jobberClientId
+          invoice.jobberClientId,
+          autopayUrl
         )) || delivered;
     }
   } catch (deliveryError) {

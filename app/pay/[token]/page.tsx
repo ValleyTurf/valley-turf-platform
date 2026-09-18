@@ -9,6 +9,8 @@ export const revalidate = 0;
 import type { ReactNode } from "react";
 import { supabaseServer } from "@/lib/supabase-server";
 import { formatCurrencyPrecise, formatDateOnly } from "@/lib/format";
+import { getOrCreateEnrollmentToken } from "@/lib/autopay";
+import { getBaseUrl } from "@/lib/baseUrl";
 import { payInvoice } from "./actions";
 import { TipSelector } from "./TipSelector";
 
@@ -22,6 +24,7 @@ type PublicInvoice = {
   due_date: string | null;
   message: string | null;
   paid_at: string | null;
+  jobber_client_id: string | null;
 };
 
 type PublicLineItem = {
@@ -64,7 +67,7 @@ export default async function PublicInvoicePage({
   const { data, error } = await supabaseServer
     .from("invoices")
     .select(
-      "id, invoice_number, customer_name, status, total, issue_date, due_date, message, paid_at"
+      "id, invoice_number, customer_name, status, total, issue_date, due_date, message, paid_at, jobber_client_id"
     )
     .eq("public_token", token)
     .single();
@@ -93,6 +96,32 @@ export default async function PublicInvoicePage({
 
   const lineItems = (lineItemRows ?? []) as PublicLineItem[];
   const isPayable = invoice.status === "sent" || invoice.status === "overdue";
+
+  // Ryan (2026-09-18): offer autopay enrollment right on the payment
+  // page too, not just in the email/SMS that linked here -- covers
+  // whichever channel actually brought the customer, and gives paid
+  // invoices a place to nudge toward autopay for next time. Skipped for
+  // draft (not a real invoice relationship yet) and void. Same public,
+  // unauthenticated /autopay/[token] page as the email/SMS CTA
+  // (app/(platform)/invoices/actions.ts) -- it already shows the right
+  // state (enroll vs. update card) on its own.
+  const showAutopayCta =
+    invoice.jobber_client_id &&
+    invoice.status !== "draft" &&
+    invoice.status !== "void";
+
+  let autopayUrl: string | null = null;
+
+  if (showAutopayCta) {
+    const enrollment = await getOrCreateEnrollmentToken(
+      invoice.jobber_client_id as string
+    );
+
+    if (enrollment.ok) {
+      const baseUrl = await getBaseUrl();
+      autopayUrl = `${baseUrl}/autopay/${enrollment.token}`;
+    }
+  }
 
   return (
     <Shell>
@@ -182,6 +211,18 @@ export default async function PublicInvoicePage({
             Pay Now
           </button>
         </form>
+      )}
+
+      {autopayUrl && (
+        <p className="mt-4 text-center text-sm text-[#6b705c]">
+          <a
+            href={autopayUrl}
+            className="font-semibold text-[#174734] underline"
+          >
+            Set up Autopay
+          </a>{" "}
+          so we can charge future invoices automatically.
+        </p>
       )}
     </Shell>
   );

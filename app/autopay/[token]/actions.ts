@@ -8,7 +8,11 @@
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getBaseUrl } from "@/lib/baseUrl";
-import { getPaymentMethodByEnrollmentToken, createAutopaySetupSession } from "@/lib/autopay";
+import {
+  getPaymentMethodByEnrollmentToken,
+  createAutopaySetupSession,
+  setAutopayEnabled,
+} from "@/lib/autopay";
 
 export async function startTokenAutopaySetup(token: string): Promise<void> {
   const paymentMethod = await getPaymentMethodByEnrollmentToken(token);
@@ -37,4 +41,26 @@ export async function startTokenAutopaySetup(token: string): Promise<void> {
   }
 
   redirect(result.url);
+}
+
+// Ryan (2026-09-18): a customer who enrolled via this link should be
+// able to turn autopay back off from the same place, without needing a
+// portal login or calling in -- the card itself stays on file (same as
+// the portal's disablePortalAutopay and staff's toggleAutopay), just the
+// off_session charging stops. Re-enrolling (or the staff-side toggle)
+// turns it back on without re-entering a card.
+export async function disableTokenAutopay(token: string): Promise<void> {
+  const paymentMethod = await getPaymentMethodByEnrollmentToken(token);
+
+  if (!paymentMethod) {
+    redirect(`/autopay/${token}?error=${encodeURIComponent("Link not found.")}`);
+  }
+
+  const result = await setAutopayEnabled(paymentMethod.jobberClientId, false);
+
+  if (!result.ok) {
+    redirect(`/autopay/${token}?error=${encodeURIComponent(result.error)}`);
+  }
+
+  redirect(`/autopay/${token}?disabled=1`);
 }

@@ -10,7 +10,7 @@ export const revalidate = 0;
 import type { ReactNode } from "react";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getPaymentMethodByEnrollmentToken } from "@/lib/autopay";
-import { startTokenAutopaySetup } from "./actions";
+import { startTokenAutopaySetup, disableTokenAutopay } from "./actions";
 
 function Shell({ children }: { children: ReactNode }) {
   return (
@@ -30,10 +30,10 @@ export default async function PublicAutopayPage({
   searchParams,
 }: {
   params: Promise<{ token: string }>;
-  searchParams: Promise<{ setup?: string; error?: string }>;
+  searchParams: Promise<{ setup?: string; disabled?: string; error?: string }>;
 }) {
   const { token } = await params;
-  const { setup, error } = await searchParams;
+  const { setup, disabled, error } = await searchParams;
 
   const paymentMethod = await getPaymentMethodByEnrollmentToken(token);
 
@@ -77,6 +77,13 @@ export default async function PublicAutopayPage({
           </p>
         )}
 
+        {disabled === "1" && (
+          <p className="mt-4 rounded-xl bg-[#f0eee6] p-4 text-sm font-semibold text-[#174734]">
+            Autopay is now off. Your card stays on file -- turn it back
+            on any time below.
+          </p>
+        )}
+
         {error && (
           <p className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-semibold text-red-700">
             {error}
@@ -102,6 +109,17 @@ export default async function PublicAutopayPage({
             {hasCard ? "Update Card" : "Add Card & Enable Autopay"}
           </button>
         </form>
+
+        {hasCard && paymentMethod.autopayEnabled && (
+          <form action={disableTokenAutopay.bind(null, token)} className="mt-3">
+            <button
+              type="submit"
+              className="w-full rounded-xl border border-[#d9d4c6] px-5 py-3 text-center text-sm font-semibold text-[#6b705c] transition hover:bg-[#f7f6f1]"
+            >
+              Turn Off Autopay
+            </button>
+          </form>
+        )}
 
         <p className="mt-4 text-xs text-[#9c9990]">
           Card details are handled entirely by Stripe -- we never see or

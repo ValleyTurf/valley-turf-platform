@@ -14,13 +14,17 @@
 // the Stripe-hosted form.
 //
 // Off-session charging (attemptAutopayCharge) is the other half: called
-// wherever a native invoice is created for an autopay-enabled client
-// (today, only the /invoice-test harness -- Stage 7 wires this into the
-// real flow), it tries a direct PaymentIntent against the saved card
-// and reports back whether it worked, so the caller can fall back to
-// the normal email/SMS Pay Now link on any failure (declined card,
-// requires 3D Secure authentication, etc.) rather than leaving the
-// invoice stranded.
+// wherever a native invoice is created and sent for an autopay-enabled
+// client (app/(platform)/invoices/actions.ts's createNativeInvoiceForVisit
+// and resendInvoice -- the real flow, used by InvoiceCard on both
+// /invoices/create and My Day's Ready to Invoice), it tries a direct
+// PaymentIntent against the saved card and reports back whether it
+// worked, so the caller can fall back to the normal email/SMS Pay Now
+// link on any failure (declined card, requires 3D Secure authentication,
+// etc.) rather than leaving the invoice stranded. That same fallback
+// path also offers autopay enrollment right on the invoice itself (see
+// those functions' autopayUrl/getOrCreateEnrollmentToken usage), not
+// just via a separately-shared link.
 import "server-only";
 import type Stripe from "stripe";
 import { supabaseServer } from "@/lib/supabase-server";

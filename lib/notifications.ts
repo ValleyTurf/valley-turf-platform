@@ -753,7 +753,13 @@ export async function sendInvoiceSms(
   customerName: string | null,
   invoiceNumber: string,
   payUrl: string,
-  jobberClientId: string | null
+  jobberClientId: string | null,
+  // Same reasoning as InvoiceEmail's autopayUrl above -- an optional
+  // second link to the public /autopay/[token] enrollment page, appended
+  // to the text when this client has one to offer. Optional (not just
+  // nullable) so every other caller of this function keeps compiling
+  // unchanged.
+  autopayUrl?: string | null
 ): Promise<boolean> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -765,7 +771,10 @@ export async function sendInvoiceSms(
   }
 
   const greetingName = firstNameOf(customerName);
-  const body = `Hi ${greetingName}, this is Valley Turf Revival. Your invoice ${invoiceNumber} is ready: ${payUrl} Thank you for your business!`;
+  const autopaySuffix = autopayUrl
+    ? ` Want us to just charge your card automatically next time? Set up Autopay: ${autopayUrl}`
+    : "";
+  const body = `Hi ${greetingName}, this is Valley Turf Revival. Your invoice ${invoiceNumber} is ready: ${payUrl} Thank you for your business!${autopaySuffix}`;
 
   try {
     const response = await fetch(
@@ -1122,6 +1131,16 @@ export type InvoiceEmail = {
   payNowUrl: string;
   pdfBuffer: Buffer;
   jobberClientId: string | null;
+  // Ryan (2026-09-18): a secondary, low-key link alongside Pay Now so a
+  // customer who hasn't enrolled yet can opt into autopay right from the
+  // invoice itself, not just via a separately-shared link. Points at the
+  // public, unauthenticated /autopay/[token] page (app/autopay/[token]/,
+  // same page the staff-shared link and this function's caller both use)
+  // -- that page already shows "Add Card & Enable Autopay" or "Update
+  // Card" depending on whether this client already has one on file, so
+  // the link itself never needs to know or branch on enrollment status.
+  // null skips the block entirely (no linked customer to enroll).
+  autopayUrl?: string | null;
   // Absolute URL to public/branding/logo.png -- built by the caller from
   // getBaseUrl() (lib/baseUrl.ts) since this file has no request context
   // of its own to derive a host from. Gmail/Outlook/Apple Mail don't
@@ -1211,6 +1230,17 @@ export async function sendInvoiceEmail(
           >
             Pay Now
           </a>
+          ${
+            request.autopayUrl
+              ? `
+          <p style="margin: 12px 0 0; font-size: 12px;">
+            <a href="${request.autopayUrl}" style="color: #6b705c; text-decoration: underline;">
+              Set up Autopay
+            </a> so we can charge this automatically next time
+          </p>
+          `
+              : ""
+          }
         </div>
         <div style="border-top: 0.5px solid #e7e2d5; margin: 20px 0; padding-top: 20px;">
           <p style="font-size: 16px; margin: 0 0 14px;">Hi ${escapeHtml(greetingName)},</p>
