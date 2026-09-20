@@ -52,7 +52,7 @@ export const SECTIONS: { id: PermissionSection; label: string; description: stri
     id: "customer_intelligence",
     label: "Customer Intelligence",
     description:
-      "Churn-risk and value scoring on the Customers page, plus the Reactivation outreach pipeline (contact logging, follow-up scheduling, Cleaning Scheduled tracking).",
+      "Churn-risk and value scoring on the Customers page, the Reactivation outreach pipeline (contact logging, follow-up scheduling, Cleaning Scheduled tracking), and the Customer Reviews report.",
   },
   {
     id: "settings_audit",
@@ -124,7 +124,15 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
   // winning back" feature Customer Intelligence's Reactivation Pipeline
   // card summarizes; an admin toggling this on/off for a role should get
   // both together, not one without the other.
-  customer_intelligence: ["/customers/intelligence", "/reactivation"],
+  // /reports/reviews joins here too -- same "how are we actually doing
+  // with customers" shape of data as churn-risk/value scoring, and it's
+  // the same customer_name/jobber_client_id-level detail (not aggregate
+  // dollar figures) that this section already gates.
+  customer_intelligence: [
+    "/customers/intelligence",
+    "/reactivation",
+    "/reports/reviews",
+  ],
   settings_audit: ["/settings", "/audit"],
   // The public accept/decline page (/q/[token]) is a separate,
   // unauthenticated route handled by proxy.ts's PUBLIC_PATHS, not this

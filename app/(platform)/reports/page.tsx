@@ -100,6 +100,13 @@ const REPORT_CARDS: ReportCard[] = [
     href: "/reports/referrals",
     icon: "🤝",
   },
+  {
+    title: "Customer Reviews",
+    description:
+      "Every post-visit star rating customers have left, 1-5, for any date range.",
+    href: "/reports/reviews",
+    icon: "⭐",
+  },
 ];
 
 export default async function ReportsPage() {
