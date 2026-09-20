@@ -80,9 +80,23 @@ type ProfitTimeframe =
 
 const PROFIT_TRACKING_START_DATE = "2026-08-01";
 
-// The margin Ryan wants every customer clearing -- also what "price
-// needed" below works backward from.
-const TARGET_PROFIT_MARGIN_PCT = 60;
+// Ryan's call, 2026-09-20: 60% is the target for a lot of customers, but
+// not a one-size-fits-all number -- some plans/customers are reasonably
+// priced to a lower margin on purpose. Picker instead of a fixed
+// constant so "what would it take to hit 40/50/60/70%" can be checked
+// per customer rather than only ever being told about 60.
+const MARGIN_TARGET_OPTIONS: { value: string; label: string }[] = [
+  { value: "40", label: "40%" },
+  { value: "50", label: "50%" },
+  { value: "60", label: "60%" },
+  { value: "70", label: "70%" },
+];
+
+const DEFAULT_MARGIN_TARGET_PCT = 60;
+
+function isMarginTargetOption(value: string | undefined): boolean {
+  return MARGIN_TARGET_OPTIONS.some((option) => option.value === value);
+}
 
 const PROFIT_TIMEFRAME_OPTIONS: { value: ProfitTimeframe; label: string }[] = [
   { value: "since-tracking", label: "Since Aug 2026" },
@@ -135,15 +149,18 @@ function getProfitDateRange(timeframe: ProfitTimeframe): {
 // lump figure -- returns null when there's nothing to divide by (no
 // invoices) or no real cost data logged yet (would otherwise suggest a
 // misleading $0).
-function computeTargetPricePerInvoice(summary: {
-  directCost: number;
-  overhead: number;
-  invoiceCount: number;
-}): number | null {
+function computeTargetPricePerInvoice(
+  summary: {
+    directCost: number;
+    overhead: number;
+    invoiceCount: number;
+  },
+  targetMarginPct: number
+): number | null {
   const totalCost = summary.directCost + summary.overhead;
   if (summary.invoiceCount === 0 || totalCost <= 0) return null;
 
-  const revenueNeeded = totalCost / (1 - TARGET_PROFIT_MARGIN_PCT / 100);
+  const revenueNeeded = totalCost / (1 - targetMarginPct / 100);
   return revenueNeeded / summary.invoiceCount;
 }
 
@@ -153,6 +170,7 @@ type CustomerDetailPageProps = {
   }>;
   searchParams: Promise<{
     profitRange?: string;
+    marginTarget?: string;
   }>;
 };
 
@@ -1057,6 +1075,43 @@ async function getCustomerFinancials(
   return data as CustomerFinancials | null;
 }
 
+// Timeframe-scoped counterpart to lifetime_collected above -- for the
+// Profitability panel's Amount Collected tile, which shares the panel's
+// timeframe picker rather than always being all-time (Ryan, 2026-09-20).
+// Sums jobber_payments.amount the same way lib/transactions.ts's own
+// getTransactions() does for the Transactions report (payment_date range,
+// no status filter) so this always agrees with what that report would
+// show for the same customer/dates -- tip_amount is deliberately not
+// included, same as there (tracked separately for payroll/tip
+// attribution, not counted as collected revenue).
+async function getCustomerAmountCollected(
+  jobberClientId: string,
+  startDate: string | null,
+  endDate: string
+): Promise<number> {
+  let query = supabaseServer
+    .from("jobber_payments")
+    .select("amount")
+    .eq("jobber_client_id", jobberClientId)
+    .lte("payment_date", endDate);
+
+  if (startDate) {
+    query = query.gte("payment_date", startDate);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error("Customer amount collected query failed:", error.message);
+    return 0;
+  }
+
+  return (data ?? []).reduce(
+    (sum, row) => sum + toNumber((row as { amount: number | string }).amount),
+    0
+  );
+}
+
 async function getInvoiceCostBreakdowns(
   jobberClientId: string
 ): Promise<Map<string, InvoiceCostBreakdown>> {
@@ -1544,7 +1599,7 @@ export default async function CustomerDetailPage({
   const { id } = await params;
   const decodedId = decodeURIComponent(id);
 
-  const { profitRange } = await searchParams;
+  const { profitRange, marginTarget } = await searchParams;
   const profitTimeframe: ProfitTimeframe = isProfitTimeframe(profitRange)
     ? profitRange
     : "since-tracking";
@@ -1553,12 +1608,16 @@ export default async function CustomerDetailPage({
       ?.label ?? "";
   const { startDate: profitStartDate, endDate: profitEndDate } =
     getProfitDateRange(profitTimeframe);
+  const targetMarginPct = isMarginTargetOption(marginTarget)
+    ? Number(marginTarget)
+    : DEFAULT_MARGIN_TARGET_PCT;
 
   const [
     { client, error },
     financials,
     profile,
     profitSummary,
+    amountCollectedForTimeframe,
     invoiceCosts,
     materialsList,
     equipmentList,
@@ -1579,6 +1638,7 @@ export default async function CustomerDetailPage({
     getCustomerFinancials(decodedId),
     getCustomerProfile(decodedId),
     getCustomerJobCostingSummary(decodedId, profitStartDate, profitEndDate),
+    getCustomerAmountCollected(decodedId, profitStartDate, profitEndDate),
     getInvoiceCostBreakdowns(decodedId),
     getMaterialsList(),
     getEquipmentList(),
@@ -1737,9 +1797,12 @@ export default async function CustomerDetailPage({
   const lifetimeCollected = toNumber(financials?.lifetime_collected);
   const estimatedProfit = profitSummary.profit;
   const profitMarginPct = profitSummary.marginPct;
-  const targetPricePerInvoice = computeTargetPricePerInvoice(profitSummary);
+  const targetPricePerInvoice = computeTargetPricePerInvoice(
+    profitSummary,
+    targetMarginPct
+  );
   const meetsProfitTarget =
-    profitMarginPct !== null && profitMarginPct >= TARGET_PROFIT_MARGIN_PCT;
+    profitMarginPct !== null && profitMarginPct >= targetMarginPct;
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
@@ -1775,10 +1838,20 @@ export default async function CustomerDetailPage({
               <ProfitTimeframePicker
                 current={profitTimeframe}
                 options={PROFIT_TIMEFRAME_OPTIONS}
+                paramName="profitRange"
               />
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+            <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
+              <div>
+                <p className="text-xs font-bold text-[#9c7a20]">
+                  Amount Collected
+                </p>
+                <p className="mt-0.5 text-2xl font-bold">
+                  {formatCurrency(amountCollectedForTimeframe)}
+                </p>
+              </div>
+
               <div>
                 <p className="text-xs font-bold text-[#9c7a20]">
                   Estimated Profit
@@ -1812,34 +1885,35 @@ export default async function CustomerDetailPage({
               </div>
 
               <div className="col-span-2 sm:col-span-1">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-bold text-[#9c7a20]">
+                    Price Needed for
+                  </p>
+                  <ProfitTimeframePicker
+                    current={String(targetMarginPct)}
+                    options={MARGIN_TARGET_OPTIONS}
+                    paramName="marginTarget"
+                  />
+                </div>
+
                 {profitMarginPct === null ? (
-                  <p className="text-xs text-[#6b705c]">
+                  <p className="mt-1 text-xs text-[#6b705c]">
                     No invoices {profitTimeframeLabel.toLowerCase()}.
                   </p>
                 ) : meetsProfitTarget ? (
-                  <>
-                    <p className="text-xs font-bold text-[#9c7a20]">
-                      {TARGET_PROFIT_MARGIN_PCT}% Target
-                    </p>
-                    <p className="mt-0.5 text-2xl font-bold text-green-700">
-                      Already met
-                    </p>
-                  </>
+                  <p className="mt-0.5 text-2xl font-bold text-green-700">
+                    Already met
+                  </p>
                 ) : targetPricePerInvoice !== null ? (
-                  <>
-                    <p className="text-xs font-bold text-[#9c7a20]">
-                      Price Needed for {TARGET_PROFIT_MARGIN_PCT}%
-                    </p>
-                    <p className="mt-0.5 text-2xl font-bold">
-                      {formatCurrencyPrecise(targetPricePerInvoice)}
-                      <span className="text-xs font-normal text-[#6b705c]">
-                        {" "}
-                        / visit
-                      </span>
-                    </p>
-                  </>
+                  <p className="mt-0.5 text-2xl font-bold">
+                    {formatCurrencyPrecise(targetPricePerInvoice)}
+                    <span className="text-xs font-normal text-[#6b705c]">
+                      {" "}
+                      / visit
+                    </span>
+                  </p>
                 ) : (
-                  <p className="text-xs text-[#6b705c]">
+                  <p className="mt-1 text-xs text-[#6b705c]">
                     Not enough cost data logged yet.
                   </p>
                 )}
