@@ -42,6 +42,7 @@ import { listAddressesForCustomer } from "@/lib/customerAddresses";
 import ResendInvoiceButton from "./ResendInvoiceButton";
 import MarkPaidButton from "./MarkPaidButton";
 import ProfitTimeframePicker from "./ProfitTimeframePicker";
+import Pagination from "./Pagination";
 import {
   toNumber,
   formatCurrency,
@@ -51,16 +52,6 @@ import {
 } from "@/lib/format";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
 import { getCustomerJobCostingSummary } from "@/lib/jobCostingSummary";
-
-// Ryan (2026-09-17): Payment History and Native Invoices had no cap at
-// all -- for a long-tenured customer (his example: Sarah Gombert) that
-// meant every payment/native invoice ever, rendered flat with no
-// scrolling or pagination. Recent Jobs/Quotes/Invoices below were
-// already capped at 10 (via Jobber's own `first: 10` / a local
-// `.limit(10)`) and stayed reasonable regardless of tenure, so this
-// picks a tighter number for the two sections that had none at all --
-// easy to bump if 5 feels too short in practice.
-const HISTORY_ROW_LIMIT = 5;
 
 // Profitability panel in the header (Ryan, 2026-09-20): job costing
 // (materials/labor/overhead) only started getting tracked in August
@@ -164,6 +155,36 @@ function computeTargetPricePerInvoice(
   return revenueNeeded / summary.invoiceCount;
 }
 
+// Ryan (2026-09-20): Past Visits, Payment History, Recent Invoices,
+// Native Invoices, Recent Jobs, and Recent Quotes all just showed a
+// flat "N most recent" slice with no way to see the rest -- this makes
+// every one of them a real click-to-page-2/3 list instead, all sharing
+// the same 5-per-page size and the same helper below. Each section
+// tracks its own page in its own query param (see PaginationParamName)
+// so paging one list leaves the other five, and the Profitability
+// panel's own profitRange/marginTarget, untouched.
+const LIST_PAGE_SIZE = 5;
+
+function paginateList<T>(
+  items: T[],
+  rawPage: string | undefined,
+  pageSize: number = LIST_PAGE_SIZE
+): { pageItems: T[]; totalPages: number; currentPage: number; totalCount: number } {
+  const totalCount = items.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const parsed = Number(rawPage);
+  const requestedPage = Number.isInteger(parsed) && parsed > 0 ? parsed : 1;
+  const currentPage = Math.min(requestedPage, totalPages);
+  const start = (currentPage - 1) * pageSize;
+
+  return {
+    pageItems: items.slice(start, start + pageSize),
+    totalPages,
+    currentPage,
+    totalCount,
+  };
+}
+
 type CustomerDetailPageProps = {
   params: Promise<{
     id: string;
@@ -171,6 +192,12 @@ type CustomerDetailPageProps = {
   searchParams: Promise<{
     profitRange?: string;
     marginTarget?: string;
+    visitsPage?: string;
+    paymentsPage?: string;
+    invoicesPage?: string;
+    nativeInvoicesPage?: string;
+    jobsPage?: string;
+    quotesPage?: string;
   }>;
 };
 
@@ -755,8 +782,16 @@ async function getJobberClient(id: string): Promise<{
           # below needs every currently-open job, not just the most
           # recent ones, and an ongoing job can have a null endAt that
           # sorts it past a small cap. Recent Jobs' own display is still
-          # sliced back down to 10 further down this file.
-          jobs(first: 20) {
+          # sliced back down further down this file (now paginated --
+          # see LIST_PAGE_SIZE -- rather than a flat top-N).
+          #
+          # Bumped again 50 (Ryan, 2026-09-20): Recent Jobs/Quotes/
+          # Invoices went from a flat "N most recent" to real
+          # click-to-page-2/3 pagination, which is only meaningful if
+          # there's more than one page's worth of real history actually
+          # fetched -- see getNativeJobsForCustomer's and
+          # getLocalClientView's matching bumps below.
+          jobs(first: 50) {
             nodes {
               id
               jobNumber
@@ -771,7 +806,7 @@ async function getJobberClient(id: string): Promise<{
             }
           }
 
-          quotes(first: 10) {
+          quotes(first: 40) {
             nodes {
               id
               quoteNumber
@@ -783,7 +818,7 @@ async function getJobberClient(id: string): Promise<{
             }
           }
 
-          invoices(first: 10) {
+          invoices(first: 40) {
             nodes {
               id
               invoiceNumber
@@ -885,9 +920,9 @@ async function getLocalClientView(id: string): Promise<{
         )
         .eq("jobber_client_id", id)
         .order("end_at", { ascending: false, nullsFirst: false })
-        // Bumped from 10 alongside getJobberClient's jobs(first: 20) and
+        // Bumped to 50 alongside getJobberClient's jobs(first: 50) and
         // getNativeJobsForCustomer's limit below -- see that comment.
-        .limit(20),
+        .limit(50),
       supabaseServer
         .from("jobber_invoices")
         .select(
@@ -895,7 +930,7 @@ async function getLocalClientView(id: string): Promise<{
         )
         .eq("jobber_client_id", id)
         .order("issue_date", { ascending: false, nullsFirst: false })
-        .limit(10),
+        .limit(40),
     ]);
 
   if (!customerRow) {
@@ -1016,8 +1051,8 @@ async function getNativeJobsForCustomer(
     .eq("jobber_client_id", jobberClientId)
     .like("jobber_job_id", "native-%")
     .order("end_at", { ascending: false, nullsFirst: false })
-    // Bumped from 10 -- see getJobberClient's jobs(first: 20) comment.
-    .limit(20);
+    // Bumped to 50 -- see getJobberClient's jobs(first: 50) comment.
+    .limit(50);
 
   if (error) {
     console.error("Native jobs for customer query failed:", error.message);
@@ -1054,7 +1089,7 @@ function mergeRecentJobs(
 
   return [...jobberJobs, ...nativeJobs]
     .sort((a, b) => (sortKey(b) > sortKey(a) ? 1 : -1))
-    .slice(0, 25);
+    .slice(0, 100);
 }
 
 async function getCustomerFinancials(
@@ -1610,7 +1645,16 @@ export default async function CustomerDetailPage({
   const { id } = await params;
   const decodedId = decodeURIComponent(id);
 
-  const { profitRange, marginTarget } = await searchParams;
+  const {
+    profitRange,
+    marginTarget,
+    visitsPage,
+    paymentsPage,
+    invoicesPage,
+    nativeInvoicesPage,
+    jobsPage,
+    quotesPage,
+  } = await searchParams;
   const profitTimeframe: ProfitTimeframe = isProfitTimeframe(profitRange)
     ? profitRange
     : "since-tracking";
@@ -1622,6 +1666,20 @@ export default async function CustomerDetailPage({
   const targetMarginPct = isMarginTargetOption(marginTarget)
     ? Number(marginTarget)
     : DEFAULT_MARGIN_TARGET_PCT;
+  // Passed to every <Pagination> below so paging one list's href keeps
+  // every other list's current page (and the Profitability panel's own
+  // profitRange/marginTarget) intact -- each Pagination only overwrites
+  // its own paramName on top of this.
+  const currentSearchParams = {
+    profitRange,
+    marginTarget,
+    visitsPage,
+    paymentsPage,
+    invoicesPage,
+    nativeInvoicesPage,
+    jobsPage,
+    quotesPage,
+  };
 
   const [
     { client, error },
@@ -1742,13 +1800,30 @@ export default async function CustomerDetailPage({
   // already uses (job_status is upper-snake-case from Jobber or lowercase
   // for a native job -- .toUpperCase().includes keeps both working) run
   // over the wider `jobs` fetch above so a currently-open job with an old
-  // or null end date isn't missed just because Recent Jobs only displays
-  // the most recent 10.
+  // or null end date isn't missed just because Recent Jobs is paginated
+  // and only shows one page at a time.
   const openJobs = jobs.filter(
     (job) => !(job.jobStatus ?? "").toUpperCase().includes("ARCHIVED")
   );
   const quotes = client.quotes?.nodes ?? [];
   const invoices = client.invoices?.nodes ?? [];
+
+  // Paginated views for the six "recent stuff" lists below (Past
+  // Visits, Payment History, Recent Invoices, Native Invoices, Recent
+  // Jobs, Recent Quotes) -- see LIST_PAGE_SIZE/paginateList above. The
+  // underlying arrays (pastVisits, payments, invoices, nativeInvoices,
+  // jobs, quotes) stay full/unsliced since other code below -- visit
+  // usage maps, the payment-to-invoice lookups in Payment History,
+  // noteableVisits -- needs every row, not just the current page.
+  const pastVisitsPagination = paginateList(pastVisits, visitsPage);
+  const paymentsPagination = paginateList(payments, paymentsPage);
+  const invoicesPagination = paginateList(invoices, invoicesPage);
+  const nativeInvoicesPagination = paginateList(
+    nativeInvoices,
+    nativeInvoicesPage
+  );
+  const jobsPagination = paginateList(jobs, jobsPage);
+  const quotesPagination = paginateList(quotes, quotesPage);
 
   const allVisitIds = [
     ...pastVisits.map((visit) => visit.jobber_visit_id),
@@ -2568,9 +2643,9 @@ export default async function CustomerDetailPage({
                 Log materials, labor, fuel, and equipment per visit here.
               </p>
 
-              <div className="mt-3 max-h-[600px] space-y-2 overflow-y-auto pr-1">
-                {pastVisits.length > 0 ? (
-                  pastVisits.map((visit) => (
+              <div className="mt-3 space-y-2">
+                {pastVisitsPagination.pageItems.length > 0 ? (
+                  pastVisitsPagination.pageItems.map((visit) => (
                     <details
                       key={visit.jobber_visit_id}
                       className="rounded-xl border border-[#e7e2d5] px-3 py-2"
@@ -2650,6 +2725,16 @@ export default async function CustomerDetailPage({
                   </p>
                 )}
               </div>
+
+              <Pagination
+                currentPage={pastVisitsPagination.currentPage}
+                totalPages={pastVisitsPagination.totalPages}
+                totalCount={pastVisitsPagination.totalCount}
+                pageSize={LIST_PAGE_SIZE}
+                paramName="visitsPage"
+                searchParams={currentSearchParams}
+                itemLabel="visit"
+              />
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">
@@ -2664,8 +2749,8 @@ export default async function CustomerDetailPage({
               </p>
 
               <div className="mt-3 space-y-2">
-                {payments.length > 0 ? (
-                  payments.slice(0, HISTORY_ROW_LIMIT).map((payment) => {
+                {paymentsPagination.pageItems.length > 0 ? (
+                  paymentsPagination.pageItems.map((payment) => {
                     // Native invoices are mirrored into jobber_invoices
                     // under a synthetic "native-<uuid>" id (see
                     // lib/payments.ts's mirrorNativeInvoicePayment) --
@@ -2746,12 +2831,15 @@ export default async function CustomerDetailPage({
                 )}
               </div>
 
-              {payments.length > HISTORY_ROW_LIMIT && (
-                <p className="mt-2 text-xs text-[#6b705c]">
-                  Showing the {HISTORY_ROW_LIMIT} most recent of{" "}
-                  {payments.length} payments.
-                </p>
-              )}
+              <Pagination
+                currentPage={paymentsPagination.currentPage}
+                totalPages={paymentsPagination.totalPages}
+                totalCount={paymentsPagination.totalCount}
+                pageSize={LIST_PAGE_SIZE}
+                paramName="paymentsPage"
+                searchParams={currentSearchParams}
+                itemLabel="payment"
+              />
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">
@@ -2838,8 +2926,8 @@ export default async function CustomerDetailPage({
               </h2>
 
               <div className="mt-3 space-y-2">
-                {invoices.length > 0 ? (
-                  invoices.map((invoice) => {
+                {invoicesPagination.pageItems.length > 0 ? (
+                  invoicesPagination.pageItems.map((invoice) => {
                     const cost = invoiceCosts.get(invoice.id);
                     const profit = cost
                       ? toNumber(cost.estimated_profit)
@@ -2923,6 +3011,16 @@ export default async function CustomerDetailPage({
                   </p>
                 )}
               </div>
+
+              <Pagination
+                currentPage={invoicesPagination.currentPage}
+                totalPages={invoicesPagination.totalPages}
+                totalCount={invoicesPagination.totalCount}
+                pageSize={LIST_PAGE_SIZE}
+                paramName="invoicesPage"
+                searchParams={currentSearchParams}
+                itemLabel="invoice"
+              />
             </section>
 
             {nativeInvoices.length > 0 && (
@@ -2936,7 +3034,7 @@ export default async function CustomerDetailPage({
                 </p>
 
                 <div className="mt-3 space-y-2">
-                  {nativeInvoices.slice(0, HISTORY_ROW_LIMIT).map((invoice) => (
+                  {nativeInvoicesPagination.pageItems.map((invoice) => (
                     <details
                       key={invoice.invoiceId}
                       className="rounded-xl border border-[#e7e2d5] px-3 py-2"
@@ -3049,12 +3147,15 @@ export default async function CustomerDetailPage({
                   ))}
                 </div>
 
-                {nativeInvoices.length > HISTORY_ROW_LIMIT && (
-                  <p className="mt-2 text-xs text-[#6b705c]">
-                    Showing the {HISTORY_ROW_LIMIT} most recent of{" "}
-                    {nativeInvoices.length} native invoices.
-                  </p>
-                )}
+                <Pagination
+                  currentPage={nativeInvoicesPagination.currentPage}
+                  totalPages={nativeInvoicesPagination.totalPages}
+                  totalCount={nativeInvoicesPagination.totalCount}
+                  pageSize={LIST_PAGE_SIZE}
+                  paramName="nativeInvoicesPage"
+                  searchParams={currentSearchParams}
+                  itemLabel="native invoice"
+                />
               </section>
             )}
 
@@ -3064,8 +3165,8 @@ export default async function CustomerDetailPage({
               </h2>
 
               <div className="mt-3 space-y-2">
-                {jobs.length > 0 ? (
-                  jobs.slice(0, 10).map((job) => (
+                {jobsPagination.pageItems.length > 0 ? (
+                  jobsPagination.pageItems.map((job) => (
                     <div
                       key={job.id}
                       className="rounded-xl border border-[#e7e2d5] px-3 py-2"
@@ -3125,11 +3226,15 @@ export default async function CustomerDetailPage({
                 )}
               </div>
 
-              {jobs.length > 10 && (
-                <p className="mt-2 text-xs text-[#6b705c]">
-                  Showing the 10 most recent of {jobs.length} jobs.
-                </p>
-              )}
+              <Pagination
+                currentPage={jobsPagination.currentPage}
+                totalPages={jobsPagination.totalPages}
+                totalCount={jobsPagination.totalCount}
+                pageSize={LIST_PAGE_SIZE}
+                paramName="jobsPage"
+                searchParams={currentSearchParams}
+                itemLabel="job"
+              />
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">
@@ -3138,8 +3243,8 @@ export default async function CustomerDetailPage({
               </h2>
 
               <div className="mt-3 space-y-2">
-                {quotes.length > 0 ? (
-                  quotes.map((quote) => {
+                {quotesPagination.pageItems.length > 0 ? (
+                  quotesPagination.pageItems.map((quote) => {
                     const content = (
                       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                         <div className="min-w-0">
@@ -3192,6 +3297,16 @@ export default async function CustomerDetailPage({
                   </p>
                 )}
               </div>
+
+              <Pagination
+                currentPage={quotesPagination.currentPage}
+                totalPages={quotesPagination.totalPages}
+                totalCount={quotesPagination.totalCount}
+                pageSize={LIST_PAGE_SIZE}
+                paramName="quotesPage"
+                searchParams={currentSearchParams}
+                itemLabel="quote"
+              />
             </section>
           </div>
         </div>
