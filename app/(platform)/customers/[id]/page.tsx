@@ -2345,12 +2345,6 @@ export default async function CustomerDetailPage({
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">Notes</h2>
 
-              <p className="mt-1 text-xs text-[#6b705c]">
-                Photos and notes from each visit, plus general standing
-                notes about the property. Crew can add these from My Day
-                while on-site, or add them here afterward.
-              </p>
-
               <form
                 action={updateGeneralNotes.bind(null, decodedId)}
                 className="mt-4"
@@ -2380,10 +2374,6 @@ export default async function CustomerDetailPage({
               </form>
 
               <div className="mt-5 border-t border-[#e7e2d5] pt-4">
-                <p className="text-xs font-bold text-[#9c7a20]">
-                  Add Visit Note
-                </p>
-
                 <AddVisitNoteForm
                   jobberClientId={decodedId}
                   noteableVisits={noteableVisits}

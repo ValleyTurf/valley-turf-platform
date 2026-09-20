@@ -30,6 +30,15 @@ export default function AddVisitNoteForm({
   jobberClientId: string;
   noteableVisits: NoteableVisit[];
 }) {
+  // Ryan (2026-09-20): wanted this collapsed by default, expanding to
+  // the same fields on click -- same collapsed-heading -> inline-form
+  // idea as the Contact History pills (ComposeEmailForm.tsx/
+  // ComposeSmsForm.tsx/LogCallForm.tsx), just styled as the existing
+  // section heading rather than a pill, since that's what this already
+  // was visually. The heading now lives in this component (it used to
+  // be a plain <p> in page.tsx above it) so the open/closed state and
+  // the label that toggles it stay together.
+  const [open, setOpen] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -108,16 +117,40 @@ export default function AddVisitNoteForm({
     });
   }
 
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-xs font-bold text-[#9c7a20] hover:underline"
+      >
+        Add Visit Note
+      </button>
+    );
+  }
+
   if (noteableVisits.length === 0) {
     return (
-      <p className="mt-2 rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
-        No visits to attach a note to yet.
-      </p>
+      <div className="space-y-2">
+        <p className="text-xs font-bold text-[#9c7a20]">Add Visit Note</p>
+        <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+          No visits to attach a note to yet.
+        </p>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="text-xs font-semibold text-[#6b705c] hover:underline"
+        >
+          Close
+        </button>
+      </div>
     );
   }
 
   return (
-    <form ref={formRef} onSubmit={handleSubmit} className="mt-2 space-y-2">
+    <form ref={formRef} onSubmit={handleSubmit} className="space-y-2">
+      <p className="text-xs font-bold text-[#9c7a20]">Add Visit Note</p>
+
       <select
         name="jobber_visit_id"
         required
@@ -146,13 +179,24 @@ export default function AddVisitNoteForm({
         className="w-full text-xs text-[#6b705c] file:mr-3 file:rounded-lg file:border-0 file:bg-[#174734] file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white"
       />
 
-      <button
-        type="submit"
-        disabled={isPending}
-        className="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246] disabled:opacity-60"
-      >
-        {uploadStatus ?? (isPending ? "Saving…" : "Add Note")}
-      </button>
+      <div className="flex items-center gap-3">
+        <button
+          type="submit"
+          disabled={isPending}
+          className="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246] disabled:opacity-60"
+        >
+          {uploadStatus ?? (isPending ? "Saving…" : "Add Note")}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          disabled={isPending}
+          className="text-xs font-semibold text-[#6b705c] hover:underline disabled:opacity-60"
+        >
+          Cancel
+        </button>
+      </div>
 
       {error && <p className="text-xs font-semibold text-red-600">{error}</p>}
       {warning && !error && (
