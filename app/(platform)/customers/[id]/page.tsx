@@ -1914,7 +1914,7 @@ export default async function CustomerDetailPage({
             </p>
           </div>
 
-          <div className="w-full rounded-2xl bg-white p-5 shadow lg:flex-1">
+          <div className="w-full rounded-2xl bg-white p-4 shadow sm:p-5 lg:flex-1">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <p className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
@@ -1936,22 +1936,33 @@ export default async function CustomerDetailPage({
               />
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
-              <div>
+            {/* Ryan (2026-09-20): the desktop 4-across grid was reused
+                as-is below `sm` (a 2-col grid, 4th tile spanning both
+                columns) and it made every number cramped -- two ~24px
+                bold currency values squeezed into ~140px-wide phone
+                columns, plus an orphaned empty cell next to Profit
+                Margin. Mobile gets its own single-column stack instead
+                (full-width rows, no leftover gaps) with a bump up to
+                text-3xl since each value now has the whole row to
+                itself; sm: and up keeps the original 4-column layout
+                and text-2xl sizing untouched -- that's the one Ryan
+                confirmed looks right on desktop. */}
+            <div className="mt-4 grid grid-cols-1 gap-4 divide-y divide-[#f0eee6] sm:grid-cols-4 sm:gap-x-6 sm:gap-y-4 sm:divide-y-0">
+              <div className="pt-4 first:pt-0 sm:pt-0">
                 <p className="text-xs font-bold text-[#9c7a20]">
                   Amount Collected
                 </p>
-                <p className="mt-0.5 text-2xl font-bold">
+                <p className="mt-0.5 text-3xl font-bold sm:text-2xl">
                   {formatCurrency(amountCollectedForTimeframe)}
                 </p>
               </div>
 
-              <div>
+              <div className="pt-4 first:pt-0 sm:pt-0">
                 <p className="text-xs font-bold text-[#9c7a20]">
                   Estimated Profit
                 </p>
                 <p
-                  className={`mt-0.5 text-2xl font-bold ${
+                  className={`mt-0.5 text-3xl font-bold sm:text-2xl ${
                     estimatedProfit >= 0 ? "text-green-700" : "text-red-600"
                   }`}
                 >
@@ -1959,12 +1970,12 @@ export default async function CustomerDetailPage({
                 </p>
               </div>
 
-              <div>
+              <div className="pt-4 first:pt-0 sm:pt-0">
                 <p className="text-xs font-bold text-[#9c7a20]">
                   Profit Margin
                 </p>
                 <p
-                  className={`mt-0.5 text-2xl font-bold ${
+                  className={`mt-0.5 text-3xl font-bold sm:text-2xl ${
                     profitMarginPct === null
                       ? "text-[#6b705c]"
                       : meetsProfitTarget
@@ -1978,8 +1989,8 @@ export default async function CustomerDetailPage({
                 </p>
               </div>
 
-              <div className="col-span-2 sm:col-span-1">
-                <div className="flex items-center gap-1.5">
+              <div className="pt-4 first:pt-0 sm:pt-0">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <p className="text-xs font-bold text-[#9c7a20]">
                     Price Needed for
                   </p>
@@ -1995,11 +2006,11 @@ export default async function CustomerDetailPage({
                     No invoices {profitTimeframeLabel.toLowerCase()}.
                   </p>
                 ) : meetsProfitTarget ? (
-                  <p className="mt-0.5 text-2xl font-bold text-green-700">
+                  <p className="mt-0.5 text-3xl font-bold text-green-700 sm:text-2xl">
                     Already met
                   </p>
                 ) : targetPricePerInvoice !== null ? (
-                  <p className="mt-0.5 text-2xl font-bold">
+                  <p className="mt-0.5 text-3xl font-bold sm:text-2xl">
                     {formatCurrencyPrecise(targetPricePerInvoice)}
                     <span className="text-xs font-normal text-[#6b705c]">
                       {" "}
