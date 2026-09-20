@@ -40,6 +40,7 @@ import CustomerContactsSection from "./CustomerContactsSection";
 import { listContactsForCustomer } from "@/lib/customerContacts";
 import { listAddressesForCustomer } from "@/lib/customerAddresses";
 import ResendInvoiceButton from "./ResendInvoiceButton";
+import MarkPaidButton from "./MarkPaidButton";
 import {
   toNumber,
   formatCurrency,
@@ -2779,6 +2780,16 @@ export default async function CustomerDetailPage({
                             jobberClientId={decodedId}
                             invoiceId={invoice.invoiceId}
                           />
+
+                          {invoice.status !== "paid" &&
+                            invoice.status !== "void" && (
+                              <div className="ml-auto">
+                                <MarkPaidButton
+                                  jobberClientId={decodedId}
+                                  invoiceId={invoice.invoiceId}
+                                />
+                              </div>
+                            )}
                         </div>
                       </div>
                     </details>

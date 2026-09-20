@@ -1,7 +1,10 @@
 // Native payment records + invoice status transitions (Tier 1, Stage 5).
-// Written to exclusively by lib/stripeWebhookProcessor.ts's real
+// Written to almost exclusively by lib/stripeWebhookProcessor.ts's real
 // handlers -- nothing else should mutate the payments table or flip an
-// invoice to "paid" outside of a verified Stripe webhook event.
+// invoice to "paid" outside of a verified Stripe webhook event, with one
+// deliberate exception: recordManualInvoicePayment below, for a
+// staff-recorded cash/check payment that never touches Stripe at all
+// (Ryan, 2026-09-20 -- Debbie Edwards paid in cash on a draft invoice).
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
 import { pushPaymentToQuickbooks } from "@/lib/quickbooks";
@@ -271,6 +274,158 @@ export async function markInvoicePaid(params: {
   }
 
   return { tipAmount };
+}
+
+// Staff-recorded cash/check payment -- a customer who pays in person
+// never generates a Stripe event, so without this a draft/sent native
+// invoice would just sit there forever with no way to reflect that it's
+// actually been collected. Deliberately separate from markInvoicePaid
+// above (not a thin wrapper around it) so that function's own "only a
+// verified Stripe webhook calls this" comment stays true, and so this
+// path never needs a real stripePaymentIntentId.
+//
+// Mirrors markInvoicePaid's bookkeeping as closely as it can without
+// Stripe involved: same invoice-status flip, same jobber_payments/
+// jobber_invoices mirror writes (so Revenue/Transactions/Job Costing
+// Analytics see it exactly like any other paid invoice), same
+// QuickBooks payment push. No tip -- there's nothing to derive a tip
+// from without a Checkout Session total, and cash tips aren't tracked
+// here today.
+//
+// Never sends anything -- no email, no SMS, no receipt of any kind.
+// That's implicit (this function only touches the database), but
+// worth stating since it's the whole point of this path existing:
+// Ryan's explicit ask was to mark a cash payment paid *without*
+// notifying the customer.
+export async function recordManualInvoicePayment(params: {
+  invoiceId: string;
+  paidAt: string;
+  amount: number;
+  // Free text, same as payments.method for a Stripe payment -- "Cash",
+  // "Check", etc. Not a controlled vocabulary.
+  method: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { invoiceId, paidAt, amount, method } = params;
+
+  const { data: invoiceRow, error } = await supabaseServer
+    .from("invoices")
+    .update({ status: "paid", paid_at: paidAt })
+    .eq("id", invoiceId)
+    .neq("status", "void")
+    .select("id, jobber_client_id, quickbooks_invoice_id")
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  if (!invoiceRow) {
+    return {
+      ok: false,
+      error: "Invoice not found, or it's already been voided.",
+    };
+  }
+
+  // Synthetic id standing in for a real Stripe PaymentIntent id --
+  // payments.stripe_payment_intent_id is NOT NULL + unique (migration
+  // 044), same reasoning as the "native-"/"native-payment-" synthetic
+  // ids used elsewhere for records with no real Jobber/Stripe
+  // counterpart. Keyed on the invoice id, so re-marking the same
+  // invoice paid updates this same row instead of creating a duplicate.
+  const syntheticId = `manual-${invoiceId}`;
+
+  const { error: paymentError } = await supabaseServer.from("payments").upsert(
+    {
+      invoice_id: invoiceId,
+      stripe_payment_intent_id: syntheticId,
+      amount,
+      method,
+      status: "succeeded",
+      paid_at: paidAt,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "stripe_payment_intent_id" }
+  );
+
+  if (paymentError) {
+    console.error(
+      `Failed to record manual payment for invoice ${invoiceId}:`,
+      paymentError.message
+    );
+  }
+
+  if (invoiceRow.jobber_client_id) {
+    const mirrorInvoiceId = nativeMirrorInvoiceId(invoiceId);
+
+    const { error: mirrorPaymentError } = await supabaseServer
+      .from("jobber_payments")
+      .upsert(
+        {
+          jobber_payment_id: `native-payment-${syntheticId}`,
+          jobber_invoice_id: mirrorInvoiceId,
+          jobber_client_id: invoiceRow.jobber_client_id,
+          amount,
+          payment_date: paidAt.slice(0, 10),
+          payment_method: method,
+          adjustment_type: null,
+          transaction_status: "succeeded",
+          tip_amount: 0,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "jobber_payment_id" }
+      );
+
+    if (mirrorPaymentError) {
+      console.error(
+        `Failed to mirror manual payment for invoice ${invoiceId}:`,
+        mirrorPaymentError.message
+      );
+    }
+
+    const { error: statusError } = await supabaseServer
+      .from("jobber_invoices")
+      .update({ status: "paid", updated_at: new Date().toISOString() })
+      .eq("jobber_invoice_id", mirrorInvoiceId);
+
+    if (statusError) {
+      console.error(
+        `Failed to update mirror invoice status to paid for ${invoiceId}:`,
+        statusError.message
+      );
+    }
+  }
+
+  // Stage 8, same as markInvoicePaid -- only possible if the earlier
+  // QuickBooks push at invoice-creation time actually succeeded.
+  if (invoiceRow.jobber_client_id && invoiceRow.quickbooks_invoice_id) {
+    const qbResult = await pushPaymentToQuickbooks({
+      jobberClientId: invoiceRow.jobber_client_id,
+      quickbooksInvoiceId: invoiceRow.quickbooks_invoice_id,
+      amount,
+      paidDate: paidAt.slice(0, 10),
+    });
+
+    if (qbResult.ok) {
+      await supabaseServer
+        .from("invoices")
+        .update({
+          quickbooks_payment_id: qbResult.quickbooksPaymentId,
+          quickbooks_push_error: null,
+        })
+        .eq("id", invoiceId);
+    } else {
+      console.error(
+        `QuickBooks payment push failed for invoice ${invoiceId}:`,
+        qbResult.error
+      );
+      await supabaseServer
+        .from("invoices")
+        .update({ quickbooks_push_error: qbResult.error })
+        .eq("id", invoiceId);
+    }
+  }
+
+  return { ok: true };
 }
 
 // Looks up an invoice by the Checkout Session id stored on it

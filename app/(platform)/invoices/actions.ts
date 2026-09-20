@@ -27,7 +27,10 @@ import {
   getInvoiceById,
   getInvoiceLineItems,
 } from "@/lib/invoices";
-import { mirrorNativeInvoiceInJobberTables } from "@/lib/payments";
+import {
+  mirrorNativeInvoiceInJobberTables,
+  recordManualInvoicePayment,
+} from "@/lib/payments";
 import { pushInvoiceToQuickbooks } from "@/lib/quickbooks";
 import { generateInvoicePdf } from "@/lib/invoicePdf";
 import {
@@ -759,6 +762,68 @@ export async function resendInvoice(invoiceId: string): Promise<ResendInvoiceRes
   });
 
   return { error: null, delivered: true };
+}
+
+export type MarkInvoicePaidManuallyResult = { error: string | null };
+
+// Ryan (2026-09-20): Debbie Edwards paid in cash on a native invoice he'd
+// saved as a draft -- no Stripe event is ever coming for that, so there
+// was no way to reflect it as paid. This is that escape hatch: flips the
+// invoice straight to paid (lib/payments.ts's recordManualInvoicePayment,
+// same jobber_payments/QuickBooks bookkeeping a real Stripe payment gets)
+// and sends absolutely nothing -- no email, no SMS, no receipt. That's
+// the whole point: unlike resendInvoice above, this never touches
+// sendInvoiceEmail/sendInvoiceSms/sendAutopayReceiptEmail/Sms at all.
+export async function markInvoicePaidManually(
+  invoiceId: string,
+  method: string
+): Promise<MarkInvoicePaidManuallyResult> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    return { error: "You must be signed in." };
+  }
+
+  const invoice = await getInvoiceById(invoiceId);
+
+  if (!invoice) {
+    return { error: "Invoice not found." };
+  }
+
+  if (invoice.status === "paid") {
+    return { error: "This invoice is already marked paid." };
+  }
+
+  if (invoice.status === "void") {
+    return { error: "This invoice has been voided -- nothing to mark paid." };
+  }
+
+  const trimmedMethod = method.trim() || "Cash";
+
+  const result = await recordManualInvoicePayment({
+    invoiceId,
+    paidAt: new Date().toISOString(),
+    amount: invoice.total,
+    method: trimmedMethod,
+  });
+
+  if (!result.ok) {
+    return { error: result.error };
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "invoice",
+    entityId: invoice.id,
+    entityLabel: `${invoice.customerName ?? "Customer"} — Invoice ${invoice.invoiceNumber}`,
+    after: { status: "paid", manuallyMarkedPaid: true, method: trimmedMethod },
+  });
+
+  revalidatePath("/invoices");
+  revalidatePath("/invoices/create");
+
+  return { error: null };
 }
 
 export type DismissVisitInvoiceResult = { error: string | null };

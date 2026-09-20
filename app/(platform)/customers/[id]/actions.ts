@@ -21,7 +21,12 @@ import {
   updateContact,
 } from "@/lib/customerContacts";
 import { addAddress, deleteAddress } from "@/lib/customerAddresses";
-import { resendInvoice, type ResendInvoiceResult } from "../../invoices/actions";
+import {
+  resendInvoice,
+  type ResendInvoiceResult,
+  markInvoicePaidManually,
+  type MarkInvoicePaidManuallyResult,
+} from "../../invoices/actions";
 import { isReferralSource } from "@/lib/referralSource";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
@@ -701,6 +706,24 @@ export async function resendCustomerInvoice(
   invoiceId: string
 ): Promise<ResendInvoiceResult> {
   const result = await resendInvoice(invoiceId);
+
+  if (!result.error) {
+    revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+  }
+
+  return result;
+}
+
+// Same thin-wrapper pattern as resendCustomerInvoice above, for the "paid
+// in cash" escape hatch (invoices/actions.ts's markInvoicePaidManually)
+// -- just adds the customer-page revalidation so the invoice's status
+// badge flips to Paid immediately without a manual refresh.
+export async function markCustomerInvoicePaidManually(
+  jobberClientId: string,
+  invoiceId: string,
+  method: string
+): Promise<MarkInvoicePaidManuallyResult> {
+  const result = await markInvoicePaidManually(invoiceId, method);
 
   if (!result.error) {
     revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
