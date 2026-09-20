@@ -1831,9 +1831,18 @@ export default async function CustomerDetailPage({
 
           <div className="w-full rounded-2xl bg-white p-5 shadow lg:flex-1">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
-                Profitability · {profitTimeframeLabel}
-              </p>
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <p className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
+                  Profitability · {profitTimeframeLabel}
+                </p>
+
+                {profitSummary.invoiceCount > 0 && (
+                  <p className="text-[11px] text-[#6b705c]">
+                    Based on {profitSummary.invoiceCount} invoice
+                    {profitSummary.invoiceCount === 1 ? "" : "s"}
+                  </p>
+                )}
+              </div>
 
               <ProfitTimeframePicker
                 current={profitTimeframe}
@@ -1919,16 +1928,6 @@ export default async function CustomerDetailPage({
                 )}
               </div>
             </div>
-
-            {profitMarginPct !== null &&
-              !meetsProfitTarget &&
-              targetPricePerInvoice !== null && (
-                <p className="mt-4 border-t border-[#f0eee6] pt-3 text-[11px] text-[#6b705c]">
-                  Based on {profitSummary.invoiceCount} invoice
-                  {profitSummary.invoiceCount === 1 ? "" : "s"}{" "}
-                  {profitTimeframeLabel.toLowerCase()}, holding costs steady.
-                </p>
-              )}
           </div>
         </header>
 
