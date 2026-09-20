@@ -1766,10 +1766,10 @@ export default async function CustomerDetailPage({
             </p>
           </div>
 
-          <div className="w-full shrink-0 rounded-2xl bg-white p-5 shadow lg:w-72">
-            <div className="flex items-center justify-between gap-2">
+          <div className="w-full rounded-2xl bg-white p-5 shadow lg:flex-1">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
-                Profitability
+                Profitability · {profitTimeframeLabel}
               </p>
 
               <ProfitTimeframePicker
@@ -1778,72 +1778,83 @@ export default async function CustomerDetailPage({
               />
             </div>
 
-            <p className="mt-3 text-xs font-bold text-[#9c7a20]">
-              Estimated Profit
-            </p>
-            <p
-              className={`mt-0.5 text-2xl font-bold ${
-                estimatedProfit >= 0 ? "text-green-700" : "text-red-600"
-              }`}
-            >
-              {formatCurrency(estimatedProfit)}
-            </p>
+            <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+              <div>
+                <p className="text-xs font-bold text-[#9c7a20]">
+                  Estimated Profit
+                </p>
+                <p
+                  className={`mt-0.5 text-2xl font-bold ${
+                    estimatedProfit >= 0 ? "text-green-700" : "text-red-600"
+                  }`}
+                >
+                  {formatCurrency(estimatedProfit)}
+                </p>
+              </div>
 
-            <p className="mt-3 text-xs font-bold text-[#9c7a20]">
-              Profit Margin
-            </p>
-            <p
-              className={`mt-0.5 text-lg font-bold ${
-                profitMarginPct === null
-                  ? "text-[#6b705c]"
-                  : meetsProfitTarget
-                    ? "text-green-700"
-                    : "text-red-600"
-              }`}
-            >
-              {profitMarginPct !== null ? `${profitMarginPct.toFixed(1)}%` : "—"}
-            </p>
+              <div>
+                <p className="text-xs font-bold text-[#9c7a20]">
+                  Profit Margin
+                </p>
+                <p
+                  className={`mt-0.5 text-2xl font-bold ${
+                    profitMarginPct === null
+                      ? "text-[#6b705c]"
+                      : meetsProfitTarget
+                        ? "text-green-700"
+                        : "text-red-600"
+                  }`}
+                >
+                  {profitMarginPct !== null
+                    ? `${profitMarginPct.toFixed(1)}%`
+                    : "—"}
+                </p>
+              </div>
 
-            <div className="mt-3 border-t border-[#f0eee6] pt-3">
-              {profitMarginPct === null ? (
-                <p className="text-xs text-[#6b705c]">
-                  No invoices {profitTimeframeLabel.toLowerCase()}.
-                </p>
-              ) : meetsProfitTarget ? (
-                <p className="text-xs text-[#6b705c]">
-                  Already at or above the {TARGET_PROFIT_MARGIN_PCT}% target{" "}
-                  {profitTimeframeLabel.toLowerCase()}.
-                </p>
-              ) : targetPricePerInvoice !== null ? (
-                <>
-                  <p className="text-xs font-bold text-[#9c7a20]">
-                    Price Needed for {TARGET_PROFIT_MARGIN_PCT}%
+              <div className="col-span-2 sm:col-span-1">
+                {profitMarginPct === null ? (
+                  <p className="text-xs text-[#6b705c]">
+                    No invoices {profitTimeframeLabel.toLowerCase()}.
                   </p>
-                  <p className="mt-0.5 text-lg font-bold">
-                    {formatCurrencyPrecise(targetPricePerInvoice)}
-                    <span className="text-xs font-normal text-[#6b705c]">
-                      {" "}
-                      / visit
-                    </span>
+                ) : meetsProfitTarget ? (
+                  <>
+                    <p className="text-xs font-bold text-[#9c7a20]">
+                      {TARGET_PROFIT_MARGIN_PCT}% Target
+                    </p>
+                    <p className="mt-0.5 text-2xl font-bold text-green-700">
+                      Already met
+                    </p>
+                  </>
+                ) : targetPricePerInvoice !== null ? (
+                  <>
+                    <p className="text-xs font-bold text-[#9c7a20]">
+                      Price Needed for {TARGET_PROFIT_MARGIN_PCT}%
+                    </p>
+                    <p className="mt-0.5 text-2xl font-bold">
+                      {formatCurrencyPrecise(targetPricePerInvoice)}
+                      <span className="text-xs font-normal text-[#6b705c]">
+                        {" "}
+                        / visit
+                      </span>
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-xs text-[#6b705c]">
+                    Not enough cost data logged yet.
                   </p>
-                  <p className="mt-1 text-[11px] text-[#6b705c]">
-                    Based on {profitSummary.invoiceCount} invoice
-                    {profitSummary.invoiceCount === 1 ? "" : "s"}{" "}
-                    {profitTimeframeLabel.toLowerCase()}, holding costs
-                    steady.
-                  </p>
-                </>
-              ) : (
-                <p className="text-xs text-[#6b705c]">
-                  Not enough cost data logged {profitTimeframeLabel.toLowerCase()}{" "}
-                  to estimate a target price.
-                </p>
-              )}
+                )}
+              </div>
             </div>
 
-            <p className="mt-3 text-[11px] text-[#6b705c]">
-              {profitTimeframeLabel}
-            </p>
+            {profitMarginPct !== null &&
+              !meetsProfitTarget &&
+              targetPricePerInvoice !== null && (
+                <p className="mt-4 border-t border-[#f0eee6] pt-3 text-[11px] text-[#6b705c]">
+                  Based on {profitSummary.invoiceCount} invoice
+                  {profitSummary.invoiceCount === 1 ? "" : "s"}{" "}
+                  {profitTimeframeLabel.toLowerCase()}, holding costs steady.
+                </p>
+              )}
           </div>
         </header>
 
