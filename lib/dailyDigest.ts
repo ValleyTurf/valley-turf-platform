@@ -303,15 +303,51 @@ function isUnpaidInvoiceStatus(status: string | null): boolean {
   return !upper.includes("PAID") && !upper.includes("VOID") && upper !== "DRAFT";
 }
 
-async function countUnpaidInvoices(): Promise<UnpaidInvoicesSection> {
-  const { data } = await supabaseServer
-    .from("jobber_invoices")
-    .select("jobber_invoice_id, customer_name, invoice_number, status, total, due_date")
-    .not("jobber_client_id", "is", null);
+// Ryan (2026-09-20): confirmed via a one-off diagnostic that
+// jobber_invoices has grown past Supabase/PostgREST's response max-rows
+// cap (1250 real rows, cap returning exactly 1000) -- a single unordered,
+// unpaginated select like this one silently truncates at that cap, and
+// *which* 1000 rows survive isn't stable across calls (it follows
+// whatever scan order Postgres happens to pick, not any guaranteed
+// ordering), so some invoices -- disproportionately native ones, since
+// they're a small fraction of the table -- would randomly vanish from
+// this count from one run to the next despite nothing about them
+// changing. Paginated in fixed PAGE_SIZE chunks, ordered by the unique
+// jobber_invoice_id so each page is a stable, non-overlapping slice, to
+// make sure every row in the table actually gets counted.
+const JOBBER_INVOICES_PAGE_SIZE = 1000;
 
-  const invoices = ((data ?? []) as InvoiceRow[]).filter((invoice) =>
-    isUnpaidInvoiceStatus(invoice.status)
-  );
+async function fetchAllUnpaidInvoiceCandidates(): Promise<InvoiceRow[]> {
+  const rows: InvoiceRow[] = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabaseServer
+      .from("jobber_invoices")
+      .select("jobber_invoice_id, customer_name, invoice_number, status, total, due_date")
+      .not("jobber_client_id", "is", null)
+      .order("jobber_invoice_id", { ascending: true })
+      .range(from, from + JOBBER_INVOICES_PAGE_SIZE - 1);
+
+    if (error) {
+      console.error("Failed to page through jobber_invoices for the daily digest:", error.message);
+      break;
+    }
+
+    const page = (data ?? []) as InvoiceRow[];
+    rows.push(...page);
+
+    if (page.length < JOBBER_INVOICES_PAGE_SIZE) break;
+    from += JOBBER_INVOICES_PAGE_SIZE;
+  }
+
+  return rows;
+}
+
+async function countUnpaidInvoices(): Promise<UnpaidInvoicesSection> {
+  const allCandidates = await fetchAllUnpaidInvoiceCandidates();
+
+  const invoices = allCandidates.filter((invoice) => isUnpaidInvoiceStatus(invoice.status));
 
   // Oldest due date first -- the ones most worth a look land at the top
   // of the sample list rather than in whatever order Supabase happened
