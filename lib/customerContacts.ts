@@ -6,7 +6,7 @@
 // optionally flagged to also receive those same automated sends.
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
-import { normalizePhone } from "@/lib/matching";
+import { normalizePhone, normalizeEmail } from "@/lib/matching";
 
 export type CustomerContact = {
   id: string;
@@ -142,6 +142,36 @@ export async function deleteContact(
 // receives_notifications, deduped and with blanks filtered out. Ryan's
 // explicit call (see migration 060): additional contacts are
 // reference-only by default, not an all-or-nothing broadcast.
+// Ryan (2026-09-20): Patrick Durkin got the same overdue-invoice text
+// twice -- his phone number was on file both as his primary
+// customers.phone and as a flagged additional contact with the same
+// number typed in a different format ("+14806620273" vs. some other
+// spacing/punctuation), and a Set of raw strings doesn't catch that as a
+// duplicate. Deduped by normalizePhone/normalizeEmail's canonical form
+// instead, keeping whichever as-entered string was seen first for that
+// canonical value -- so the number actually dialed/emailed is unchanged,
+// it just isn't repeated. Falls back to the raw string as the dedup key
+// when normalization fails (an unparseable phone/email) so those still
+// get attempted exactly as before, just deduped less precisely.
+function dedupedContactValues(
+  primary: string | null,
+  flaggedValues: (string | null)[],
+  normalize: (value: string | null | undefined) => string | null
+): string[] {
+  const byNormalized = new Map<string, string>();
+
+  function add(value: string | null) {
+    if (!value) return;
+    const key = normalize(value) ?? value;
+    if (!byNormalized.has(key)) byNormalized.set(key, value);
+  }
+
+  add(primary);
+  for (const value of flaggedValues) add(value);
+
+  return Array.from(byNormalized.values());
+}
+
 export async function getNotificationRecipients(
   jobberClientId: string,
   primaryEmail: string | null,
@@ -150,18 +180,18 @@ export async function getNotificationRecipients(
   const contacts = await listContactsForCustomer(jobberClientId);
   const flagged = contacts.filter((contact) => contact.receivesNotifications);
 
-  const emails = new Set<string>();
-  const phones = new Set<string>();
-
-  if (primaryEmail) emails.add(primaryEmail);
-  if (primaryPhone) phones.add(primaryPhone);
-
-  for (const contact of flagged) {
-    if (contact.email) emails.add(contact.email);
-    if (contact.phone) phones.add(contact.phone);
-  }
-
-  return { emails: Array.from(emails), phones: Array.from(phones) };
+  return {
+    emails: dedupedContactValues(
+      primaryEmail,
+      flagged.map((c) => c.email),
+      normalizeEmail
+    ),
+    phones: dedupedContactValues(
+      primaryPhone,
+      flagged.map((c) => c.phone),
+      normalizePhone
+    ),
+  };
 }
 
 // Reverse lookup for inbound texts (app/api/webhooks/twilio/route.ts) --
