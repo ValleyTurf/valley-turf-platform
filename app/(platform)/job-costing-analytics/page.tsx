@@ -298,7 +298,7 @@ export default async function JobCostingAnalyticsPage({
   const params = await searchParams;
   const timeframe: Timeframe = isTimeframe(params.timeframe)
     ? params.timeframe
-    : "all-time";
+    : "this-month";
 
   const { startDate, endDate, label } = getDateRange(
     timeframe,
