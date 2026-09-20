@@ -335,12 +335,20 @@ export default async function ReactivationPage({
   const now = new Date();
   const today = toPhoenixDateString(now.toISOString()) ?? now.toISOString().slice(0, 10);
 
-  // Every customer plus their invoice-derived stats, then narrowed down
-  // to "belongs in the pipeline at all": either a fresh candidate
-  // (isReactivationCandidate — same rule Customer Intelligence uses) or
-  // already being actively worked (isActiveWorkflowStatus), as long as
-  // they're not recurring-service or permanently excluded either way.
-  const pipeline: PipelineEntry[] = allCustomers
+  // Every customer plus their invoice-derived stats. Kept as its own
+  // unfiltered array (allPipelineEntries) -- not just the eligibility-
+  // filtered `pipeline` below -- because the "Win-Back, Confirmed" stat
+  // further down needs to see EVERYONE ever contacted, including anyone
+  // who's since gone recurring, gotten permanently excluded, or been
+  // marked "removed". Ryan (2026-09-20): Debbie Edwards was won back
+  // (a real invoice landed after her contact) and then correctly marked
+  // "Removed" once the pipeline had done its job -- but the stat read
+  // 0% anyway, because it was computed from `pipeline`, which already
+  // drops "removed" entries at the filter below. That's backwards: a
+  // customer moving to "removed" specifically because they came back is
+  // the win this stat exists to count, not a reason to drop them from
+  // it. See the win-back computation lower in this function.
+  const allPipelineEntries: PipelineEntry[] = allCustomers
     .filter((customer) => customer.jobber_client_id)
     .map((customer) => {
       const clientInvoices = (
@@ -375,23 +383,31 @@ export default async function ReactivationPage({
           clientInvoices.map((invoice) => invoice.issue_date)
         ),
       };
-    })
-    .filter((entry) => {
-      const clientId = entry.customer.jobber_client_id as string;
-
-      if (recurringClientIds.has(clientId)) return false;
-      if (excludedClientIds.has(clientId)) return false;
-      if (entry.status === "removed") return false;
-
-      return (
-        isReactivationCandidate({
-          invoiceCount: entry.invoiceCount,
-          daysSinceLastInvoice: entry.daysSinceLastInvoice,
-          isRecurring: false,
-          isExcluded: false,
-        }) || isActiveWorkflowStatus(entry.status)
-      );
     });
+
+  // Narrowed down to "belongs in the active pipeline view": either a
+  // fresh candidate (isReactivationCandidate — same rule Customer
+  // Intelligence uses) or already being actively worked
+  // (isActiveWorkflowStatus), as long as they're not recurring-service,
+  // permanently excluded, or already marked removed. This is what
+  // drives the visible list/buckets/filter counts below -- the win-back
+  // stat deliberately does NOT use this filtered set (see above).
+  const pipeline: PipelineEntry[] = allPipelineEntries.filter((entry) => {
+    const clientId = entry.customer.jobber_client_id as string;
+
+    if (recurringClientIds.has(clientId)) return false;
+    if (excludedClientIds.has(clientId)) return false;
+    if (entry.status === "removed") return false;
+
+    return (
+      isReactivationCandidate({
+        invoiceCount: entry.invoiceCount,
+        daysSinceLastInvoice: entry.daysSinceLastInvoice,
+        isRecurring: false,
+        isExcluded: false,
+      }) || isActiveWorkflowStatus(entry.status)
+    );
+  });
 
   const filteredPipeline = pipeline.filter((entry) =>
     matchesReactivationFilter(entry.status, activeFilter)
@@ -488,8 +504,13 @@ export default async function ReactivationPage({
   // status), how many have a real invoice dated after that contact.
   // Deliberately separate from "Cleaning Scheduled" above -- that's a
   // self-reported disposition staff can set without a job ever actually
-  // landing, this is billed proof it did.
-  const everContactedEntries = pipeline.filter(
+  // landing, this is billed proof it did. Built from allPipelineEntries,
+  // not the filtered `pipeline` -- a customer who went recurring, got
+  // excluded, or was marked "removed" after coming back is still a
+  // contact who was won back, and dropping them here would make the
+  // stat undercount its own best outcomes (see the comment on
+  // allPipelineEntries above for the Debbie Edwards case this fixes).
+  const everContactedEntries = allPipelineEntries.filter(
     (entry) => entry.customer.reactivation_last_contacted_at !== null
   );
 
