@@ -14,7 +14,6 @@ import {
   removeImportedJobNotePhoto,
   generateAutopayLink,
   toggleAutopay,
-  logPhoneCall,
   updateVisitNoteText,
   deleteVisitNoteAction,
 } from "./actions";
@@ -43,6 +42,7 @@ import ResendInvoiceButton from "./ResendInvoiceButton";
 import MarkPaidButton from "./MarkPaidButton";
 import ProfitTimeframePicker from "./ProfitTimeframePicker";
 import Pagination from "./Pagination";
+import { LogCallForm } from "./LogCallForm";
 import {
   toNumber,
   formatCurrency,
@@ -2491,52 +2491,10 @@ export default async function CustomerDetailPage({
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">Contact History</h2>
 
-              <form
-                action={logPhoneCall.bind(null, decodedId)}
-                className="mt-4 space-y-2 rounded-xl border border-[#e7e2d5] p-3"
-              >
-                <p className="text-xs font-bold text-[#9c7a20]">Log a Call</p>
-
-                <div className="flex flex-wrap items-center gap-3">
-                  <label className="flex items-center gap-1.5 text-xs">
-                    <input
-                      type="radio"
-                      name="direction"
-                      value="outbound"
-                      defaultChecked
-                      className="h-3.5 w-3.5"
-                    />
-                    We called them
-                  </label>
-                  <label className="flex items-center gap-1.5 text-xs">
-                    <input
-                      type="radio"
-                      name="direction"
-                      value="inbound"
-                      className="h-3.5 w-3.5"
-                    />
-                    They called us
-                  </label>
-                </div>
-
-                <textarea
-                  name="summary"
-                  rows={2}
-                  placeholder="Quick summary of what was discussed"
-                  className="w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
-                />
-
-                <button
-                  type="submit"
-                  className="rounded-lg border border-[#174734] px-3 py-1.5 text-xs font-bold text-[#174734] transition hover:bg-[#f7f6f1]"
-                >
-                  Save Call
-                </button>
-              </form>
-
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-4 flex flex-wrap gap-2">
                 <ComposeEmailForm jobberClientId={decodedId} />
                 <ComposeSmsForm jobberClientId={decodedId} />
+                <LogCallForm jobberClientId={decodedId} />
               </div>
 
               <div className="mt-4 max-h-[500px] space-y-2 overflow-y-auto border-t border-[#e7e2d5] pt-4 pr-1">
