@@ -28,6 +28,25 @@ async function findCanonicalServiceName(rawName: string): Promise<string> {
   return existing ?? trimmed;
 }
 
+// Same case-insensitive matching, but against service_included_items
+// instead — a service can have included items set before it ever gets
+// a price row (or vice versa), so this can't just delegate to
+// findCanonicalServiceName above.
+async function findCanonicalIncludedItemsServiceName(
+  rawName: string
+): Promise<string> {
+  const trimmed = rawName.trim();
+
+  const { data } = await supabaseServer
+    .from("service_included_items")
+    .select("service_name")
+    .ilike("service_name", trimmed)
+    .limit(1);
+
+  const existing = (data as ServicePricingRow[] | null)?.[0]?.service_name;
+  return existing ?? trimmed;
+}
+
 // Saves one service's full price grid in one call: a value present for
 // a range upserts that row, a blank value deletes it if it existed
 // (this is persistent pricing config, not a per-visit usage log, so
@@ -128,6 +147,99 @@ export async function deleteServicePricing(serviceName: string): Promise<{ error
     entityType: "service_pricing",
     entityId: trimmed,
     entityLabel: `${trimmed} pricing`,
+  });
+
+  revalidatePath("/quotes/pricing");
+  revalidatePath("/quotes/new");
+
+  return { error: null };
+}
+
+// Saves one service's "What's Included" bullet list — one item per
+// line, in the order typed. Replace-all (delete then insert) rather
+// than a diff: the list is short, the sort_order matters, and this
+// mirrors the same "blank clears it" mental model as
+// saveServicePricing above (an empty textarea here removes the whole
+// list for that service).
+export async function saveIncludedItems(
+  rawServiceName: string,
+  itemsText: string
+): Promise<{ error: string | null }> {
+  const actor = await getCurrentUser();
+  if (!actor) return { error: "You must be signed in." };
+
+  const trimmedName = rawServiceName.trim();
+  if (!trimmedName) return { error: "Service name is required." };
+
+  const serviceName = await findCanonicalIncludedItemsServiceName(trimmedName);
+
+  const items = itemsText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const { error: deleteError } = await supabaseServer
+    .from("service_included_items")
+    .delete()
+    .eq("service_name", serviceName);
+
+  if (deleteError) {
+    return { error: `Failed to save included items: ${deleteError.message}` };
+  }
+
+  if (items.length > 0) {
+    const { error: insertError } = await supabaseServer
+      .from("service_included_items")
+      .insert(
+        items.map((item, index) => ({
+          service_name: serviceName,
+          item,
+          sort_order: index,
+        }))
+      );
+
+    if (insertError) {
+      return { error: `Failed to save included items: ${insertError.message}` };
+    }
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "service_included_items",
+    entityId: serviceName,
+    entityLabel: `${serviceName} included items`,
+    after: { items },
+  });
+
+  revalidatePath("/quotes/pricing");
+  revalidatePath("/quotes/new");
+
+  return { error: null };
+}
+
+export async function deleteIncludedItems(serviceName: string): Promise<{ error: string | null }> {
+  const actor = await getCurrentUser();
+  if (!actor) return { error: "You must be signed in." };
+
+  const trimmed = serviceName.trim();
+  if (!trimmed) return { error: "Missing service." };
+
+  const { error } = await supabaseServer
+    .from("service_included_items")
+    .delete()
+    .eq("service_name", trimmed);
+
+  if (error) {
+    return { error: `Failed to delete included items: ${error.message}` };
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "delete",
+    entityType: "service_included_items",
+    entityId: trimmed,
+    entityLabel: `${trimmed} included items`,
   });
 
   revalidatePath("/quotes/pricing");

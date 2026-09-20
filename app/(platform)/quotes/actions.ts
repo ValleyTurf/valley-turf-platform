@@ -77,6 +77,49 @@ function parseTiers(formData: FormData): ParsedTier[] {
   }).filter((tier): tier is ParsedTier => tier !== null);
 }
 
+type ParsedAddon = {
+  name: string;
+  price: number;
+  sort_order: number;
+};
+
+// Add-on line items (Turf Size + What's Included restructure, 2026-09).
+// NewQuoteForm.tsx serializes its repeatable add-on rows as a single
+// JSON-array hidden input (`addons`) rather than indexed field names —
+// simpler for a variable-length list than the tier_{key}_* convention
+// above, which works because the tier set is always exactly three.
+// Rows missing a name or a valid non-negative price are dropped rather
+// than rejecting the whole quote — an addon is a nice-to-have
+// breakdown, not something worth blocking quote creation over.
+function parseAddons(formData: FormData): ParsedAddon[] {
+  const raw = formData.get("addons");
+  if (typeof raw !== "string" || !raw.trim()) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+
+  if (!Array.isArray(parsed)) return [];
+
+  const addons: ParsedAddon[] = [];
+  parsed.forEach((entry, index) => {
+    if (!entry || typeof entry !== "object") return;
+    const name = typeof (entry as { name?: unknown }).name === "string"
+      ? (entry as { name: string }).name.trim()
+      : "";
+    const price = Number((entry as { price?: unknown }).price);
+
+    if (!name || !Number.isFinite(price) || price < 0) return;
+
+    addons.push({ name, price, sort_order: index });
+  });
+
+  return addons;
+}
+
 export async function createQuote(
   _prevState: ActionState,
   formData: FormData
@@ -101,6 +144,7 @@ export async function createQuote(
 
   let priceTotal: number | null = null;
   let tiers: ParsedTier[] = [];
+  let addons: ParsedAddon[] = [];
 
   if (pricingMode === "tiered") {
     tiers = parseTiers(formData);
@@ -116,6 +160,8 @@ export async function createQuote(
     if (!Number.isFinite(priceTotal) || priceTotal < 0) {
       return { error: "Enter a valid, non-negative price." };
     }
+
+    addons = parseAddons(formData);
   }
 
   const row = {
@@ -126,6 +172,7 @@ export async function createQuote(
     recipient_phone: cleanText(formData.get("recipient_phone")),
     recipient_address: cleanText(formData.get("recipient_address")),
     service_category: cleanText(formData.get("service_category")),
+    turf_size_range: cleanText(formData.get("turf_size_range")),
     description,
     price_total: priceTotal,
     pricing_mode: pricingMode,
@@ -156,13 +203,23 @@ export async function createQuote(
     }
   }
 
+  if (addons.length > 0) {
+    const { error: addonsError } = await supabaseServer.from("quote_addons").insert(
+      addons.map((addon) => ({ ...addon, quote_id: data.id }))
+    );
+
+    if (addonsError) {
+      return { error: `Quote created, but add-ons failed to save: ${addonsError.message}` };
+    }
+  }
+
   await recordAuditLog({
     actor,
     action: "create",
     entityType: "quote",
     entityId: data?.id ?? null,
     entityLabel: `Quote for ${recipientName}`,
-    after: pricingMode === "tiered" ? { ...row, tiers } : row,
+    after: pricingMode === "tiered" ? { ...row, tiers } : { ...row, addons },
   });
 
   revalidatePath("/quotes");

@@ -4,7 +4,9 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { groupByService, TURF_SIZE_RANGES, type ServicePriceRow } from "@/lib/servicePricing";
+import { groupIncludedItems, type IncludedItemRow } from "@/lib/serviceIncludedItems";
 import PricingGrid, { type PricingGroup } from "./PricingGrid";
+import IncludedItemsGrid, { type IncludedItemsGroup } from "./IncludedItemsGrid";
 
 type ServicePricingRow = {
   service_name: string;
@@ -12,11 +14,25 @@ type ServicePricingRow = {
   price: number | string;
 };
 
+type IncludedItemsQueryRow = {
+  service_name: string;
+  item: string;
+  sort_order: number;
+};
+
 export default async function ServicePricingPage() {
-  const { data, error } = await supabaseServer
-    .from("service_pricing")
-    .select("service_name, turf_size_range, price")
-    .order("service_name", { ascending: true });
+  const [pricingResult, includedItemsResult] = await Promise.all([
+    supabaseServer
+      .from("service_pricing")
+      .select("service_name, turf_size_range, price")
+      .order("service_name", { ascending: true }),
+    supabaseServer
+      .from("service_included_items")
+      .select("service_name, item, sort_order")
+      .order("service_name", { ascending: true }),
+  ]);
+
+  const { data, error } = pricingResult;
 
   const rows: ServicePriceRow[] = ((data ?? []) as ServicePricingRow[]).map((row) => ({
     serviceName: row.service_name,
@@ -36,6 +52,18 @@ export default async function ServicePricingPage() {
       return { serviceName, prices };
     }
   );
+
+  const includedItemRows: IncludedItemRow[] = ((includedItemsResult.data ??
+    []) as IncludedItemsQueryRow[]).map((row) => ({
+    serviceName: row.service_name,
+    item: row.item,
+    sortOrder: row.sort_order,
+  }));
+
+  const groupedItems = groupIncludedItems(includedItemRows);
+  const initialItemGroups: IncludedItemsGroup[] = Array.from(
+    groupedItems.entries()
+  ).map(([serviceName, items]) => ({ serviceName, items }));
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
@@ -79,6 +107,27 @@ export default async function ServicePricingPage() {
               No services priced yet — add one above to get started.
             </p>
           )}
+        </section>
+
+        <section className="mt-12">
+          <h2 className="text-2xl font-bold">What&apos;s Included</h2>
+          <p className="mt-2 max-w-2xl text-[#6b705c]">
+            The bulleted list each service shows on a flat-price quote —
+            e.g. &quot;Full Cleaning&quot; lists Turf Fluff Up, Edge
+            Cleaning, and so on. The same list for every turf size; only
+            the price above changes with size.
+          </p>
+
+          <div className="mt-6">
+            <IncludedItemsGrid initialGroups={initialItemGroups} />
+
+            {initialItemGroups.length === 0 && (
+              <p className="mt-2 text-sm text-[#6b705c]">
+                No included-items lists set yet — add one above to get
+                started.
+              </p>
+            )}
+          </div>
         </section>
       </div>
     </main>

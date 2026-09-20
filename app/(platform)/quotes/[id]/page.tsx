@@ -14,9 +14,12 @@ import {
   canEditQuote,
   isQuoteStatus,
   sortTiers,
+  sortAddons,
   type QuoteStatus,
   type QuoteTier,
+  type QuoteAddon,
 } from "@/lib/quotes";
+import { findIncludedItems } from "@/lib/serviceIncludedItems";
 import {
   markQuoteStatus,
   deleteDraftQuote,
@@ -33,6 +36,7 @@ type QuoteDetail = {
   recipient_phone: string | null;
   recipient_address: string | null;
   service_category: string | null;
+  turf_size_range: string | null;
   description: string;
   price_total: number | string | null;
   pricing_mode: "flat" | "tiered";
@@ -49,6 +53,12 @@ type QuoteDetail = {
   jobber_job_number: string | null;
   job_creation_error: string | null;
   job_creation_attempted_at: string | null;
+};
+
+type IncludedItemsQueryRow = {
+  service_name: string;
+  item: string;
+  sort_order: number;
 };
 
 const STATUS_BADGE_CLASSES: Record<QuoteStatus, string> = {
@@ -77,7 +87,7 @@ export default async function QuoteDetailPage({
   const { data, error } = await supabaseServer
     .from("quotes")
     .select(
-      "id, quote_number, customer_id, lead_id, recipient_name, recipient_email, recipient_phone, recipient_address, service_category, description, price_total, pricing_mode, selected_tier_id, status, expires_at, viewed_at, responded_at, response_note, public_token, created_by_name, created_at, jobber_job_id, jobber_job_number, job_creation_error, job_creation_attempted_at"
+      "id, quote_number, customer_id, lead_id, recipient_name, recipient_email, recipient_phone, recipient_address, service_category, turf_size_range, description, price_total, pricing_mode, selected_tier_id, status, expires_at, viewed_at, responded_at, response_note, public_token, created_by_name, created_at, jobber_job_id, jobber_job_number, job_creation_error, job_creation_attempted_at"
     )
     .eq("id", id)
     .single();
@@ -99,6 +109,33 @@ export default async function QuoteDetailPage({
       .select("id, quote_id, tier_key, name, price, features, is_featured, display_order")
       .eq("quote_id", quote.id);
     tiers = sortTiers((tierRows ?? []) as QuoteTier[]);
+  }
+
+  let addons: QuoteAddon[] = [];
+  let whatsIncluded: string[] = [];
+  if (quote.pricing_mode === "flat") {
+    const [{ data: addonRows }, { data: includedRows }] = await Promise.all([
+      supabaseServer
+        .from("quote_addons")
+        .select("id, quote_id, name, price, sort_order")
+        .eq("quote_id", quote.id),
+      quote.service_category
+        ? supabaseServer
+            .from("service_included_items")
+            .select("service_name, item, sort_order")
+            .ilike("service_name", quote.service_category)
+        : Promise.resolve({ data: [] as IncludedItemsQueryRow[] }),
+    ]);
+
+    addons = sortAddons((addonRows ?? []) as QuoteAddon[]);
+    whatsIncluded = findIncludedItems(
+      ((includedRows ?? []) as IncludedItemsQueryRow[]).map((row) => ({
+        serviceName: row.service_name,
+        item: row.item,
+        sortOrder: row.sort_order,
+      })),
+      quote.service_category ?? ""
+    );
   }
 
   const displayStatus = computeDisplayStatus(quote.status, quote.expires_at);
@@ -153,7 +190,10 @@ export default async function QuoteDetailPage({
               <p className="text-xs font-bold text-[#9c7a20]">
                 Service Category
               </p>
-              <p className="mt-1">{quote.service_category || "General"}</p>
+              <p className="mt-1">
+                {quote.service_category || "General"}
+                {quote.turf_size_range ? ` · ${quote.turf_size_range} sq ft` : ""}
+              </p>
             </div>
             <div>
               <p className="text-xs font-bold text-[#9c7a20]">Contact</p>
@@ -186,6 +226,35 @@ export default async function QuoteDetailPage({
               </p>
             </div>
           </div>
+
+          {quote.pricing_mode === "flat" && whatsIncluded.length > 0 && (
+            <div className="mt-6 border-t border-[#eee9dc] pt-6">
+              <p className="text-xs font-bold text-[#9c7a20]">
+                What&apos;s Included
+              </p>
+              <ul className="mt-2 space-y-1 text-sm text-[#174734]">
+                {whatsIncluded.map((item, index) => (
+                  <li key={index}>• {item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {quote.pricing_mode === "flat" && addons.length > 0 && (
+            <div className="mt-6 border-t border-[#eee9dc] pt-6">
+              <p className="text-xs font-bold text-[#9c7a20]">Add-ons</p>
+              <ul className="mt-2 space-y-1 text-sm text-[#174734]">
+                {addons.map((addon) => (
+                  <li key={addon.id} className="flex justify-between gap-4">
+                    <span>• {addon.name}</span>
+                    <span className="font-semibold">
+                      {formatCurrency(addon.price)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div className="mt-6 border-t border-[#eee9dc] pt-6">
             <p className="text-xs font-bold text-[#9c7a20]">Description</p>

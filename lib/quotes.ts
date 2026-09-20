@@ -125,3 +125,24 @@ export function sortTiers<T extends { display_order: number; tier_key: TierKey }
     return TIER_KEYS.indexOf(a.tier_key) - TIER_KEYS.indexOf(b.tier_key);
   });
 }
+
+// Priced add-on line items on a flat-pricing quote
+// (082_add_quote_turf_size_and_included_items.sql) — e.g. "Urine
+// Extraction, $35". Each one is a labeled piece of the quote's single
+// price_total, not an extra charge added on top of it — see
+// app/q/[token]/page.tsx for how the breakdown is rendered alongside
+// the total.
+export type QuoteAddon = {
+  id: string;
+  quote_id: string;
+  name: string;
+  price: number | string;
+  sort_order: number;
+};
+
+// No reliable ordering guarantee from a plain select, same reasoning as
+// sortTiers above — every place that renders addons sorts through this
+// first.
+export function sortAddons<T extends { sort_order: number }>(addons: T[]): T[] {
+  return [...addons].sort((a, b) => a.sort_order - b.sort_order);
+}

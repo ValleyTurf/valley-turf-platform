@@ -6,6 +6,7 @@ import { supabaseServer } from "@/lib/supabase-server";
 import NewQuoteForm from "./NewQuoteForm";
 import type { PickerCustomer, PickerLead } from "../QuoteRecipientPicker";
 import type { ServicePriceRow } from "@/lib/servicePricing";
+import type { IncludedItemRow } from "@/lib/serviceIncludedItems";
 
 type CustomerRow = {
   jobber_client_id: string;
@@ -26,6 +27,12 @@ type ServicePricingRow = {
   service_name: string;
   turf_size_range: string;
   price: number | string;
+};
+
+type IncludedItemsQueryRow = {
+  service_name: string;
+  item: string;
+  sort_order: number;
 };
 
 type LeadRow = {
@@ -89,7 +96,7 @@ export default async function NewQuotePage({ searchParams }: NewQuotePageProps) 
   const params = await searchParams;
   const preselectedLeadId = params.leadId?.trim() || null;
 
-  const [customersResult, leadsResult, servicePricingResult, preselectedLeadResult] = await Promise.all([
+  const [customersResult, leadsResult, servicePricingResult, includedItemsResult, preselectedLeadResult] = await Promise.all([
     supabaseServer
       .from("customers")
       .select(
@@ -109,6 +116,10 @@ export default async function NewQuotePage({ searchParams }: NewQuotePageProps) 
     supabaseServer
       .from("service_pricing")
       .select("service_name, turf_size_range, price"),
+
+    supabaseServer
+      .from("service_included_items")
+      .select("service_name, item, sort_order"),
 
     // A dedicated lookup rather than relying on the capped/recent-500
     // leads list above -- a lead reached via its own "Create Quote"
@@ -139,6 +150,13 @@ export default async function NewQuotePage({ searchParams }: NewQuotePageProps) 
     serviceName: row.service_name,
     turfSizeRange: row.turf_size_range,
     price: Number(row.price),
+  }));
+
+  const includedItems: IncludedItemRow[] = ((includedItemsResult.data ??
+    []) as IncludedItemsQueryRow[]).map((row) => ({
+    serviceName: row.service_name,
+    item: row.item,
+    sortOrder: row.sort_order,
   }));
 
   const leads: PickerLead[] = ((leadsResult.data ?? []) as LeadRow[]).map(
@@ -207,6 +225,7 @@ export default async function NewQuotePage({ searchParams }: NewQuotePageProps) 
             initialLead={initialLead}
             defaultExpiresAt={defaultExpiresAt()}
             servicePrices={servicePrices}
+            includedItems={includedItems}
           />
         </section>
       </div>
