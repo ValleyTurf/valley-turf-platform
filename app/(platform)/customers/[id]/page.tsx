@@ -2491,12 +2491,6 @@ export default async function CustomerDetailPage({
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">Contact History</h2>
 
-              <p className="mt-1 text-xs text-[#6b705c]">
-                Every email and text this app has sent this customer, plus
-                portal chat messages and any phone calls staff have logged.
-                Sorted newest first.
-              </p>
-
               <form
                 action={logPhoneCall.bind(null, decodedId)}
                 className="mt-4 space-y-2 rounded-xl border border-[#e7e2d5] p-3"
@@ -2639,10 +2633,6 @@ export default async function CustomerDetailPage({
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">Past Visits</h2>
 
-              <p className="mt-1 text-xs text-[#6b705c]">
-                Log materials, labor, fuel, and equipment per visit here.
-              </p>
-
               <div className="mt-3 space-y-2">
                 {pastVisitsPagination.pageItems.length > 0 ? (
                   pastVisitsPagination.pageItems.map((visit) => (
@@ -2740,14 +2730,6 @@ export default async function CustomerDetailPage({
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">Payment History</h2>
 
-              <p className="mt-1 text-xs text-[#6b705c]">
-                Actual money received, synced from Jobber — separate from
-                Recent Invoices below, which shows billing status. A
-                payment tied to a native invoice (this app, not Jobber)
-                can be clicked to view the receipt/invoice PDF that was
-                actually sent for it.
-              </p>
-
               <div className="mt-3 space-y-2">
                 {paymentsPagination.pageItems.length > 0 ? (
                   paymentsPagination.pageItems.map((payment) => {
@@ -2844,12 +2826,6 @@ export default async function CustomerDetailPage({
 
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">Autopay</h2>
-
-              <p className="mt-1 text-xs text-[#6b705c]">
-                Native autopay (not yet wired into the real invoice
-                flow -- see /invoice-test). Customers can also self-enroll
-                from their customer portal.
-              </p>
 
               <div className="mt-3 rounded-xl bg-[#f7f6f1] px-3 py-3">
                 {autopayPaymentMethod?.stripePaymentMethodId ? (

@@ -610,12 +610,6 @@ export default function CustomerContactsSection({
         <p className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
           Additional Contacts
         </p>
-        <p className="text-xs text-[#6b705c]">
-          For a second cell number, a spouse, or a property manager — the
-          main Email/Phone above stay the ones every automated message
-          uses unless you turn on &quot;Also send messages&quot; for one
-          of these.
-        </p>
 
         {contacts.length === 0 ? (
           <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
