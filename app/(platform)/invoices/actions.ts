@@ -752,6 +752,34 @@ export async function resendInvoice(invoiceId: string): Promise<ResendInvoiceRes
     return { error: "Couldn't deliver the invoice on any channel. Check the logs." };
   }
 
+  // Ryan (2026-09-20): a native invoice saved as a draft and delivered
+  // for the first time via this Resend button (see
+  // markInvoicePaidManually's own comment below for the Debbie Edwards
+  // case that pattern started from) never flipped out of "draft" --
+  // this function only ever sent the email/SMS and logged the resend,
+  // with nothing updating status. A still-"draft" invoice is explicitly
+  // excluded from "unpaid" everywhere that reads jobber_invoices.status
+  // directly (lib/dailyDigest.ts's isUnpaidInvoiceStatus, deliberately,
+  // since a draft nobody's seen yet shouldn't nag anyone) -- so an
+  // invoice actually delivered this way stayed invisible to the daily
+  // digest's unpaid-invoices section forever, looking paid when it
+  // was just never marked sent. Only touches status/sent_at/updated_at,
+  // not the rest of the mirror row (subject, total, etc. are already
+  // correct from the original mirror write at creation).
+  if (invoice.status === "draft") {
+    const sentAt = new Date().toISOString();
+
+    await supabaseServer
+      .from("invoices")
+      .update({ status: "sent", sent_at: sentAt })
+      .eq("id", invoice.id);
+
+    await supabaseServer
+      .from("jobber_invoices")
+      .update({ status: "sent", updated_at: sentAt })
+      .eq("jobber_invoice_id", `native-${invoice.id}`);
+  }
+
   await recordAuditLog({
     actor,
     action: "update",
