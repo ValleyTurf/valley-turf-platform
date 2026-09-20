@@ -41,6 +41,7 @@ import { listContactsForCustomer } from "@/lib/customerContacts";
 import { listAddressesForCustomer } from "@/lib/customerAddresses";
 import ResendInvoiceButton from "./ResendInvoiceButton";
 import MarkPaidButton from "./MarkPaidButton";
+import ProfitTimeframePicker from "./ProfitTimeframePicker";
 import {
   toNumber,
   formatCurrency,
@@ -48,6 +49,8 @@ import {
   formatDateOnly as formatDate,
   formatNumber,
 } from "@/lib/format";
+import { toPhoenixDateString } from "@/lib/phoenixDate";
+import { getCustomerJobCostingSummary } from "@/lib/jobCostingSummary";
 
 // Ryan (2026-09-17): Payment History and Native Invoices had no cap at
 // all -- for a long-tenured customer (his example: Sarah Gombert) that
@@ -59,9 +62,97 @@ import {
 // easy to bump if 5 feels too short in practice.
 const HISTORY_ROW_LIMIT = 5;
 
+// Profitability panel in the header (Ryan, 2026-09-20): job costing
+// (materials/labor/overhead) only started getting tracked in August
+// 2026, so a true "lifetime" Estimated Profit is misleading for any
+// customer with history before then -- this panel replaces that with a
+// figure scoped to a real window, defaulting to everything since
+// tracking started, with a picker for other windows. Lifetime Collected
+// stays where it was (Contact Information card) since that figure has
+// always been a true lifetime total, unaffected by when cost tracking
+// began.
+type ProfitTimeframe =
+  | "since-tracking"
+  | "this-month"
+  | "last-90-days"
+  | "ytd"
+  | "all-time";
+
+const PROFIT_TRACKING_START_DATE = "2026-08-01";
+
+// The margin Ryan wants every customer clearing -- also what "price
+// needed" below works backward from.
+const TARGET_PROFIT_MARGIN_PCT = 60;
+
+const PROFIT_TIMEFRAME_OPTIONS: { value: ProfitTimeframe; label: string }[] = [
+  { value: "since-tracking", label: "Since Aug 2026" },
+  { value: "this-month", label: "This Month" },
+  { value: "last-90-days", label: "Last 90 Days" },
+  { value: "ytd", label: "YTD" },
+  { value: "all-time", label: "All Time" },
+];
+
+function isProfitTimeframe(value: string | undefined): value is ProfitTimeframe {
+  return PROFIT_TIMEFRAME_OPTIONS.some((option) => option.value === value);
+}
+
+function getProfitDateRange(timeframe: ProfitTimeframe): {
+  startDate: string | null;
+  endDate: string;
+} {
+  const todayStr =
+    toPhoenixDateString(new Date().toISOString()) ?? PROFIT_TRACKING_START_DATE;
+  const [year, month, day] = todayStr.split("-").map(Number);
+  const today = new Date(Date.UTC(year, month - 1, day));
+
+  if (timeframe === "since-tracking") {
+    return { startDate: PROFIT_TRACKING_START_DATE, endDate: todayStr };
+  }
+
+  if (timeframe === "this-month") {
+    const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+    return { startDate: start.toISOString().slice(0, 10), endDate: todayStr };
+  }
+
+  if (timeframe === "last-90-days") {
+    const start = new Date(today);
+    start.setUTCDate(start.getUTCDate() - 89);
+    return { startDate: start.toISOString().slice(0, 10), endDate: todayStr };
+  }
+
+  if (timeframe === "ytd") {
+    const start = new Date(Date.UTC(today.getUTCFullYear(), 0, 1));
+    return { startDate: start.toISOString().slice(0, 10), endDate: todayStr };
+  }
+
+  return { startDate: null, endDate: todayStr }; // all-time
+}
+
+// Standard "work backward from a target margin" formula: to hit margin m
+// while holding total cost fixed, revenue needs to be cost / (1 - m).
+// Spread evenly across however many invoices fell in the timeframe so it
+// reads as "what would each visit/month need to charge" rather than one
+// lump figure -- returns null when there's nothing to divide by (no
+// invoices) or no real cost data logged yet (would otherwise suggest a
+// misleading $0).
+function computeTargetPricePerInvoice(summary: {
+  directCost: number;
+  overhead: number;
+  invoiceCount: number;
+}): number | null {
+  const totalCost = summary.directCost + summary.overhead;
+  if (summary.invoiceCount === 0 || totalCost <= 0) return null;
+
+  const revenueNeeded = totalCost / (1 - TARGET_PROFIT_MARGIN_PCT / 100);
+  return revenueNeeded / summary.invoiceCount;
+}
+
 type CustomerDetailPageProps = {
   params: Promise<{
     id: string;
+  }>;
+  searchParams: Promise<{
+    profitRange?: string;
   }>;
 };
 
@@ -160,13 +251,6 @@ type CustomerFinancials = {
   average_invoice: number | string | null;
   first_invoice_date: string | null;
   latest_invoice_date: string | null;
-};
-
-type CustomerProfitSummary = {
-  total_revenue: number | string | null;
-  total_direct_cost: number | string | null;
-  total_overhead_allocated: number | string | null;
-  total_estimated_profit: number | string | null;
 };
 
 type InvoiceCostBreakdown = {
@@ -973,25 +1057,6 @@ async function getCustomerFinancials(
   return data as CustomerFinancials | null;
 }
 
-async function getCustomerProfitSummary(
-  jobberClientId: string
-): Promise<CustomerProfitSummary | null> {
-  const { data, error } = await supabaseServer
-    .from("customer_profit_summary")
-    .select(
-      "total_revenue, total_direct_cost, total_overhead_allocated, total_estimated_profit"
-    )
-    .eq("jobber_client_id", jobberClientId)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Customer profit summary query failed:", error.message);
-    return null;
-  }
-
-  return data as CustomerProfitSummary | null;
-}
-
 async function getInvoiceCostBreakdowns(
   jobberClientId: string
 ): Promise<Map<string, InvoiceCostBreakdown>> {
@@ -1474,9 +1539,20 @@ function VisitCostForm({
 
 export default async function CustomerDetailPage({
   params,
+  searchParams,
 }: CustomerDetailPageProps) {
   const { id } = await params;
   const decodedId = decodeURIComponent(id);
+
+  const { profitRange } = await searchParams;
+  const profitTimeframe: ProfitTimeframe = isProfitTimeframe(profitRange)
+    ? profitRange
+    : "since-tracking";
+  const profitTimeframeLabel =
+    PROFIT_TIMEFRAME_OPTIONS.find((option) => option.value === profitTimeframe)
+      ?.label ?? "";
+  const { startDate: profitStartDate, endDate: profitEndDate } =
+    getProfitDateRange(profitTimeframe);
 
   const [
     { client, error },
@@ -1502,7 +1578,7 @@ export default async function CustomerDetailPage({
     isNativeId(decodedId) ? getLocalClientView(decodedId) : getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
     getCustomerProfile(decodedId),
-    getCustomerProfitSummary(decodedId),
+    getCustomerJobCostingSummary(decodedId, profitStartDate, profitEndDate),
     getInvoiceCostBreakdowns(decodedId),
     getMaterialsList(),
     getEquipmentList(),
@@ -1659,32 +1735,116 @@ export default async function CustomerDetailPage({
   );
 
   const lifetimeCollected = toNumber(financials?.lifetime_collected);
-  const estimatedProfit = profitSummary
-    ? toNumber(profitSummary.total_estimated_profit)
-    : null;
+  const estimatedProfit = profitSummary.profit;
+  const profitMarginPct = profitSummary.marginPct;
+  const targetPricePerInvoice = computeTargetPricePerInvoice(profitSummary);
+  const meetsProfitTarget =
+    profitMarginPct !== null && profitMarginPct >= TARGET_PROFIT_MARGIN_PCT;
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
       <div className="mx-auto max-w-7xl">
-        <header className="mb-8">
-          <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
-            Customer Intelligence
-          </p>
-
-          <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
-            {client.name || "Unnamed Customer"}
-          </h1>
-
-          {client.companyName && (
-            <p className="mt-2 text-lg text-[#6b705c]">
-              {client.companyName}
+        <header className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
+              Customer Intelligence
             </p>
-          )}
 
-          <p className="mt-2 text-sm text-[#6b705c]">
-            {isNativeId(decodedId) ? "Customer" : "Jobber customer"} since{" "}
-            {formatDate(client.createdAt)}
-          </p>
+            <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
+              {client.name || "Unnamed Customer"}
+            </h1>
+
+            {client.companyName && (
+              <p className="mt-2 text-lg text-[#6b705c]">
+                {client.companyName}
+              </p>
+            )}
+
+            <p className="mt-2 text-sm text-[#6b705c]">
+              {isNativeId(decodedId) ? "Customer" : "Jobber customer"} since{" "}
+              {formatDate(client.createdAt)}
+            </p>
+          </div>
+
+          <div className="w-full shrink-0 rounded-2xl bg-white p-5 shadow lg:w-72">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
+                Profitability
+              </p>
+
+              <ProfitTimeframePicker
+                current={profitTimeframe}
+                options={PROFIT_TIMEFRAME_OPTIONS}
+              />
+            </div>
+
+            <p className="mt-3 text-xs font-bold text-[#9c7a20]">
+              Estimated Profit
+            </p>
+            <p
+              className={`mt-0.5 text-2xl font-bold ${
+                estimatedProfit >= 0 ? "text-green-700" : "text-red-600"
+              }`}
+            >
+              {formatCurrency(estimatedProfit)}
+            </p>
+
+            <p className="mt-3 text-xs font-bold text-[#9c7a20]">
+              Profit Margin
+            </p>
+            <p
+              className={`mt-0.5 text-lg font-bold ${
+                profitMarginPct === null
+                  ? "text-[#6b705c]"
+                  : meetsProfitTarget
+                    ? "text-green-700"
+                    : "text-red-600"
+              }`}
+            >
+              {profitMarginPct !== null ? `${profitMarginPct.toFixed(1)}%` : "—"}
+            </p>
+
+            <div className="mt-3 border-t border-[#f0eee6] pt-3">
+              {profitMarginPct === null ? (
+                <p className="text-xs text-[#6b705c]">
+                  No invoices {profitTimeframeLabel.toLowerCase()}.
+                </p>
+              ) : meetsProfitTarget ? (
+                <p className="text-xs text-[#6b705c]">
+                  Already at or above the {TARGET_PROFIT_MARGIN_PCT}% target{" "}
+                  {profitTimeframeLabel.toLowerCase()}.
+                </p>
+              ) : targetPricePerInvoice !== null ? (
+                <>
+                  <p className="text-xs font-bold text-[#9c7a20]">
+                    Price Needed for {TARGET_PROFIT_MARGIN_PCT}%
+                  </p>
+                  <p className="mt-0.5 text-lg font-bold">
+                    {formatCurrencyPrecise(targetPricePerInvoice)}
+                    <span className="text-xs font-normal text-[#6b705c]">
+                      {" "}
+                      / visit
+                    </span>
+                  </p>
+                  <p className="mt-1 text-[11px] text-[#6b705c]">
+                    Based on {profitSummary.invoiceCount} invoice
+                    {profitSummary.invoiceCount === 1 ? "" : "s"}{" "}
+                    {profitTimeframeLabel.toLowerCase()}, holding costs
+                    steady.
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs text-[#6b705c]">
+                  Not enough cost data logged {profitTimeframeLabel.toLowerCase()}{" "}
+                  to estimate a target price.
+                </p>
+              )}
+            </div>
+
+            <p className="mt-3 text-[11px] text-[#6b705c]">
+              {profitTimeframeLabel}
+            </p>
+          </div>
         </header>
 
         <div className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
@@ -1694,7 +1854,6 @@ export default async function CustomerDetailPage({
               email={email}
               phone={phone}
               lifetimeCollected={lifetimeCollected}
-              estimatedProfit={estimatedProfit}
               properties={properties}
               currentPropertyId={profile?.current_property_id ?? null}
               contacts={additionalContacts}

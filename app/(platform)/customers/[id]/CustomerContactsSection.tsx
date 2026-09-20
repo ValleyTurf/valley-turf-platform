@@ -120,7 +120,6 @@ export default function CustomerContactsSection({
   email,
   phone,
   lifetimeCollected,
-  estimatedProfit,
   properties,
   currentPropertyId,
   contacts,
@@ -130,7 +129,6 @@ export default function CustomerContactsSection({
   email: string | null;
   phone: string | null;
   lifetimeCollected: number;
-  estimatedProfit: number | null;
   properties: JobberProperty[];
   currentPropertyId: string | null;
   contacts: AdditionalContact[];
@@ -336,22 +334,6 @@ export default function CustomerContactsSection({
           <p className="mt-0.5 text-2xl font-bold">
             {formatCurrency(lifetimeCollected)}
           </p>
-
-          {estimatedProfit !== null && (
-            <>
-              <p className="mt-3 text-xs font-bold text-[#9c7a20]">
-                Estimated Profit
-              </p>
-
-              <p
-                className={`mt-0.5 text-lg font-bold ${
-                  estimatedProfit >= 0 ? "text-green-700" : "text-red-600"
-                }`}
-              >
-                {formatCurrency(estimatedProfit)}
-              </p>
-            </>
-          )}
         </div>
       </div>
 

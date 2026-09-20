@@ -477,3 +477,64 @@ export async function getJobCostingSummary(
 
   return { categories, totals, overallMargin };
 }
+
+export type CustomerJobCostingSummary = {
+  revenue: number;
+  directCost: number;
+  overhead: number;
+  profit: number;
+  invoiceCount: number;
+  marginPct: number | null;
+};
+
+// Single-customer version of getJobCostingSummary above -- powers the
+// Estimated Profit/Profit Margin panel on the customer page (Ryan's
+// request, 2026-09-20). Job costing (materials/labor/overhead) only
+// started getting tracked in August 2026, so a true "lifetime" profit
+// figure is misleading for any customer with history before then; this
+// lets that panel scope to a real window (defaulting to "since tracking
+// started") instead of always showing all-time. Queries
+// invoice_cost_breakdown filtered to one client directly, rather than
+// fetchAllInvoiceCosts()'s fetch-everything-then-filter (fine for a
+// whole-business report page loaded occasionally, wasteful on every
+// single customer page load).
+export async function getCustomerJobCostingSummary(
+  jobberClientId: string,
+  startDate: string | null,
+  endDate: string
+): Promise<CustomerJobCostingSummary> {
+  const { data, error } = await supabaseServer
+    .from("invoice_cost_breakdown")
+    .select(
+      "jobber_invoice_id, jobber_client_id, issue_date, revenue, direct_cost, overhead_allocated, estimated_profit, service_category"
+    )
+    .eq("jobber_client_id", jobberClientId);
+
+  if (error) throw error;
+
+  const allRows = (data ?? []) as InvoiceCostRow[];
+  const rows = filterRowsByRange(allRows, startDate, endDate);
+  const costBreakdowns = await fetchCostBreakdownForInvoices(rows);
+
+  let revenue = 0;
+  let directCost = 0;
+  let overhead = 0;
+
+  for (const row of rows) {
+    const breakdown = costBreakdowns.get(row.jobber_invoice_id);
+    revenue += toNumber(row.revenue);
+    directCost += (breakdown?.labor ?? 0) + (breakdown?.materials ?? 0);
+    overhead += toNumber(row.overhead_allocated);
+  }
+
+  const profit = revenue - directCost - overhead;
+
+  return {
+    revenue,
+    directCost,
+    overhead,
+    profit,
+    invoiceCount: rows.length,
+    marginPct: revenue > 0 ? (profit / revenue) * 100 : null,
+  };
+}
