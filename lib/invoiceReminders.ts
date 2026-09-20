@@ -393,6 +393,50 @@ export async function sendDueInvoiceReminders(): Promise<SendInvoiceRemindersRes
       from += JOBBER_INVOICES_PAGE_SIZE;
     }
 
+    // Manual per-invoice overrides (Ryan, 2026-09-20 -- Elise Ludeman:
+    // wants daily reminders starting now even though her invoice's real
+    // due_date (2026-09-29) hasn't arrived yet, since it's already been
+    // about a week). invoice_reminder_overrides (migration 081) lists
+    // invoice ids that always join the daily tail regardless of
+    // due_date, on top of whatever naturally qualifies above. Everything
+    // past this point treats them identically to a naturally-overdue
+    // invoice -- still gated on isUnpaidAndSendable, still dedup'd per
+    // calendar day the same way (daysBetweenPhoenixDates can come out
+    // negative for an invoice not technically due yet, e.g. Ludeman's
+    // -9 today climbing toward 0 -- still a fine dedup key, since dedup
+    // is scoped per invoice id anyway). An override just skips the
+    // due_date gate; nothing else about how the reminder is built or
+    // sent changes.
+    const { data: overrideRows, error: overrideError } = await supabaseServer
+      .from("invoice_reminder_overrides")
+      .select("jobber_invoice_id");
+
+    if (overrideError) {
+      result.errors.push(`Couldn't load invoice reminder overrides: ${overrideError.message}`);
+    }
+
+    const naturalIds = new Set(tailInvoices.map((invoice) => invoice.jobber_invoice_id));
+    const missingOverrideIds = (overrideRows ?? [])
+      .map((row) => row.jobber_invoice_id as string)
+      .filter((id) => !naturalIds.has(id));
+
+    if (missingOverrideIds.length > 0) {
+      const { data: overrideInvoiceRows, error: overrideInvoiceError } = await supabaseServer
+        .from("jobber_invoices")
+        .select(
+          "jobber_invoice_id, jobber_client_id, customer_name, invoice_number, status, total, due_date, jobber_web_uri"
+        )
+        .in("jobber_invoice_id", missingOverrideIds);
+
+      if (overrideInvoiceError) {
+        result.errors.push(
+          `Couldn't load override invoices for the daily tail: ${overrideInvoiceError.message}`
+        );
+      } else {
+        tailInvoices.push(...((overrideInvoiceRows ?? []) as ReminderInvoice[]));
+      }
+    }
+
     const pendingTail: PendingReminder[] = tailInvoices
       .filter((invoice) => invoice.due_date && isUnpaidAndSendable(invoice.status))
       .map((invoice) => ({
