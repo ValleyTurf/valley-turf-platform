@@ -21,21 +21,21 @@ export async function GET(request: NextRequest) {
 
   const baseUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
 
-  const { data, error } = await supabaseServer
+  const { data: sentData, error: sentError } = await supabaseServer
     .from("quotes")
     .select("id, recipient_name, status, sent_at, public_token, price_total, pricing_mode")
     .not("sent_at", "is", null)
     .order("sent_at", { ascending: false })
     .limit(5);
 
-  if (error) {
+  if (sentError) {
     return NextResponse.json(
-      { success: false, error: error.message },
+      { success: false, error: sentError.message },
       { status: 500 }
     );
   }
 
-  const quotes = (data ?? []).map((quote) => ({
+  const quotes = (sentData ?? []).map((quote) => ({
     recipientName: quote.recipient_name,
     status: quote.status,
     sentAt: quote.sent_at,
@@ -44,5 +44,29 @@ export async function GET(request: NextRequest) {
     url: `${baseUrl}/q/${quote.public_token}`,
   }));
 
-  return NextResponse.json({ success: true, quotes });
+  // Fallback for when nothing has sent_at set: list the newest quotes
+  // regardless of status/timestamp, so we can tell "nothing's actually
+  // been sent yet" apart from "sent_at just isn't getting recorded."
+  const { data: anyData, error: anyError } = await supabaseServer
+    .from("quotes")
+    .select("id, recipient_name, status, sent_at, public_token, price_total, pricing_mode, created_at")
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  const anyQuotes = (anyData ?? []).map((quote) => ({
+    recipientName: quote.recipient_name,
+    status: quote.status,
+    sentAt: quote.sent_at,
+    createdAt: quote.created_at,
+    priceTotal: quote.price_total,
+    pricingMode: quote.pricing_mode,
+    url: `${baseUrl}/q/${quote.public_token}`,
+  }));
+
+  return NextResponse.json({
+    success: true,
+    quotes,
+    fallbackMostRecentQuotesRegardlessOfSentAt: anyQuotes,
+    fallbackError: anyError?.message ?? null,
+  });
 }
