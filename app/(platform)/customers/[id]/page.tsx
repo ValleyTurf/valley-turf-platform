@@ -994,6 +994,17 @@ type LocalNativeJobRow = {
 // getLocalClientView's own job query already reads straight from this
 // same table with no source filter, so it already includes every job a
 // native customer has.
+//
+// Filtered on the "native-" id prefix, NOT the `source` column --
+// migration 067's Jobber cutover relabeled every existing Jobber job to
+// source='native' in place, without ever changing its id shape (see
+// lib/nativeJobs.ts's header comment). Those relabeled jobs still live
+// in Jobber and are already returned by the client.jobs GraphQL query
+// above, so filtering on `source` here pulled them in a second time --
+// same job, same id, counted twice (Ryan's report, 2026-09-20: "most of
+// my jobs that are in Jobber are now showing 2 open jobs instead of
+// 1"). The id prefix is the one thing that's true only for jobs this
+// app actually minted and that Jobber's API can never return.
 async function getNativeJobsForCustomer(
   jobberClientId: string
 ): Promise<JobberJob[]> {
@@ -1003,7 +1014,7 @@ async function getNativeJobsForCustomer(
       "jobber_job_id, job_number, title, job_status, job_type, total, end_at, completed_at, jobber_web_uri"
     )
     .eq("jobber_client_id", jobberClientId)
-    .eq("source", "native")
+    .like("jobber_job_id", "native-%")
     .order("end_at", { ascending: false, nullsFirst: false })
     // Bumped from 10 -- see getJobberClient's jobs(first: 20) comment.
     .limit(20);
@@ -1824,8 +1835,7 @@ export default async function CustomerDetailPage({
             )}
 
             <p className="mt-2 text-sm text-[#6b705c]">
-              {isNativeId(decodedId) ? "Customer" : "Jobber customer"} since{" "}
-              {formatDate(client.createdAt)}
+              Customer Since {formatDate(client.createdAt)}
             </p>
           </div>
 

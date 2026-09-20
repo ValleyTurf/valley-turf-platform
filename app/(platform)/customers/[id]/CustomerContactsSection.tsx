@@ -514,9 +514,21 @@ export default function CustomerContactsSection({
                 </p>
               );
 
-              const addressBlock = property.jobberWebUri ? (
+              // Opens Google Maps for the address instead of the Jobber
+              // property page -- Ryan wants a quick way to pull up
+              // directions, not the Jobber record. Only linked when
+              // there's a real address to search for (formatPropertyAddress
+              // falls back to "Address unavailable" otherwise, which isn't
+              // worth sending to Maps).
+              const mapsUrl = property.address
+                ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                    formatPropertyAddress(property)
+                  )}`
+                : null;
+
+              const addressBlock = mapsUrl ? (
                 <a
-                  href={property.jobberWebUri}
+                  href={mapsUrl}
                   target="_blank"
                   rel="noreferrer"
                   className="block min-w-0 flex-1 hover:underline"
