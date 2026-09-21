@@ -1213,52 +1213,52 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
               </div>
             </article>
           ))}
-        </section>
 
-        <section className="mt-6 rounded-3xl border border-[#e3ded1] bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
-                Job Costing
-              </p>
-
-              <h2 className="mt-1 text-xl font-bold">
-                Overhead Cost Per Job
-              </h2>
-
-              <p className="mt-1 text-sm text-[#6b705c]">
-                Overhead for {marketDateLabel}, prorated by day and divided
-                across {formatNumber(jobsCompleted)} invoiced service visit
-                {jobsCompleted === 1 ? "" : "s"} in that period.{" "}
-                <Link
-                  href="/materials"
-                  className="font-semibold text-[#9c7a20] hover:underline"
-                >
-                  Manage costs →
-                </Link>
-              </p>
-            </div>
-
-            {overheadPerJob !== null ? (
-              <div className="shrink-0 sm:text-right">
-                <p className="text-3xl font-bold">
-                  {formatCurrency(overheadPerJob)}
-                  <span className="ml-1 text-base font-normal text-[#6b705c]">
-                    / job
-                  </span>
+          <article className="rounded-3xl bg-white p-6 shadow sm:col-span-2">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9c7a20]">
+                  Job Costing
                 </p>
+
+                <h2 className="mt-1 text-xl font-bold">
+                  Overhead Cost Per Job
+                </h2>
 
                 <p className="mt-1 text-sm text-[#6b705c]">
-                  {formatCurrency(totalOverheadForRange)} total ÷{" "}
-                  {formatNumber(jobsCompleted)} jobs
+                  Overhead for {marketDateLabel}, prorated by day and divided
+                  across {formatNumber(jobsCompleted)} invoiced service visit
+                  {jobsCompleted === 1 ? "" : "s"} in that period.{" "}
+                  <Link
+                    href="/materials"
+                    className="font-semibold text-[#9c7a20] hover:underline"
+                  >
+                    Manage costs →
+                  </Link>
                 </p>
               </div>
-            ) : (
-              <p className="shrink-0 text-sm text-[#6b705c]">
-                No invoiced service visits in this period yet.
-              </p>
-            )}
-          </div>
+
+              {overheadPerJob !== null ? (
+                <div className="shrink-0 sm:text-right">
+                  <p className="text-3xl font-bold">
+                    {formatCurrency(overheadPerJob)}
+                    <span className="ml-1 text-base font-normal text-[#6b705c]">
+                      / job
+                    </span>
+                  </p>
+
+                  <p className="mt-1 text-sm text-[#6b705c]">
+                    {formatCurrency(totalOverheadForRange)} total ÷{" "}
+                    {formatNumber(jobsCompleted)} jobs
+                  </p>
+                </div>
+              ) : (
+                <p className="shrink-0 text-sm text-[#6b705c]">
+                  No invoiced service visits in this period yet.
+                </p>
+              )}
+            </div>
+          </article>
         </section>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-2">
