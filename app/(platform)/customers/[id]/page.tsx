@@ -386,6 +386,27 @@ async function getEquipmentList(): Promise<EquipmentOption[]> {
   return (data ?? []) as EquipmentOption[];
 }
 
+// Job canceled directly in Jobber's own UI (not through this app) only
+// fires a job-level webhook -- it never touches the visit rows
+// themselves, so without this filter a canceled job's visits sit in
+// jobber_visits forever looking "upcoming." Same fix already applied on
+// /schedule, /my-day, and /crew-status -- see 051_add_job_status_to_visits.sql
+// and jobberWebhookProcessor.ts's syncSingleJob comment. This page had
+// never picked it up, which is exactly why Brittany Pratz's canceled job
+// was still showing a future "Next Visit" here (2026-09-21).
+//
+// Written as job_status.is.null OR job_status.neq.archived (not a bare
+// .neq()) because a plain <> comparison excludes NULL rows in SQL, which
+// would hide every visit not yet backfilled/synced with a job_status at
+// all. completed_at.not.is.null is the third branch: a visit that
+// already happened should always still show on Past Visits, regardless
+// of what its job's status becomes afterward (e.g. Jobber archiving a
+// one-off job once it's closed out and invoiced -- not a cancellation).
+// Only a still-upcoming, never-completed visit on a truly-archived
+// (canceled) job should stay hidden.
+const ACTIVE_JOB_VISIT_FILTER =
+  "job_status.is.null,job_status.neq.archived,completed_at.not.is.null";
+
 async function getPastVisits(
   jobberClientId: string
 ): Promise<CustomerVisit[]> {
@@ -393,10 +414,13 @@ async function getPastVisits(
 
   const { data, error } = await supabaseServer
     .from("jobber_visits")
-    .select("jobber_visit_id, title, visit_status, start_at, completed_at")
+    .select(
+      "jobber_visit_id, title, visit_status, start_at, completed_at"
+    )
     .eq("jobber_client_id", jobberClientId)
     .not("start_at", "is", null)
     .lt("start_at", nowIso)
+    .or(ACTIVE_JOB_VISIT_FILTER)
     .order("start_at", { ascending: false });
 
   if (error) {
@@ -414,10 +438,13 @@ async function getNextVisit(
 
   const { data, error } = await supabaseServer
     .from("jobber_visits")
-    .select("jobber_visit_id, title, visit_status, start_at, completed_at")
+    .select(
+      "jobber_visit_id, title, visit_status, start_at, completed_at"
+    )
     .eq("jobber_client_id", jobberClientId)
     .not("start_at", "is", null)
     .gte("start_at", nowIso)
+    .or(ACTIVE_JOB_VISIT_FILTER)
     .order("start_at", { ascending: true })
     .limit(1)
     .maybeSingle();
