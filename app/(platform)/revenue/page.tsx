@@ -108,22 +108,6 @@ type OutstandingInvoice = {
   days_past_due: number | string | null;
 };
 
-type ServiceCategorySummary = {
-  service_category: string;
-  job_count: number | string;
-  recurring_count: number | string;
-  one_off_count: number | string;
-  customer_count: number | string;
-};
-
-type CustomerValueSummary = {
-  total_customers: number | string;
-  one_time_customers: number | string;
-  repeat_customers: number | string;
-  avg_customer_value: number | string;
-  avg_invoices_per_customer: number | string;
-};
-
 type ForecastMonth = {
   month: string;
   recurring_revenue_projected: number | string;
@@ -796,8 +780,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
   const [
     topCustomersResult,
     outstandingResult,
-    serviceCategoryResult,
-    customerValueResult,
     forecastResult,
     overheadCosts,
     marketInvoices,
@@ -850,20 +832,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
       .limit(15),
 
     supabaseServer
-      .from("service_category_summary")
-      .select(
-        "service_category, job_count, recurring_count, one_off_count, customer_count",
-      )
-      .order("job_count", { ascending: false }),
-
-    supabaseServer
-      .from("customer_value_summary")
-      .select(
-        "total_customers, one_time_customers, repeat_customers, avg_customer_value, avg_invoices_per_customer",
-      )
-      .single(),
-
-    supabaseServer
       .from("forecast_next_12_months_final")
       .select(
         "month, recurring_revenue_projected, seasonal_one_off_estimate, projected_total_revenue",
@@ -885,8 +853,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
   const queryErrors = [
     topCustomersResult.error,
     outstandingResult.error,
-    serviceCategoryResult.error,
-    customerValueResult.error,
     forecastResult.error,
   ].filter(Boolean);
 
@@ -902,10 +868,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
   const topCustomers = (topCustomersResult.data ?? []) as CustomerFinancial[];
   const outstandingInvoices = (outstandingResult.data ??
     []) as OutstandingInvoice[];
-  const serviceCategories = (serviceCategoryResult.data ??
-    []) as ServiceCategorySummary[];
-  const customerValue =
-    customerValueResult.data as CustomerValueSummary | null;
   const forecastMonths = (forecastResult.data ?? []) as ForecastMonth[];
 
   // Each invoice represents a completed service visit, so invoice count
@@ -937,22 +899,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
     (sum, m) => sum + toNumber(m.recurring_revenue_projected),
     0,
   );
-
-  const totalRecurringJobs = serviceCategories.reduce(
-    (sum, c) => sum + toNumber(c.recurring_count),
-    0,
-  );
-  const totalOneOffJobs = serviceCategories.reduce(
-    (sum, c) => sum + toNumber(c.one_off_count),
-    0,
-  );
-  const totalCategorizedJobs = totalRecurringJobs + totalOneOffJobs;
-
-  const repeatCustomerRate =
-    customerValue && toNumber(customerValue.total_customers) > 0
-      ? toNumber(customerValue.repeat_customers) /
-        toNumber(customerValue.total_customers)
-      : 0;
 
   const dashboardRevenue = marketInvoices.reduce(
     (sum, invoice) => sum + toNumber(invoice.invoice_total),
@@ -1739,144 +1685,6 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
               <span>Seasonal / one-off (estimated)</span>
             </div>
           </div>
-        </section>
-
-        <section className="mt-8 grid gap-6 xl:grid-cols-2">
-          <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
-            <h2 className="text-2xl font-bold">Customer Value Depth</h2>
-
-            <p className="mt-1 text-[#6b705c]">
-              How many customers come back, and what they&apos;re worth.
-            </p>
-
-            <div className="mt-6 grid gap-4 sm:grid-cols-2">
-              <div className="rounded-2xl bg-green-50 p-6">
-                <p className="text-sm font-semibold uppercase tracking-[0.15em] text-green-800">
-                  Repeat Customers
-                </p>
-                <p className="mt-3 text-4xl font-bold text-green-900">
-                  {formatNumber(toNumber(customerValue?.repeat_customers))}
-                </p>
-                <p className="mt-1 text-sm text-green-800">
-                  {formatPercent(repeatCustomerRate)} of all customers
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-amber-50 p-6">
-                <p className="text-sm font-semibold uppercase tracking-[0.15em] text-amber-800">
-                  One-Time Customers
-                </p>
-                <p className="mt-3 text-4xl font-bold text-amber-900">
-                  {formatNumber(toNumber(customerValue?.one_time_customers))}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-6 grid gap-4 sm:grid-cols-2">
-              <div className="rounded-2xl bg-[#f7f6f1] p-5">
-                <p className="text-sm text-[#6b705c]">
-                  Average Customer Value
-                </p>
-                <p className="mt-2 text-2xl font-bold">
-                  {formatCurrency(
-                    toNumber(customerValue?.avg_customer_value),
-                  )}
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-[#f7f6f1] p-5">
-                <p className="text-sm text-[#6b705c]">
-                  Avg Invoices / Customer
-                </p>
-                <p className="mt-2 text-2xl font-bold">
-                  {toNumber(customerValue?.avg_invoices_per_customer).toFixed(
-                    1,
-                  )}
-                </p>
-              </div>
-            </div>
-          </article>
-
-          <article className="rounded-3xl bg-white p-5 shadow sm:p-8">
-            <h2 className="text-2xl font-bold">Jobs by Service Type</h2>
-
-            <p className="mt-1 text-[#6b705c]">
-              Recurring vs. one-time work, grouped by actual service.
-            </p>
-
-            <div className="mt-6 grid gap-4 sm:grid-cols-2">
-              <div className="rounded-2xl bg-[#eef4ee] p-6">
-                <p className="text-sm font-semibold uppercase tracking-[0.15em] text-[#174734]">
-                  Recurring
-                </p>
-                <p className="mt-3 text-4xl font-bold text-[#174734]">
-                  {formatNumber(totalRecurringJobs)}
-                </p>
-                <p className="mt-1 text-sm text-[#174734]">
-                  {totalCategorizedJobs > 0
-                    ? formatPercent(totalRecurringJobs / totalCategorizedJobs)
-                    : "—"}{" "}
-                  of jobs
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-[#faf4e3] p-6">
-                <p className="text-sm font-semibold uppercase tracking-[0.15em] text-[#9c7a20]">
-                  One-Time
-                </p>
-                <p className="mt-3 text-4xl font-bold text-[#9c7a20]">
-                  {formatNumber(totalOneOffJobs)}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-6 space-y-2">
-              {serviceCategories.length === 0 ? (
-                <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
-                  No job data synced yet.
-                </p>
-              ) : (
-                serviceCategories.map((category) => {
-                  const recurring = toNumber(category.recurring_count);
-                  const oneOff = toNumber(category.one_off_count);
-                  const isRecurring = recurring > oneOff;
-
-                  return (
-                    <div
-                      key={category.service_category}
-                      className="flex items-center justify-between gap-4 rounded-xl border border-[#e7e2d5] px-4 py-3"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate font-semibold">
-                          {category.service_category}
-                        </p>
-                        <p className="text-sm text-[#6b705c]">
-                          {formatNumber(toNumber(category.customer_count))}{" "}
-                          customers
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={`rounded-full px-3 py-1 text-xs font-bold ${
-                            isRecurring
-                              ? "bg-[#eef4ee] text-[#174734]"
-                              : "bg-[#faf4e3] text-[#9c7a20]"
-                          }`}
-                        >
-                          {isRecurring ? "Recurring" : "One-Time"}
-                        </span>
-
-                        <p className="font-bold">
-                          {formatNumber(toNumber(category.job_count))}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </article>
         </section>
 
         <section className="mt-8 grid gap-6 xl:grid-cols-2">
