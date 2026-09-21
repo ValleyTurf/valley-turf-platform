@@ -2782,6 +2782,48 @@ export default async function CustomerDetailPage({
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">Upcoming Visits</h2>
+
+              <div className="mt-3 space-y-2">
+                {upcomingVisitsPagination.pageItems.length > 0 ? (
+                  upcomingVisitsPagination.pageItems.map((visit) => (
+                    <div
+                      key={visit.jobber_visit_id}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-[#e7e2d5] px-3 py-2"
+                    >
+                      <p className="min-w-0 truncate text-sm font-bold">
+                        {formatVisitDateTime(visit.start_at)}
+                        {visit.title ? ` — ${visit.title}` : ""}
+                      </p>
+
+                      <span
+                        className={`w-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${visitStatusBadge(
+                          visit.visit_status
+                        )}`}
+                      >
+                        {visit.visit_status || "Unknown"}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                    No upcoming visits scheduled.
+                  </p>
+                )}
+              </div>
+
+              <Pagination
+                currentPage={upcomingVisitsPagination.currentPage}
+                totalPages={upcomingVisitsPagination.totalPages}
+                totalCount={upcomingVisitsPagination.totalCount}
+                pageSize={LIST_PAGE_SIZE}
+                paramName="upcomingVisitsPage"
+                searchParams={currentSearchParams}
+                itemLabel="visit"
+              />
+            </section>
+
+            <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">Payment History</h2>
 
               <div className="mt-3 space-y-2">
