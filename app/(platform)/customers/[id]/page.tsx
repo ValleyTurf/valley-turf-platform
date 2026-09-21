@@ -1074,29 +1074,32 @@ type LocalNativeJobRow = {
   jobber_web_uri: string | null;
 };
 
-// Recent Jobs below (for an ordinary, non-native customer) comes from
-// client.jobs -- a live Jobber GraphQL query -- so it only ever shows
-// jobs that actually exist in Jobber. A job created natively in this
-// app for an existing Jobber-sourced customer never gets written back
-// to Jobber (see lib/nativeJobs.ts's header comment on the cutover), so
-// without this it would be completely invisible on that customer's own
-// page -- Ryan's report (2026-09-15): created a one-off native job,
-// then couldn't find it on the customer's profile to rename it. Native
-// customers (isNativeId(decodedId) below) don't need this merged in --
-// getLocalClientView's own job query already reads straight from this
-// same table with no source filter, so it already includes every job a
-// native customer has.
+// Ryan (2026-09-21): this used to filter on the "native-" id prefix
+// instead of the `source` column, specifically to avoid double-counting
+// a relabeled Jobber job that migration 067's cutover flipped to
+// source='native' in place without changing its id shape -- those were
+// still coming from the live client.jobs GraphQL query below, so
+// pulling them in here too showed the same job twice (Ryan's report,
+// 2026-09-20: "most of my jobs that are in Jobber are now showing 2
+// open jobs instead of 1").
 //
-// Filtered on the "native-" id prefix, NOT the `source` column --
-// migration 067's Jobber cutover relabeled every existing Jobber job to
-// source='native' in place, without ever changing its id shape (see
-// lib/nativeJobs.ts's header comment). Those relabeled jobs still live
-// in Jobber and are already returned by the client.jobs GraphQL query
-// above, so filtering on `source` here pulled them in a second time --
-// same job, same id, counted twice (Ryan's report, 2026-09-20: "most of
-// my jobs that are in Jobber are now showing 2 open jobs instead of
-// 1"). The id prefix is the one thing that's true only for jobs this
-// app actually minted and that Jobber's API can never return.
+// That traded one bug for a worse one: every job flipped to native by
+// the cutover still physically exists in Jobber (the cutover only
+// relabeled our own copy -- it never told Jobber anything), and Jobber
+// keeps computing its own jobStatus independently forever, completely
+// disconnected from what actually happens in this app after cutover
+// (our webhooks that used to sync completions back to Jobber were
+// no-op'd). So any job we've taken ownership of kept showing Jobber's
+// own stale, live status -- Ryan's report, 2026-09-21: Job #1205, a
+// one-off completed months ago, still permanently showing "Late"
+// because that's what Jobber itself still thinks, uninformed.
+//
+// Fixed properly now: this reads every job with source='native' for
+// this customer (both kinds -- newly created here, and relabeled by the
+// cutover), and mergeRecentJobs below dedupes by id against the live
+// Jobber list, with this local copy always winning. Once a job is ours,
+// its status comes from us, not from a Jobber record we stopped
+// updating.
 async function getNativeJobsForCustomer(
   jobberClientId: string
 ): Promise<JobberJob[]> {
@@ -1106,7 +1109,7 @@ async function getNativeJobsForCustomer(
       "jobber_job_id, job_number, title, job_status, job_type, total, end_at, completed_at, jobber_web_uri"
     )
     .eq("jobber_client_id", jobberClientId)
-    .like("jobber_job_id", "native-%")
+    .eq("source", "native")
     .order("end_at", { ascending: false, nullsFirst: false })
     // Bumped to 50 -- see getJobberClient's jobs(first: 50) comment.
     .limit(50);
@@ -1130,21 +1133,24 @@ async function getNativeJobsForCustomer(
   }));
 }
 
-// Merges live-Jobber jobs with natively-created ones for the Recent Jobs
-// list (see getNativeJobsForCustomer above) -- id collisions are
-// impossible (native ids are always "native-<uuid>", never a shape
-// Jobber's own opaque ids can take), so this is a plain concatenate +
-// recency sort, newest first, using whichever date each job actually
-// has.
+// Merges the live-Jobber jobs list with this app's own local
+// source='native' copy (see getNativeJobsForCustomer above) for the
+// Recent Jobs list. Deduped by id, local always wins -- a job that's
+// been flipped to native keeps the same id shape it had in Jobber, so
+// it exists in both lists; the local copy is what's actually kept
+// current post-cutover, so it's the one that should render.
 function mergeRecentJobs(
   jobberJobs: JobberJob[],
   nativeJobs: JobberJob[]
 ): JobberJob[] {
+  const nativeIds = new Set(nativeJobs.map((job) => job.id));
+  const jobberOnly = jobberJobs.filter((job) => !nativeIds.has(job.id));
+
   function sortKey(job: JobberJob): string {
     return job.endAt || job.startAt || job.completedAt || "";
   }
 
-  return [...jobberJobs, ...nativeJobs]
+  return [...jobberOnly, ...nativeJobs]
     .sort((a, b) => (sortKey(b) > sortKey(a) ? 1 : -1))
     .slice(0, 100);
 }

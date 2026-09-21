@@ -17,6 +17,72 @@ import { getNotificationRecipients } from "@/lib/customerContacts";
 const QUICK_ENTRY_MATERIALS = ["Infill", "OxyTurf"];
 const QUICK_ENTRY_EQUIPMENT = ["Blower", "Power Broom", "Turf Vacuum"];
 
+// Ryan (2026-09-21): migration 067's Jobber cutover relabeled every
+// existing job source='native' in the database, but never told Jobber
+// anything -- the underlying jobs still physically exist there, still
+// updating their own jobStatus independently. Once webhooks were
+// no-op'd post-cutover, nothing ever tells Jobber (or our own local
+// job_status column) that a job got done, so a one-off job just sits
+// stuck showing whatever status it happened to have at that instant
+// forever (Ryan's report: Job #1205, a one-off, permanently showing
+// "Late" from Jobber's own side even though its visit was completed
+// months ago -- see customers/[id]/page.tsx's mergeRecentJobs for the
+// matching routing-side fix that makes the app trust this local status
+// over Jobber's live one).
+//
+// This is the "going forward" half of that fix: when a visit is marked
+// done here, check whether it just finished off a one-off native job
+// (every visit under it now completed) and, if so, flip that job's own
+// job_status to "completed" so it stops looking perpetually open/late.
+// Recurring jobs are deliberately left alone -- they don't have a
+// "done" state as long as they keep generating future visits; they
+// only ever move to "archived" via the explicit cancel action.
+async function maybeCompleteNativeJobForVisit(visitId: string): Promise<void> {
+  const { data: visit, error: visitError } = await supabaseServer
+    .from("jobber_visits")
+    .select("jobber_job_id")
+    .eq("jobber_visit_id", visitId)
+    .maybeSingle();
+
+  if (visitError || !visit?.jobber_job_id) {
+    return;
+  }
+
+  const jobberJobId = visit.jobber_job_id as string;
+
+  const { data: job, error: jobError } = await supabaseServer
+    .from("jobber_jobs")
+    .select("job_type, job_status, source")
+    .eq("jobber_job_id", jobberJobId)
+    .maybeSingle();
+
+  if (
+    jobError ||
+    !job ||
+    job.source !== "native" ||
+    job.job_type !== "ONE_OFF" ||
+    job.job_status === "completed" ||
+    job.job_status === "archived"
+  ) {
+    return;
+  }
+
+  const { count, error: remainingError } = await supabaseServer
+    .from("jobber_visits")
+    .select("jobber_visit_id", { count: "exact", head: true })
+    .eq("jobber_job_id", jobberJobId)
+    .is("completed_at", null);
+
+  if (remainingError || (count ?? 0) > 0) {
+    return;
+  }
+
+  await supabaseServer
+    .from("jobber_jobs")
+    .update({ job_status: "completed", updated_at: new Date().toISOString() })
+    .eq("jobber_job_id", jobberJobId);
+}
+
 // Marks a stop done from the field — see lib/jobberVisit.ts's
 // completeJobberVisit for the mutation itself. A plain <form action>
 // rather than useTransition/client state (unlike the schedule page's
@@ -52,6 +118,8 @@ export async function completeVisit(formData: FormData): Promise<void> {
       updated_at: new Date().toISOString(),
     })
     .eq("jobber_visit_id", visitId);
+
+  await maybeCompleteNativeJobForVisit(visitId);
 
   await recordAuditLog({
     actor,
