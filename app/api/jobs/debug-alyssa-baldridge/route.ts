@@ -5,6 +5,14 @@
 // actual customer/job/recurrence/upcoming-visit rows so the job(s) to
 // change can be identified by id rather than guessed at from the UI.
 //
+// v2 (same day): the exact "Alyssa"+"Baldridge" match returned zero
+// rows, so this now casts a much wider net -- first/last name matched
+// independently against "bald" and "alyssa" fragments, so a middle
+// name, a typo on either side, or a full_name that isn't simply
+// "First Last" still turns up. Also no longer requires BOTH fragments
+// to hit, so a misspelled first or last name alone still surfaces a
+// candidate to eyeball.
+//
 // Read-only, admin-gated, manual-trigger only.
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/currentUser";
@@ -26,7 +34,7 @@ export async function GET() {
       "jobber_client_id, full_name, first_name, last_name, turf_size_range"
     )
     .or(
-      "full_name.ilike.%Alyssa%Baldridge%,and(first_name.ilike.%Alyssa%,last_name.ilike.%Baldridge%)"
+      "full_name.ilike.%bald%,full_name.ilike.%alyssa%,first_name.ilike.%alyssa%,last_name.ilike.%bald%"
     );
 
   if (customerError) {
@@ -62,9 +70,6 @@ export async function GET() {
         .lt("start_at", new Date().toISOString())
         .order("start_at", { ascending: false })
         .limit(6),
-      supabaseServer
-        .from("native_job_line_items")
-        .select("jobber_job_id, name, unit_price, quantity, sort_order"),
     ]);
 
     results.push({
