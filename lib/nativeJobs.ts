@@ -436,6 +436,41 @@ export async function generateUpcomingNativeVisits(): Promise<{
     };
   }
 
+  // Roadmap item 19 (2026-09-22): auto-flip Maintenance to Full on the
+  // right months. customers.full_cleaning_months is empty for every
+  // customer except the ones explicitly configured (Alyssa Baldriche
+  // first, as the real test case -- see migration 083) -- batch-fetched
+  // once here rather than per job to avoid N+1, and this lookup is a
+  // pure no-op for any customer whose array is empty, which is
+  // everyone else today. That's what keeps this change safe to ship
+  // globally while only actually affecting one customer: the title
+  // override below only ever fires when a customer's own
+  // full_cleaning_months contains the date's month.
+  const clientIds = Array.from(
+    new Set((jobs ?? []).map((job) => job.jobber_client_id))
+  );
+  const { data: customerRows } =
+    clientIds.length > 0
+      ? await supabaseServer
+          .from("customers")
+          .select("jobber_client_id, last_name, full_cleaning_months")
+          .in("jobber_client_id", clientIds)
+      : { data: [] as { jobber_client_id: string; last_name: string | null; full_cleaning_months: number[] | null }[] };
+
+  const fullMonthsByClient = new Map(
+    (customerRows ?? []).map((row) => [
+      row.jobber_client_id,
+      {
+        lastName: row.last_name,
+        months: new Set(row.full_cleaning_months ?? []),
+      },
+    ])
+  );
+
+  function cadenceWord(frequency: string): string {
+    return frequency.charAt(0).toUpperCase() + frequency.slice(1);
+  }
+
   let visitsCreated = 0;
   const errors: string[] = [];
 
@@ -467,17 +502,28 @@ export async function generateUpcomingNativeVisits(): Promise<{
       continue;
     }
 
-    const visitRows = newDates.map((date) =>
-      buildVisitRow({
+    const customerFullMonths = fullMonthsByClient.get(job.jobber_client_id);
+
+    const visitRows = newDates.map((date) => {
+      // "YYYY-MM-DD" -> month number, no Date parsing/timezone involved.
+      const month = Number(date.slice(5, 7));
+      const isFullMonth = customerFullMonths?.months.has(month) ?? false;
+
+      const title =
+        isFullMonth && customerFullMonths?.lastName
+          ? `${customerFullMonths.lastName} - Full - ${cadenceWord(job.recurrence_frequency!)}`
+          : job.title ?? "Service";
+
+      return buildVisitRow({
         jobId: job.jobber_job_id,
         jobberClientId: job.jobber_client_id,
         customerName: job.customer_name,
         jobNumber: job.job_number ?? "",
-        title: job.title ?? "Service",
+        title,
         date,
         isLast: false,
-      })
-    );
+      });
+    });
 
     const { error: insertError } = await supabaseServer
       .from("jobber_visits")
