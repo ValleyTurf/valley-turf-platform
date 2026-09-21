@@ -193,6 +193,7 @@ type CustomerDetailPageProps = {
     profitRange?: string;
     marginTarget?: string;
     visitsPage?: string;
+    upcomingVisitsPage?: string;
     paymentsPage?: string;
     invoicesPage?: string;
     jobsPage?: string;
@@ -458,10 +459,8 @@ async function getNextVisit(
 
 // Ryan (2026-09-21): the page had a single "Next Visit" card but nowhere
 // to see anything further out -- Past Visits existed, nothing for
-// future. Capped rather than paginated: RECURRING_WINDOW_DAYS (90) is
-// how far ahead lib/nativeJobs.ts pre-generates visits, so even a
-// weekly-cadence customer rarely has more than ~13 rows here -- a plain
-// limit keeps this simple without a real pagination need.
+// future. Paginated the same as Past Visits below (LIST_PAGE_SIZE),
+// moved between Past Visits/Payment History (2026-09-22) to match.
 async function getUpcomingVisits(
   jobberClientId: string
 ): Promise<CustomerVisit[]> {
@@ -476,8 +475,7 @@ async function getUpcomingVisits(
     .not("start_at", "is", null)
     .gte("start_at", nowIso)
     .or(ACTIVE_JOB_VISIT_FILTER)
-    .order("start_at", { ascending: true })
-    .limit(12);
+    .order("start_at", { ascending: true });
 
   if (error) {
     console.error("Upcoming visits query failed:", error.message);
@@ -1712,6 +1710,7 @@ export default async function CustomerDetailPage({
     profitRange,
     marginTarget,
     visitsPage,
+    upcomingVisitsPage,
     paymentsPage,
     invoicesPage,
     jobsPage,
@@ -1736,6 +1735,7 @@ export default async function CustomerDetailPage({
     profitRange,
     marginTarget,
     visitsPage,
+    upcomingVisitsPage,
     paymentsPage,
     invoicesPage,
     jobsPage,
@@ -1902,14 +1902,19 @@ export default async function CustomerDetailPage({
     })),
   ].sort((a, b) => (b.sortDate > a.sortDate ? 1 : -1));
 
-  // Paginated views for the five "recent stuff" lists below (Past
-  // Visits, Payment History, Invoices, Recent Jobs, Recent Quotes) --
-  // see LIST_PAGE_SIZE/paginateList above. The underlying arrays
-  // (pastVisits, payments, combinedInvoices, jobs, quotes) stay
-  // full/unsliced since other code below -- visit usage maps, the
-  // payment-to-invoice lookups in Payment History, noteableVisits --
-  // needs every row, not just the current page.
+  // Paginated views for the six "recent stuff" lists below (Past
+  // Visits, Upcoming Visits, Payment History, Invoices, Recent Jobs,
+  // Recent Quotes) -- see LIST_PAGE_SIZE/paginateList above. The
+  // underlying arrays (pastVisits, upcomingVisits, payments,
+  // combinedInvoices, jobs, quotes) stay full/unsliced since other code
+  // below -- visit usage maps, the payment-to-invoice lookups in
+  // Payment History, noteableVisits -- needs every row, not just the
+  // current page.
   const pastVisitsPagination = paginateList(pastVisits, visitsPage);
+  const upcomingVisitsPagination = paginateList(
+    upcomingVisits,
+    upcomingVisitsPage
+  );
   const paymentsPagination = paginateList(payments, paymentsPage);
   const invoicesPagination = paginateList(combinedInvoices, invoicesPage);
   const jobsPagination = paginateList(jobs, jobsPage);
@@ -2176,38 +2181,6 @@ export default async function CustomerDetailPage({
                   No upcoming visit scheduled.
                 </p>
               )}
-            </section>
-
-            <section className="rounded-2xl bg-white p-5 shadow">
-              <h2 className="text-lg font-bold">Upcoming Visits</h2>
-
-              <div className="mt-3 space-y-2">
-                {upcomingVisits.length > 0 ? (
-                  upcomingVisits.map((visit) => (
-                    <div
-                      key={visit.jobber_visit_id}
-                      className="flex items-center justify-between gap-3 rounded-xl border border-[#e7e2d5] px-3 py-2"
-                    >
-                      <p className="min-w-0 truncate text-sm font-bold">
-                        {formatVisitDateTime(visit.start_at)}
-                        {visit.title ? ` — ${visit.title}` : ""}
-                      </p>
-
-                      <span
-                        className={`w-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${visitStatusBadge(
-                          visit.visit_status
-                        )}`}
-                      >
-                        {visit.visit_status || "Unknown"}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
-                    No upcoming visits scheduled.
-                  </p>
-                )}
-              </div>
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">
