@@ -195,7 +195,6 @@ type CustomerDetailPageProps = {
     visitsPage?: string;
     paymentsPage?: string;
     invoicesPage?: string;
-    nativeInvoicesPage?: string;
     jobsPage?: string;
     quotesPage?: string;
   }>;
@@ -455,6 +454,37 @@ async function getNextVisit(
   }
 
   return (data as CustomerVisit | null) ?? null;
+}
+
+// Ryan (2026-09-21): the page had a single "Next Visit" card but nowhere
+// to see anything further out -- Past Visits existed, nothing for
+// future. Capped rather than paginated: RECURRING_WINDOW_DAYS (90) is
+// how far ahead lib/nativeJobs.ts pre-generates visits, so even a
+// weekly-cadence customer rarely has more than ~13 rows here -- a plain
+// limit keeps this simple without a real pagination need.
+async function getUpcomingVisits(
+  jobberClientId: string
+): Promise<CustomerVisit[]> {
+  const nowIso = new Date().toISOString();
+
+  const { data, error } = await supabaseServer
+    .from("jobber_visits")
+    .select(
+      "jobber_visit_id, title, visit_status, start_at, completed_at"
+    )
+    .eq("jobber_client_id", jobberClientId)
+    .not("start_at", "is", null)
+    .gte("start_at", nowIso)
+    .or(ACTIVE_JOB_VISIT_FILTER)
+    .order("start_at", { ascending: true })
+    .limit(12);
+
+  if (error) {
+    console.error("Upcoming visits query failed:", error.message);
+    return [];
+  }
+
+  return (data ?? []) as CustomerVisit[];
 }
 
 async function getVisitUsageMaps(visitIds: string[]): Promise<{
@@ -1678,7 +1708,6 @@ export default async function CustomerDetailPage({
     visitsPage,
     paymentsPage,
     invoicesPage,
-    nativeInvoicesPage,
     jobsPage,
     quotesPage,
   } = await searchParams;
@@ -1703,7 +1732,6 @@ export default async function CustomerDetailPage({
     visitsPage,
     paymentsPage,
     invoicesPage,
-    nativeInvoicesPage,
     jobsPage,
     quotesPage,
   };
@@ -1719,6 +1747,7 @@ export default async function CustomerDetailPage({
     equipmentList,
     pastVisits,
     nextVisit,
+    upcomingVisits,
     visitNoteGroups,
     jobberJobNotes,
     payments,
@@ -1740,6 +1769,7 @@ export default async function CustomerDetailPage({
     getEquipmentList(),
     getPastVisits(decodedId),
     getNextVisit(decodedId),
+    getUpcomingVisits(decodedId),
     getVisitNotesForClient(decodedId),
     getJobberJobNotesForClient(decodedId),
     getCustomerPayments(decodedId),
@@ -1835,20 +1865,47 @@ export default async function CustomerDetailPage({
   const quotes = client.quotes?.nodes ?? [];
   const invoices = client.invoices?.nodes ?? [];
 
-  // Paginated views for the six "recent stuff" lists below (Past
-  // Visits, Payment History, Recent Invoices, Native Invoices, Recent
-  // Jobs, Recent Quotes) -- see LIST_PAGE_SIZE/paginateList above. The
-  // underlying arrays (pastVisits, payments, invoices, nativeInvoices,
-  // jobs, quotes) stay full/unsliced since other code below -- visit
-  // usage maps, the payment-to-invoice lookups in Payment History,
-  // noteableVisits -- needs every row, not just the current page.
+  // Ryan (2026-09-21): "Recent Invoices" (from Jobber) and "Native
+  // Invoices" (created directly in this app) used to be two separate
+  // sections with two separate pagination params -- combined into one
+  // list here. For a native customer, getLocalClientView's own
+  // `invoices` query already returns every invoice for that client
+  // (native ones included, since it only filters by jobber_client_id,
+  // not by id prefix), so without this dedupe a native customer's own
+  // native invoices would show up twice -- once in each old section.
+  // nativeInvoices' `invoiceId` is the mirror id with "native-" already
+  // stripped off (see getNativeInvoicesForCustomer below), so it's
+  // added back here to match the `native-<uuid>` shape `invoices[].id`
+  // uses.
+  const nativeInvoiceIds = new Set(
+    nativeInvoices.map((invoice) => `native-${invoice.invoiceId}`)
+  );
+  const jobberOnlyInvoices = invoices.filter(
+    (invoice) => !nativeInvoiceIds.has(invoice.id)
+  );
+  const combinedInvoices = [
+    ...jobberOnlyInvoices.map((invoice) => ({
+      kind: "jobber" as const,
+      sortDate: invoice.issuedDate ?? "",
+      invoice,
+    })),
+    ...nativeInvoices.map((invoice) => ({
+      kind: "native" as const,
+      sortDate: invoice.dueDate ?? "",
+      invoice,
+    })),
+  ].sort((a, b) => (b.sortDate > a.sortDate ? 1 : -1));
+
+  // Paginated views for the five "recent stuff" lists below (Past
+  // Visits, Payment History, Invoices, Recent Jobs, Recent Quotes) --
+  // see LIST_PAGE_SIZE/paginateList above. The underlying arrays
+  // (pastVisits, payments, combinedInvoices, jobs, quotes) stay
+  // full/unsliced since other code below -- visit usage maps, the
+  // payment-to-invoice lookups in Payment History, noteableVisits --
+  // needs every row, not just the current page.
   const pastVisitsPagination = paginateList(pastVisits, visitsPage);
   const paymentsPagination = paginateList(payments, paymentsPage);
-  const invoicesPagination = paginateList(invoices, invoicesPage);
-  const nativeInvoicesPagination = paginateList(
-    nativeInvoices,
-    nativeInvoicesPage
-  );
+  const invoicesPagination = paginateList(combinedInvoices, invoicesPage);
   const jobsPagination = paginateList(jobs, jobsPage);
   const quotesPagination = paginateList(quotes, quotesPage);
 
@@ -2113,6 +2170,38 @@ export default async function CustomerDetailPage({
                   No upcoming visit scheduled.
                 </p>
               )}
+            </section>
+
+            <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">Upcoming Visits</h2>
+
+              <div className="mt-3 space-y-2">
+                {upcomingVisits.length > 0 ? (
+                  upcomingVisits.map((visit) => (
+                    <div
+                      key={visit.jobber_visit_id}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-[#e7e2d5] px-3 py-2"
+                    >
+                      <p className="min-w-0 truncate text-sm font-bold">
+                        {formatVisitDateTime(visit.start_at)}
+                        {visit.title ? ` — ${visit.title}` : ""}
+                      </p>
+
+                      <span
+                        className={`w-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${visitStatusBadge(
+                          visit.visit_status
+                        )}`}
+                      >
+                        {visit.visit_status || "Unknown"}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                    No upcoming visits scheduled.
+                  </p>
+                )}
+              </div>
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">
@@ -2884,87 +2973,210 @@ export default async function CustomerDetailPage({
 
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">
-                Recent Invoices
+                Past Invoices
               </h2>
+              <p className="mt-1 text-xs text-[#6b705c]">
+                Jobber invoices link out to view there. Invoices created
+                directly in this app expand in place -- tap one to see its
+                line items and payment, or resend if a customer says they
+                never got it.
+              </p>
 
               <div className="mt-3 space-y-2">
                 {invoicesPagination.pageItems.length > 0 ? (
-                  invoicesPagination.pageItems.map((invoice) => {
-                    const cost = invoiceCosts.get(invoice.id);
-                    const profit = cost
-                      ? toNumber(cost.estimated_profit)
-                      : null;
+                  invoicesPagination.pageItems.map((row) => {
+                    if (row.kind === "jobber") {
+                      const invoice = row.invoice;
+                      const cost = invoiceCosts.get(invoice.id);
+                      const profit = cost
+                        ? toNumber(cost.estimated_profit)
+                        : null;
 
-                    const content = (
-                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-bold">
-                            Invoice #{invoice.invoiceNumber ?? "—"}
-                            {invoice.subject ? ` — ${invoice.subject}` : ""}
-                          </p>
-
-                          <p className="text-xs text-[#6b705c]">
-                            Issued {formatDate(invoice.issuedDate)}
-                          </p>
-
-                          {cost && (
-                            <p className="mt-1 text-xs text-[#6b705c]">
-                              {formatCurrencyPrecise(cost.direct_cost)} direct
-                              {" + "}
-                              {formatCurrencyPrecise(cost.overhead_allocated)}{" "}
-                              overhead
+                      const content = (
+                        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-bold">
+                              Invoice #{invoice.invoiceNumber ?? "—"}
+                              {invoice.subject ? ` — ${invoice.subject}` : ""}
                             </p>
+
+                            <p className="text-xs text-[#6b705c]">
+                              Issued {formatDate(invoice.issuedDate)}
+                            </p>
+
+                            {cost && (
+                              <p className="mt-1 text-xs text-[#6b705c]">
+                                {formatCurrencyPrecise(cost.direct_cost)} direct
+                                {" + "}
+                                {formatCurrencyPrecise(cost.overhead_allocated)}{" "}
+                                overhead
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex shrink-0 flex-col items-end gap-1">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
+                                  invoice.invoiceStatus
+                                )}`}
+                              >
+                                {formatStatus(invoice.invoiceStatus)}
+                              </span>
+
+                              <p className="text-sm font-bold">
+                                {formatCurrency(invoice.total)}
+                              </p>
+                            </div>
+
+                            {profit !== null && (
+                              <p
+                                className={`text-xs font-bold ${
+                                  profit >= 0
+                                    ? "text-green-700"
+                                    : "text-red-600"
+                                }`}
+                              >
+                                {formatCurrencyPrecise(profit)} profit
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+
+                      return (
+                        <div
+                          key={invoice.id}
+                          className="overflow-hidden rounded-xl border border-[#e7e2d5]"
+                        >
+                          {invoice.jobberWebUri ? (
+                            <a
+                              href={invoice.jobberWebUri}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="block px-3 py-2 transition hover:bg-[#f7f6f1]"
+                            >
+                              {content}
+                            </a>
+                          ) : (
+                            <div className="px-3 py-2">{content}</div>
                           )}
                         </div>
+                      );
+                    }
 
-                        <div className="flex shrink-0 flex-col items-end gap-1">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
-                                invoice.invoiceStatus
-                              )}`}
-                            >
-                              {formatStatus(invoice.invoiceStatus)}
-                            </span>
+                    const invoice = row.invoice;
 
-                            <p className="text-sm font-bold">
-                              {formatCurrency(invoice.total)}
+                    return (
+                      <details
+                        key={invoice.invoiceId}
+                        className="rounded-xl border border-[#e7e2d5] px-3 py-2"
+                      >
+                        <summary className="flex cursor-pointer list-none flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-bold">
+                              Invoice #{invoice.invoiceNumber ?? "—"}
+                            </p>
+
+                            <p className="text-xs text-[#6b705c]">
+                              {invoice.dueDate
+                                ? `Due ${formatDate(invoice.dueDate)}`
+                                : "No due date"}
                             </p>
                           </div>
 
-                          {profit !== null && (
-                            <p
-                              className={`text-xs font-bold ${
-                                profit >= 0
-                                  ? "text-green-700"
-                                  : "text-red-600"
-                              }`}
+                          <div className="flex shrink-0 items-center gap-2">
+                            <span
+                              className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
+                                invoice.status
+                              )}`}
                             >
-                              {formatCurrencyPrecise(profit)} profit
+                              {formatStatus(invoice.status)}
+                            </span>
+
+                            <p className="text-sm font-bold">
+                              {invoice.total !== null
+                                ? formatCurrency(invoice.total)
+                                : "—"}
+                            </p>
+                          </div>
+                        </summary>
+
+                        <div className="mt-3 space-y-3 border-t border-[#f0eee6] pt-3">
+                          {invoice.lineItems.length > 0 ? (
+                            <div className="space-y-1">
+                              {invoice.lineItems.map((item, index) => (
+                                <div
+                                  key={index}
+                                  className="flex items-start justify-between gap-3 text-sm"
+                                >
+                                  <span className="min-w-0 text-[#174734]">
+                                    {item.description}
+                                    {item.quantity !== 1
+                                      ? ` × ${formatNumber(item.quantity)}`
+                                      : ""}
+                                  </span>
+                                  <span className="shrink-0 font-semibold">
+                                    {formatCurrency(item.lineTotal)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-[#6b705c]">
+                              No line items on file.
                             </p>
                           )}
-                        </div>
-                      </div>
-                    );
 
-                    return (
-                      <div
-                        key={invoice.id}
-                        className="overflow-hidden rounded-xl border border-[#e7e2d5]"
-                      >
-                        {invoice.jobberWebUri ? (
-                          <a
-                            href={invoice.jobberWebUri}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="block px-3 py-2 transition hover:bg-[#f7f6f1]"
-                          >
-                            {content}
-                          </a>
-                        ) : (
-                          <div className="px-3 py-2">{content}</div>
-                        )}
-                      </div>
+                          {invoice.payment ? (
+                            <div className="rounded-lg bg-[#f7f6f1] px-3 py-2 text-sm">
+                              <p className="font-semibold text-[#174734]">
+                                Paid {formatCurrencyPrecise(invoice.payment.amount)}
+                                {invoice.payment.paymentDate
+                                  ? ` on ${formatDate(invoice.payment.paymentDate)}`
+                                  : ""}
+                              </p>
+                              {invoice.payment.tipAmount > 0 && (
+                                <p className="mt-1 text-xs text-[#9c7a20]">
+                                  Includes a{" "}
+                                  {formatCurrencyPrecise(invoice.payment.tipAmount)}{" "}
+                                  tip
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-[#6b705c]">
+                              Not paid yet.
+                            </p>
+                          )}
+
+                          <div className="flex flex-wrap items-center gap-3">
+                            <a
+                              href={`/api/invoices/${invoice.invoiceId}/pdf`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sm font-semibold text-[#174734] underline underline-offset-2 hover:text-[#226246]"
+                            >
+                              View invoice PDF
+                            </a>
+
+                            <ResendInvoiceButton
+                              jobberClientId={decodedId}
+                              invoiceId={invoice.invoiceId}
+                            />
+
+                            {invoice.status !== "paid" &&
+                              invoice.status !== "void" && (
+                                <div className="ml-auto">
+                                  <MarkPaidButton
+                                    jobberClientId={decodedId}
+                                    invoiceId={invoice.invoiceId}
+                                  />
+                                </div>
+                              )}
+                          </div>
+                        </div>
+                      </details>
                     );
                   })
                 ) : (
@@ -2985,145 +3197,9 @@ export default async function CustomerDetailPage({
               />
             </section>
 
-            {nativeInvoices.length > 0 && (
-              <section className="rounded-2xl bg-white p-5 shadow">
-                <h2 className="text-lg font-bold">Native Invoices</h2>
-                <p className="mt-1 text-xs text-[#6b705c]">
-                  Invoices created directly in this app. Tap one to see its
-                  line items and payment. Resend if a customer says they
-                  never got it -- this doesn&apos;t attempt another autopay
-                  charge.
-                </p>
-
-                <div className="mt-3 space-y-2">
-                  {nativeInvoicesPagination.pageItems.map((invoice) => (
-                    <details
-                      key={invoice.invoiceId}
-                      className="rounded-xl border border-[#e7e2d5] px-3 py-2"
-                    >
-                      <summary className="flex cursor-pointer list-none flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-bold">
-                            Invoice #{invoice.invoiceNumber ?? "—"}
-                          </p>
-
-                          <p className="text-xs text-[#6b705c]">
-                            {invoice.dueDate
-                              ? `Due ${formatDate(invoice.dueDate)}`
-                              : "No due date"}
-                          </p>
-                        </div>
-
-                        <div className="flex shrink-0 items-center gap-2">
-                          <span
-                            className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
-                              invoice.status
-                            )}`}
-                          >
-                            {formatStatus(invoice.status)}
-                          </span>
-
-                          <p className="text-sm font-bold">
-                            {invoice.total !== null
-                              ? formatCurrency(invoice.total)
-                              : "—"}
-                          </p>
-                        </div>
-                      </summary>
-
-                      <div className="mt-3 space-y-3 border-t border-[#f0eee6] pt-3">
-                        {invoice.lineItems.length > 0 ? (
-                          <div className="space-y-1">
-                            {invoice.lineItems.map((item, index) => (
-                              <div
-                                key={index}
-                                className="flex items-start justify-between gap-3 text-sm"
-                              >
-                                <span className="min-w-0 text-[#174734]">
-                                  {item.description}
-                                  {item.quantity !== 1
-                                    ? ` × ${formatNumber(item.quantity)}`
-                                    : ""}
-                                </span>
-                                <span className="shrink-0 font-semibold">
-                                  {formatCurrency(item.lineTotal)}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-xs text-[#6b705c]">
-                            No line items on file.
-                          </p>
-                        )}
-
-                        {invoice.payment ? (
-                          <div className="rounded-lg bg-[#f7f6f1] px-3 py-2 text-sm">
-                            <p className="font-semibold text-[#174734]">
-                              Paid {formatCurrencyPrecise(invoice.payment.amount)}
-                              {invoice.payment.paymentDate
-                                ? ` on ${formatDate(invoice.payment.paymentDate)}`
-                                : ""}
-                            </p>
-                            {invoice.payment.tipAmount > 0 && (
-                              <p className="mt-1 text-xs text-[#9c7a20]">
-                                Includes a{" "}
-                                {formatCurrencyPrecise(invoice.payment.tipAmount)}{" "}
-                                tip
-                              </p>
-                            )}
-                          </div>
-                        ) : (
-                          <p className="text-xs text-[#6b705c]">
-                            Not paid yet.
-                          </p>
-                        )}
-
-                        <div className="flex flex-wrap items-center gap-3">
-                          <a
-                            href={`/api/invoices/${invoice.invoiceId}/pdf`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm font-semibold text-[#174734] underline underline-offset-2 hover:text-[#226246]"
-                          >
-                            View invoice PDF
-                          </a>
-
-                          <ResendInvoiceButton
-                            jobberClientId={decodedId}
-                            invoiceId={invoice.invoiceId}
-                          />
-
-                          {invoice.status !== "paid" &&
-                            invoice.status !== "void" && (
-                              <div className="ml-auto">
-                                <MarkPaidButton
-                                  jobberClientId={decodedId}
-                                  invoiceId={invoice.invoiceId}
-                                />
-                              </div>
-                            )}
-                        </div>
-                      </div>
-                    </details>
-                  ))}
-                </div>
-
-                <Pagination
-                  currentPage={nativeInvoicesPagination.currentPage}
-                  totalPages={nativeInvoicesPagination.totalPages}
-                  totalCount={nativeInvoicesPagination.totalCount}
-                  pageSize={LIST_PAGE_SIZE}
-                  paramName="nativeInvoicesPage"
-                  searchParams={currentSearchParams}
-                  itemLabel="native invoice"
-                />
-              </section>
-            )}
-
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">
-                Recent Jobs
+                Past Jobs
               </h2>
 
               <div className="mt-3 space-y-2">
@@ -3201,7 +3277,7 @@ export default async function CustomerDetailPage({
 
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">
-                Recent Quotes
+                Past Quotes
               </h2>
 
               <div className="mt-3 space-y-2">
