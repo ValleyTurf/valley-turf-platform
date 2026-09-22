@@ -15,12 +15,18 @@
 //
 // There's no column recording "this invoice was resent" -- the only
 // record of it is an audit_log row (entity_type "invoice", action
-// "update", changes containing resent: true) written each time
-// resendInvoice completed. So: pull every such audit row, keep the
-// invoice ids, and check which of those invoices are STILL sitting at
-// status "draft" today -- those are the confirmed stuck ones (a
-// genuinely-never-sent draft never got a resend audit row in the first
-// place, so it's correctly left alone).
+// "update") written each time resendInvoice completed. So: pull every
+// such audit row, keep the invoice ids, and check which of those
+// invoices are STILL sitting at status "draft" today -- those are the
+// confirmed stuck ones (a genuinely-never-sent draft never got a resend
+// audit row in the first place, so it's correctly left alone).
+//
+// recordAuditLog (lib/auditLog.ts) ran this through diffRecords(before,
+// after) with before omitted -- diffRecords (lib/auditDiff.ts) always
+// emits { before, after } pairs per changed field, never a bare value,
+// so a resend row's changes column is { resent: { before: null, after:
+// true } }, not { resent: true }. Checked against .after below, not the
+// field itself.
 //
 // GET (no query params): read-only. Lists what would change. Review this
 // first.
@@ -37,7 +43,7 @@ export const maxDuration = 60;
 type AuditRow = {
   entity_id: string | null;
   created_at: string;
-  changes: Record<string, unknown> | null;
+  changes: { resent?: { before: unknown; after: unknown } } | null;
 };
 
 type StuckInvoice = {
@@ -76,7 +82,7 @@ export async function GET(request: NextRequest) {
 
   for (const row of (auditRows ?? []) as AuditRow[]) {
     if (!row.entity_id) continue;
-    if (row.changes?.resent !== true) continue;
+    if (row.changes?.resent?.after !== true) continue;
     if (!firstResendAtByInvoiceId.has(row.entity_id)) {
       firstResendAtByInvoiceId.set(row.entity_id, row.created_at);
     }
