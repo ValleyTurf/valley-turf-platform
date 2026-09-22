@@ -52,6 +52,7 @@ import {
 } from "@/lib/format";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
 import { getCustomerJobCostingSummary } from "@/lib/jobCostingSummary";
+import { isQuoteStatus, computeDisplayStatus } from "@/lib/quotes";
 
 // Profitability panel in the header (Ryan, 2026-09-20): job costing
 // (materials/labor/overhead) only started getting tracked in August
@@ -1361,6 +1362,60 @@ async function getNativeInvoicesForCustomer(
   });
 }
 
+type LocalNativeQuoteRow = {
+  id: string;
+  quote_number: string | null;
+  status: string | null;
+  expires_at: string | null;
+  service_category: string | null;
+  description: string | null;
+  created_at: string | null;
+  responded_at: string | null;
+};
+
+// Ryan (2026-09-22): the native `quotes` table (built for the on-site
+// quote-send/accept/decline feature) was never wired into this page's
+// Past Quotes list -- getJobberClient's `quotes` field only ever reads
+// Jobber's own (now-unused) quote object, and getLocalClientView below
+// hardcodes an empty `quotes.nodes` array outright. So no quote created
+// through this app's own Quotes tool has ever shown up here, for any
+// customer, Jobber-id or native-id alike. This fetches them directly
+// and maps them into the same JobberQuote shape the Past Quotes JSX
+// already renders, using an internal /quotes/[id] link in place of a
+// jobberWebUri (there isn't one -- these were never in Jobber).
+async function getNativeQuotesForCustomer(
+  jobberClientId: string
+): Promise<JobberQuote[]> {
+  const { data, error } = await supabaseServer
+    .from("quotes")
+    .select(
+      "id, quote_number, status, expires_at, service_category, description, created_at, responded_at"
+    )
+    .eq("customer_id", jobberClientId)
+    .order("created_at", { ascending: false, nullsFirst: false })
+    .limit(50);
+
+  if (error) {
+    console.error("Native quotes for customer query failed:", error.message);
+    return [];
+  }
+
+  return ((data ?? []) as LocalNativeQuoteRow[]).map((quote) => {
+    const status = isQuoteStatus(quote.status) ? quote.status : "draft";
+    const displayStatus = computeDisplayStatus(status, quote.expires_at);
+
+    return {
+      id: quote.id,
+      quoteNumber: quote.quote_number,
+      title: quote.description || quote.service_category,
+      quoteStatus: displayStatus,
+      createdAt: quote.created_at,
+      transitionedAt: quote.responded_at,
+      jobberWebUri: `/quotes/${quote.id}`,
+    };
+  });
+}
+
 type CustomerProfile = {
   turf_size_sqft: number | string | null;
   turf_size_range: string | null;
@@ -1764,6 +1819,7 @@ export default async function CustomerDetailPage({
     nativeInvoices,
     referralPickerData,
     nativeJobsForCustomer,
+    nativeQuotesForCustomer,
   ] = await Promise.all([
     isNativeId(decodedId) ? getLocalClientView(decodedId) : getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
@@ -1786,6 +1842,7 @@ export default async function CustomerDetailPage({
     getNativeInvoicesForCustomer(decodedId),
     getReferralPickerData(decodedId),
     getNativeJobsForCustomer(decodedId),
+    getNativeQuotesForCustomer(decodedId),
   ]);
 
   const referredByCustomer = profile?.referred_by_customer_id
@@ -1868,7 +1925,16 @@ export default async function CustomerDetailPage({
   const openJobs = jobs.filter(
     (job) => !(job.jobStatus ?? "").toUpperCase().includes("ARCHIVED")
   );
-  const quotes = client.quotes?.nodes ?? [];
+  // Ryan (2026-09-22): client.quotes only ever reflects Jobber's own
+  // (now-unused) quote object -- getLocalClientView doesn't even query
+  // it, it just hardcodes an empty array. Native quotes (created via
+  // this app's own Quotes tool) are a wholly separate, never-overlapping
+  // data source, so this is a straight merge with no dedup needed
+  // (compare to combinedInvoices below, where a native invoice IS a
+  // Jobber invoice's mirror and has to be excluded from the Jobber list).
+  const quotes = [...(client.quotes?.nodes ?? []), ...nativeQuotesForCustomer].sort(
+    (a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "")
+  );
   const invoices = client.invoices?.nodes ?? [];
 
   // Ryan (2026-09-21): "Recent Invoices" (from Jobber) and "Native
@@ -2791,10 +2857,12 @@ export default async function CustomerDetailPage({
                       key={visit.jobber_visit_id}
                       className="flex items-center justify-between gap-3 rounded-xl border border-[#e7e2d5] px-3 py-2"
                     >
-                      <p className="min-w-0 truncate text-sm font-bold">
-                        {formatVisitDateTime(visit.start_at)}
-                        {visit.title ? ` — ${visit.title}` : ""}
-                      </p>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold">
+                          {formatVisitDateTime(visit.start_at)}
+                          {visit.title ? ` — ${visit.title}` : ""}
+                        </p>
+                      </div>
 
                       <span
                         className={`w-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${visitStatusBadge(
