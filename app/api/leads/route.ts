@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 import { validateAddress } from "@/lib/addressValidation";
+import { sendNewLeadAlerts } from "@/lib/notifications";
 
 // Public endpoint: meant to be called by an external automation (e.g. a
 // Jobber automation or Zapier zap posting new client/request info) rather
@@ -84,6 +85,19 @@ export async function POST(request: Request) {
         { status: 500 }
       );
     }
+
+    // Ryan (2026-09-22): same gap as the /request-quote form had — this
+    // endpoint never sent the new-lead alert either. Deferred so the
+    // calling automation's response isn't held up on email/SMS delivery.
+    after(() =>
+      sendNewLeadAlerts({
+        name: [firstName, lastName].filter(Boolean).join(" ") || null,
+        phone,
+        email,
+        source,
+        campaignName: null,
+      })
+    );
 
     return NextResponse.json({ ok: true, lead: data });
   } catch {
