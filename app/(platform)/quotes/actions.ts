@@ -16,6 +16,7 @@ import {
   type TierKey,
 } from "@/lib/quotes";
 import { attemptQuoteJobConversion } from "@/lib/quoteJobConversion";
+import { sendQuoteEmail, sendQuoteSms } from "@/lib/notifications";
 import type { ActionState } from "./actionState";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
@@ -264,6 +265,107 @@ export async function deleteDraftQuote(id: string): Promise<void> {
 
   revalidatePath("/quotes");
   redirect("/quotes");
+}
+
+// The actual "Send" action (Sept 2026) — distinct from markQuoteStatus's
+// "Mark Sent" button below, which only flips the status for a quote
+// staff already handed over some other way (in person, printed). This
+// is the real send: emails and/or texts the customer the public
+// /q/[token] link (whichever of recipient_email/recipient_phone this
+// quote has on file), using the fixed templates in lib/notifications.ts,
+// then moves the quote to "sent" -- only once at least one channel
+// actually went out, so a total send failure leaves the quote in
+// "draft" rather than silently marking it sent with nothing delivered.
+//
+// quote.customer_id is already customers.jobber_client_id (see
+// QuoteRecipientPicker's PickerCustomer type) — passed straight through
+// as the jobberClientId param the send functions use for contact-history
+// logging, no extra lookup needed. A lead-based quote has no customer_id
+// at all, so that logging is just skipped for it, same as every other
+// lead-sourced send in this app.
+export async function sendQuote(id: string): Promise<void> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    throw new Error("You must be signed in to send a quote.");
+  }
+
+  const { data: quote, error: fetchError } = await supabaseServer
+    .from("quotes")
+    .select(
+      "id, status, recipient_name, recipient_email, recipient_phone, public_token, customer_id"
+    )
+    .eq("id", id)
+    .single();
+
+  if (fetchError || !quote) {
+    throw new Error("Quote not found.");
+  }
+
+  if (!isQuoteStatus(quote.status) || quote.status !== "draft") {
+    throw new Error("Only draft quotes can be sent.");
+  }
+
+  if (!quote.recipient_email && !quote.recipient_phone) {
+    throw new Error("This quote has no email or phone on file to send to.");
+  }
+
+  const quoteUrl = `https://go.valleyturfrevival.com/q/${quote.public_token}`;
+  const jobberClientId = quote.customer_id;
+
+  const [emailResult, smsResult] = await Promise.allSettled([
+    quote.recipient_email
+      ? sendQuoteEmail({
+          toEmail: quote.recipient_email,
+          recipientName: quote.recipient_name,
+          quoteUrl,
+          jobberClientId,
+        })
+      : Promise.resolve(false),
+    quote.recipient_phone
+      ? sendQuoteSms(quote.recipient_phone, quote.recipient_name, quoteUrl, jobberClientId)
+      : Promise.resolve(false),
+  ]);
+
+  const emailSent = emailResult.status === "fulfilled" && emailResult.value === true;
+  const smsSent = smsResult.status === "fulfilled" && smsResult.value === true;
+
+  if (!emailSent && !smsSent) {
+    throw new Error(
+      "Couldn't send the quote by email or text. Check that Resend/Twilio are configured correctly, or try again."
+    );
+  }
+
+  const { error: updateError } = await supabaseServer
+    .from("quotes")
+    .update({
+      status: "sent",
+      sent_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  if (updateError) {
+    throw new Error(`Sent, but failed to update the quote's status: ${updateError.message}`);
+  }
+
+  const channels = [emailSent ? "email" : null, smsSent ? "text" : null]
+    .filter(Boolean)
+    .join(" + ");
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "quote",
+    entityId: id,
+    entityLabel: `Quote for ${quote.recipient_name}`,
+    before: { status: quote.status },
+    after: { status: "sent" },
+    note: `Sent via ${channels}`,
+  });
+
+  revalidatePath("/quotes");
+  revalidatePath(`/quotes/${id}`);
 }
 
 // Internal (logged-in) status changes — separate from the public

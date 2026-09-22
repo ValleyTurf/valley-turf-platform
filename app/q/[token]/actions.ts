@@ -16,6 +16,18 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { recordAuditLog } from "@/lib/auditLog";
 import { computeDisplayStatus, isQuoteStatus } from "@/lib/quotes";
 import { attemptQuoteJobConversion } from "@/lib/quoteJobConversion";
+import {
+  sendQuoteViewedAlert,
+  sendQuoteAcceptedAlert,
+  sendQuoteDeclinedAlert,
+} from "@/lib/notifications";
+
+// Staff-facing "here's what's live" link -- same hardcoded production
+// domain the quotes/[id] detail page already uses for its own Shareable
+// Link section, rather than pulling in getBaseUrl() here.
+function quoteUrlFor(token: string): string {
+  return `https://go.valleyturfrevival.com/q/${token}`;
+}
 
 async function respond(
   token: string,
@@ -24,7 +36,7 @@ async function respond(
 ): Promise<void> {
   const { data: quote, error: fetchError } = await supabaseServer
     .from("quotes")
-    .select("id, status, expires_at, recipient_name")
+    .select("id, quote_number, status, expires_at, recipient_name")
     .eq("public_token", token)
     .single();
 
@@ -68,6 +80,18 @@ async function respond(
     // lib/quoteJobConversion.ts for why this is safe to just await and
     // move on regardless of outcome.
     await attemptQuoteJobConversion(quote.id);
+    await sendQuoteAcceptedAlert({
+      quoteNumber: quote.quote_number,
+      recipientName: quote.recipient_name,
+      quoteUrl: quoteUrlFor(token),
+    });
+  } else {
+    await sendQuoteDeclinedAlert({
+      quoteNumber: quote.quote_number,
+      recipientName: quote.recipient_name,
+      quoteUrl: quoteUrlFor(token),
+      responseNote: note,
+    });
   }
 
   revalidatePath("/quotes");
@@ -93,7 +117,7 @@ export async function acceptQuoteTier(
 ): Promise<void> {
   const { data: quote, error: fetchError } = await supabaseServer
     .from("quotes")
-    .select("id, status, expires_at, pricing_mode, recipient_name")
+    .select("id, quote_number, status, expires_at, pricing_mode, recipient_name")
     .eq("public_token", token)
     .single();
 
@@ -149,6 +173,11 @@ export async function acceptQuoteTier(
   // Never blocks/fails the customer's acceptance — see the top of
   // lib/quoteJobConversion.ts.
   await attemptQuoteJobConversion(quote.id);
+  await sendQuoteAcceptedAlert({
+    quoteNumber: quote.quote_number,
+    recipientName: quote.recipient_name,
+    quoteUrl: quoteUrlFor(token),
+  });
 
   revalidatePath("/quotes");
   revalidatePath(`/quotes/${quote.id}`);
@@ -167,14 +196,27 @@ export async function declineQuote(
 }
 
 // Best-effort "first viewed" timestamp — never blocks or errors the
-// page render if it fails.
+// page render if it fails. The .is("viewed_at", null) filter means the
+// update only actually touches a row (and returns data) the very first
+// time this runs for a given quote — every later page load is a no-op,
+// which is also how this avoids alerting staff on every repeat visit.
 export async function markQuoteViewed(quoteId: string): Promise<void> {
   try {
-    await supabaseServer
+    const { data } = await supabaseServer
       .from("quotes")
       .update({ viewed_at: new Date().toISOString() })
       .eq("id", quoteId)
-      .is("viewed_at", null);
+      .is("viewed_at", null)
+      .select("quote_number, recipient_name, public_token")
+      .maybeSingle();
+
+    if (data) {
+      await sendQuoteViewedAlert({
+        quoteNumber: data.quote_number,
+        recipientName: data.recipient_name,
+        quoteUrl: quoteUrlFor(data.public_token),
+      });
+    }
   } catch (error) {
     console.error("Failed to record quote view:", error);
   }

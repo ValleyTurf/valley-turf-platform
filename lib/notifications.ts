@@ -1119,6 +1119,258 @@ export async function sendQuoteFollowupSms(
   }
 }
 
+// Initial quote send (Ryan's wording, Sept 2026) -- distinct from
+// sendQuoteFollowupEmail/Sms above, which are the cron-driven nudge for
+// an already-sent, not-yet-responded-to quote. This is the real "Send"
+// action on the quote page (app/(platform)/quotes/actions.ts's
+// sendQuote), replacing the old copy-the-link-yourself-only flow.
+export type QuoteSendEmail = {
+  toEmail: string;
+  recipientName: string | null;
+  quoteUrl: string;
+  jobberClientId: string | null;
+};
+
+export async function sendQuoteEmail(request: QuoteSendEmail): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    console.error("Cannot send quote email: RESEND_API_KEY is not set.");
+    return false;
+  }
+
+  const greetingName = firstNameOf(request.recipientName);
+
+  const html = `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
+      <p>Thank you for reaching out to Valley Turf Revival for a turf cleaning quote!</p>
+      <p style="margin: 24px 0;">
+        <a
+          href="${request.quoteUrl}"
+          style="background-color: #174734; color: #ffffff; padding: 12px 24px; border-radius: 10px; text-decoration: none; font-weight: bold;"
+        >
+          Click here to see quote
+        </a>
+      </p>
+      <p>We look forward to earning your business! You can click accept in the quote or reply to this message and we will work to get you scheduled.</p>
+      <p>If you have any questions, reach out here or call/text 480-331-4596.</p>
+      <p>Thank You,<br>Ryan<br>Valley Turf Revival</p>
+    </div>
+  `;
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromHeader(),
+        to: request.toEmail,
+        reply_to: replyToAddressFor(request.jobberClientId),
+        subject: "Your Quote from Valley Turf Revival",
+        html,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("Quote email failed:", response.status, await response.text());
+      return false;
+    }
+
+    const data = (await response.json()) as { id?: string };
+
+    await logContactHistory({
+      jobberClientId: request.jobberClientId,
+      channel: "email",
+      subject: "Quote Sent",
+      summary: "Sent the initial quote link.",
+      resendEmailId: data.id ?? null,
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Quote email error:", error);
+    return false;
+  }
+}
+
+// Condensed counterpart for SMS -- Ryan only gave the email wording; this
+// is a shortened version of the same message, confirmed against the
+// mockup he approved (2026-09-22).
+export async function sendQuoteSms(
+  toPhone: string,
+  recipientName: string | null,
+  quoteUrl: string,
+  jobberClientId: string | null
+): Promise<boolean> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_FROM_NUMBER;
+
+  if (!accountSid || !authToken || !fromNumber) {
+    console.error("Cannot send quote text: Twilio env vars are not set.");
+    return false;
+  }
+
+  const greetingName = firstNameOf(recipientName);
+  const body = `Hi ${greetingName}, thanks for reaching out to Valley Turf Revival for a turf cleaning quote! View & accept here: ${quoteUrl} Questions? Call/text 480-331-4596. -Ryan, Valley Turf Revival`;
+
+  try {
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${accountSid}:${authToken}`
+          ).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          To: toPhone,
+          From: fromNumber,
+          Body: body,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      console.error("Quote SMS failed:", response.status, await response.text());
+      return false;
+    }
+
+    await logContactHistory({
+      jobberClientId,
+      channel: "sms",
+      subject: "Quote Sent",
+      summary: body,
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Quote SMS error:", error);
+    return false;
+  }
+}
+
+// --- Staff alerts: viewed / accepted / declined ----------------------
+// Same "internal alert" shape as sendPaymentReceivedAlertEmail/
+// sendNewLeadAlerts above (ALERT_EMAIL/ALERT_PHONE, no logContactHistory
+// since this isn't a customer-facing send). Called from
+// app/q/[token]/actions.ts (viewed/accepted/declined all happen on the
+// public, unauthenticated quote page).
+export type QuoteStatusAlert = {
+  quoteNumber: number;
+  recipientName: string | null;
+  quoteUrl: string;
+};
+
+async function sendStaffAlertEmail(subject: string, html: string): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return;
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ from: fromHeader(), to: ALERT_EMAIL, subject, html }),
+    });
+
+    if (!response.ok) {
+      console.error("Staff alert email failed:", response.status, await response.text());
+    }
+  } catch (error) {
+    console.error("Staff alert email error:", error);
+  }
+}
+
+async function sendStaffAlertSms(body: string): Promise<void> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.TWILIO_FROM_NUMBER;
+  if (!accountSid || !authToken || !fromNumber) return;
+
+  try {
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${Buffer.from(
+            `${accountSid}:${authToken}`
+          ).toString("base64")}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ To: ALERT_PHONE, From: fromNumber, Body: body }),
+      }
+    );
+
+    if (!response.ok) {
+      console.error("Staff alert SMS failed:", response.status, await response.text());
+    }
+  } catch (error) {
+    console.error("Staff alert SMS error:", error);
+  }
+}
+
+export async function sendQuoteViewedAlert(alert: QuoteStatusAlert): Promise<void> {
+  const name = alert.recipientName || "A customer";
+  const subject = `Quote #${alert.quoteNumber} viewed -- ${name}`;
+  const html = `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 16px; font-weight: bold;">Quote viewed</p>
+      <p><strong>Customer:</strong> ${escapeHtml(alert.recipientName)}</p>
+      <p><strong>Quote:</strong> #${alert.quoteNumber}</p>
+      <p><a href="${alert.quoteUrl}">${alert.quoteUrl}</a></p>
+    </div>
+  `;
+  const sms = `Quote #${alert.quoteNumber} viewed by ${name}.`;
+  await Promise.allSettled([sendStaffAlertEmail(subject, html), sendStaffAlertSms(sms)]);
+}
+
+export async function sendQuoteAcceptedAlert(alert: QuoteStatusAlert): Promise<void> {
+  const name = alert.recipientName || "A customer";
+  const subject = `Quote #${alert.quoteNumber} ACCEPTED -- ${name}`;
+  const html = `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 16px; font-weight: bold;">Quote accepted</p>
+      <p><strong>Customer:</strong> ${escapeHtml(alert.recipientName)}</p>
+      <p><strong>Quote:</strong> #${alert.quoteNumber}</p>
+      <p>A job has been created and is ready to schedule.</p>
+    </div>
+  `;
+  const sms = `Quote #${alert.quoteNumber} ACCEPTED by ${name}. Ready to schedule.`;
+  await Promise.allSettled([sendStaffAlertEmail(subject, html), sendStaffAlertSms(sms)]);
+}
+
+export type QuoteDeclinedAlert = QuoteStatusAlert & { responseNote: string | null };
+
+export async function sendQuoteDeclinedAlert(alert: QuoteDeclinedAlert): Promise<void> {
+  const name = alert.recipientName || "A customer";
+  const subject = `Quote #${alert.quoteNumber} declined -- ${name}`;
+  const noteHtml = alert.responseNote
+    ? `<p><strong>Note:</strong> "${escapeHtmlText(alert.responseNote)}"</p>`
+    : "";
+  const html = `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 16px; font-weight: bold;">Quote declined</p>
+      <p><strong>Customer:</strong> ${escapeHtml(alert.recipientName)}</p>
+      <p><strong>Quote:</strong> #${alert.quoteNumber}</p>
+      ${noteHtml}
+    </div>
+  `;
+  const sms = `Quote #${alert.quoteNumber} declined by ${name}.${
+    alert.responseNote ? ` Note: "${alert.responseNote}"` : ""
+  }`;
+  await Promise.allSettled([sendStaffAlertEmail(subject, html), sendStaffAlertSms(sms)]);
+}
+
 export type InvoiceEmail = {
   toEmail: string;
   customerName: string | null;

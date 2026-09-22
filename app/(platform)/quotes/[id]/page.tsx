@@ -24,6 +24,7 @@ import {
   markQuoteStatus,
   deleteDraftQuote,
   retryQuoteJobConversion,
+  sendQuote,
 } from "../actions";
 
 type QuoteDetail = {
@@ -71,7 +72,10 @@ const STATUS_BADGE_CLASSES: Record<QuoteStatus, string> = {
 
 const STATUS_BUTTON_LABEL: Record<QuoteStatus, string> = {
   draft: "Reopen as Draft",
-  sent: "Mark Sent",
+  // Distinct from the "Send Quote" button below (Sept 2026), which
+  // actually emails/texts the customer — this one only flips the status
+  // for a quote handed over some other way (in person, printed).
+  sent: "Mark Sent Manually",
   accepted: "Mark Accepted",
   declined: "Mark Declined",
   expired: "Mark Expired",
@@ -336,15 +340,45 @@ export default async function QuoteDetailPage({
           </div>
         </section>
 
+        {quote.status === "draft" && (
+          <section className="mt-6 rounded-2xl bg-white p-5 shadow">
+            <p className="text-xs font-bold text-[#9c7a20]">Send Quote</p>
+
+            {quote.recipient_email || quote.recipient_phone ? (
+              <>
+                <p className="mt-1 text-sm text-[#6b705c]">
+                  Emails{quote.recipient_email && quote.recipient_phone ? " and texts" : ""} the
+                  quote link to{" "}
+                  {[quote.recipient_email, quote.recipient_phone]
+                    .filter(Boolean)
+                    .join(" and ")}
+                  .
+                </p>
+                <form action={sendQuote.bind(null, quote.id)} className="mt-3">
+                  <button
+                    type="submit"
+                    className="rounded-xl bg-[#174734] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#226246]"
+                  >
+                    Send Quote
+                  </button>
+                </form>
+              </>
+            ) : (
+              <p className="mt-1 text-sm text-[#6b705c]">
+                Add an email or phone number to this quote to send it directly.
+              </p>
+            )}
+          </section>
+        )}
+
         {quote.status === "accepted" && (
           <section className="mt-6 rounded-2xl bg-white p-5 shadow">
-            <p className="text-xs font-bold text-[#9c7a20]">Jobber Job</p>
+            <p className="text-xs font-bold text-[#9c7a20]">Job</p>
 
             {quote.jobber_job_id ? (
               <div className="mt-2 rounded-xl bg-green-50 p-4 text-sm text-green-800">
                 <p className="font-bold">
-                  Job {quote.jobber_job_number ? `#${quote.jobber_job_number}` : ""}{" "}
-                  created in Jobber
+                  Job {quote.jobber_job_number ? `#${quote.jobber_job_number}` : ""} created
                 </p>
                 {quote.job_creation_attempted_at && (
                   <p className="mt-1 text-green-700">
@@ -357,7 +391,7 @@ export default async function QuoteDetailPage({
                 <p className="font-bold">
                   {quote.job_creation_error
                     ? "Job creation failed"
-                    : "Job hasn't been created in Jobber yet"}
+                    : "Job hasn't been created yet"}
                 </p>
                 {quote.job_creation_error && (
                   <p className="mt-1 text-amber-700">{quote.job_creation_error}</p>
@@ -370,7 +404,7 @@ export default async function QuoteDetailPage({
                     type="submit"
                     className="rounded-lg bg-[#174734] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#226246]"
                   >
-                    {quote.job_creation_error ? "Retry" : "Create Job in Jobber"}
+                    {quote.job_creation_error ? "Retry" : "Create Job"}
                   </button>
                 </form>
               </div>
