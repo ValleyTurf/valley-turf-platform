@@ -5,10 +5,12 @@
 // thing customers actually submit (see 050_add_lead_form_fields.sql for
 // the full "why" on this). No auth check: this route is public (see
 // proxy.ts PUBLIC_PATHS), same trust model as /q/[token] and /pay/[token].
+import { after } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 import { validateAddress } from "@/lib/addressValidation";
 import { splitName } from "@/lib/leadJobberClient";
 import { createNativeCustomer } from "@/lib/nativeCustomers";
+import { sendNewLeadAlerts } from "@/lib/notifications";
 
 export type SubmitQuoteRequestInput = {
   fullName: string;
@@ -102,6 +104,22 @@ export async function submitQuoteRequest(
       error: "Something went wrong saving your request. Please call or text us instead.",
     };
   }
+
+  // Ryan (2026-09-22): this form's leads were never wired to the same
+  // new-lead alert app/api/scan-leads/route.ts sends for a QR scan --
+  // not a regression, just a gap from before this form existed. Scheduled
+  // to run after the response is sent, same reasoning as scan-leads: the
+  // customer's "thanks, we'll be in touch" confirmation shouldn't wait on
+  // email/SMS delivery.
+  after(() =>
+    sendNewLeadAlerts({
+      name: fullName,
+      phone,
+      email,
+      source: "Website Form",
+      campaignName: null,
+    })
+  );
 
   // Best-effort: turn this lead into a real customer record right away,
   // same as this always did, just natively now (Tier 4 of the Jobber
