@@ -165,9 +165,34 @@ export async function createQuote(
     addons = parseAddons(formData);
   }
 
+  const postedCustomerId = cleanText(formData.get("customer_id"));
+  const leadId = cleanText(formData.get("lead_id"));
+
+  // Ryan (2026-09-22): a lead picked in QuoteRecipientPicker never has a
+  // customer_id to post -- the /quotes/new page's lead query doesn't even
+  // fetch it (see LeadRow there). But a "Website Form" lead already gets
+  // a native customer created for it at intake (request-quote/actions.ts's
+  // createNativeCustomer call, which backfills leads.jobber_client_id) --
+  // so without this lookup, a quote created for one of those leads sat
+  // with customer_id: null forever and never showed up in Past Quotes on
+  // that customer's page, even though the customer record existed the
+  // whole time. Falls back to null (today's behavior) for a lead that
+  // hasn't been linked to a customer yet.
+  let customerId = postedCustomerId;
+
+  if (!customerId && leadId) {
+    const { data: leadRow } = await supabaseServer
+      .from("leads")
+      .select("jobber_client_id")
+      .eq("id", leadId)
+      .maybeSingle();
+
+    customerId = leadRow?.jobber_client_id ?? null;
+  }
+
   const row = {
-    customer_id: cleanText(formData.get("customer_id")),
-    lead_id: cleanText(formData.get("lead_id")),
+    customer_id: customerId,
+    lead_id: leadId,
     recipient_name: recipientName,
     recipient_email: cleanText(formData.get("recipient_email")),
     recipient_phone: cleanText(formData.get("recipient_phone")),
