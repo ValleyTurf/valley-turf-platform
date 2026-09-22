@@ -1407,7 +1407,15 @@ async function getNativeQuotesForCustomer(
     return {
       id: quote.id,
       quoteNumber: quote.quote_number,
-      title: quote.description || quote.service_category,
+      // Ryan (2026-09-22): description is staff-typed freeform text (can
+      // run to a full paragraph -- e.g. an entire customer-facing
+      // message) and blew out the whole page's width sitting in this
+      // single-line title spot. service_category is the short
+      // categorical label ("Initial Full Cleaning") every other pill on
+      // this page already uses -- title is left blank rather than
+      // falling back to description if it's ever missing, so this can't
+      // regress the same way again.
+      title: quote.service_category,
       quoteStatus: displayStatus,
       createdAt: quote.created_at,
       transitionedAt: quote.responded_at,
