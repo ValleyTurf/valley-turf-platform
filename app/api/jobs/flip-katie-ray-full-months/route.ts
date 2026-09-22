@@ -1,9 +1,10 @@
 // One-off, single-customer action (2026-09-22). Roadmap item 19's second
-// customer, same pattern as flip-baldriche-full-months -- scoped to
+// customer. Same base pattern as flip-baldriche-full-months -- scoped to
 // exactly one jobberClientId on purpose, not a generic "apply to
-// everyone" tool.
+// everyone" tool -- but wider than Baldriche's flip: Ryan explicitly
+// wants Katie Ray's non-Full months retitled too, not just left alone.
 //
-// Hardcoded to Katie Ray only. Does two things, both scoped to her:
+// Hardcoded to Katie Ray only. Does three things, all scoped to her:
 //   1. Sets customers.full_cleaning_months to [2,4,6,8,10,12] (Feb/Apr/
 //      June/Aug/Oct/Dec), matching her own Service Instructions text:
 //      "Full Cleaning - Feb, Apr, June, Aug, Oct, Dec" (confirmed via
@@ -14,14 +15,14 @@
 //      those months (generated before this feature existed, so they
 //      still carry the job's generic "Ray - Monthly Maintenance Plan"
 //      title) to match her own historical convention: "Ray - Full -
-//      Monthly" -- confirmed against her actual past completed visits
-//      (Ryan's screenshot, 2026-09-22: 4 completed visits alternating
-//      "Ray - Full - Monthly" / "Ray - Maintenance - Monthly"). Visits
-//      outside those months are left completely untouched, same as
-//      Baldriche's flip -- the generic-vs-specific "Monthly Maintenance
-//      Plan" wording on her other months is the same systemic mismatch
-//      flagged in lookup-baldriche-visits, not something this
-//      per-customer flip is scoped to fix.
+//      Monthly".
+//   3. Retitles her future visits OUTSIDE those months (same generic
+//      "Ray - Monthly Maintenance Plan" title) to "Ray - Maintenance -
+//      Monthly" -- Ryan's explicit instruction (2026-09-22), unlike
+//      Baldriche's flip, which left her non-Full months untouched.
+// Both title conventions confirmed against Katie Ray's actual past
+// completed visits (Ryan's screenshot, 2026-09-22: 4 completed visits
+// alternating "Ray - Full - Monthly" / "Ray - Maintenance - Monthly").
 //
 // Dry-run by default (?apply=true to write), admin-gated.
 import { NextResponse } from "next/server";
@@ -34,6 +35,7 @@ export const maxDuration = 60;
 const KATIE_RAY_CLIENT_ID = "Z2lkOi8vSm9iYmVyL0NsaWVudC8xMjA5MDUwOTc=";
 const FULL_MONTHS = [2, 4, 6, 8, 10, 12];
 const FULL_TITLE = "Ray - Full - Monthly";
+const MAINTENANCE_TITLE = "Ray - Maintenance - Monthly";
 
 export async function GET(request: Request) {
   try {
@@ -72,13 +74,19 @@ export async function GET(request: Request) {
     );
   }
 
-  const visitsToRetitle = (upcomingVisits ?? []).filter((visit) => {
+  const fullVisitsToRetitle = (upcomingVisits ?? []).filter((visit) => {
     const month = new Date(visit.start_at as string).getUTCMonth() + 1;
     return FULL_MONTHS.includes(month) && visit.title !== FULL_TITLE;
   });
 
+  const maintenanceVisitsToRetitle = (upcomingVisits ?? []).filter((visit) => {
+    const month = new Date(visit.start_at as string).getUTCMonth() + 1;
+    return !FULL_MONTHS.includes(month) && visit.title !== MAINTENANCE_TITLE;
+  });
+
   let customerUpdated = false;
-  let visitsRetitled = 0;
+  let fullRetitled = 0;
+  let maintenanceRetitled = 0;
   const errors: string[] = [];
 
   if (apply) {
@@ -93,7 +101,7 @@ export async function GET(request: Request) {
       customerUpdated = true;
     }
 
-    for (const visit of visitsToRetitle) {
+    for (const visit of fullVisitsToRetitle) {
       const { error: updateVisitError } = await supabaseServer
         .from("jobber_visits")
         .update({ title: FULL_TITLE, updated_at: new Date().toISOString() })
@@ -102,7 +110,20 @@ export async function GET(request: Request) {
       if (updateVisitError) {
         errors.push(`${visit.jobber_visit_id}: ${updateVisitError.message}`);
       } else {
-        visitsRetitled++;
+        fullRetitled++;
+      }
+    }
+
+    for (const visit of maintenanceVisitsToRetitle) {
+      const { error: updateVisitError } = await supabaseServer
+        .from("jobber_visits")
+        .update({ title: MAINTENANCE_TITLE, updated_at: new Date().toISOString() })
+        .eq("jobber_visit_id", visit.jobber_visit_id);
+
+      if (updateVisitError) {
+        errors.push(`${visit.jobber_visit_id}: ${updateVisitError.message}`);
+      } else {
+        maintenanceRetitled++;
       }
     }
   }
@@ -116,14 +137,24 @@ export async function GET(request: Request) {
       wouldSetTo: FULL_MONTHS,
       updated: customerUpdated,
     },
-    visits: {
-      wouldRetitle: visitsToRetitle.length,
-      retitled: visitsRetitled,
-      sample: visitsToRetitle.map((v) => ({
+    fullVisits: {
+      wouldRetitle: fullVisitsToRetitle.length,
+      retitled: fullRetitled,
+      sample: fullVisitsToRetitle.map((v) => ({
         jobberVisitId: v.jobber_visit_id,
         startAt: v.start_at,
         previousTitle: v.title,
         newTitle: FULL_TITLE,
+      })),
+    },
+    maintenanceVisits: {
+      wouldRetitle: maintenanceVisitsToRetitle.length,
+      retitled: maintenanceRetitled,
+      sample: maintenanceVisitsToRetitle.map((v) => ({
+        jobberVisitId: v.jobber_visit_id,
+        startAt: v.start_at,
+        previousTitle: v.title,
+        newTitle: MAINTENANCE_TITLE,
       })),
     },
     errors,
