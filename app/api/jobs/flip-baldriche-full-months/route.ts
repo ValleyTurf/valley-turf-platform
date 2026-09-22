@@ -4,7 +4,7 @@
 //
 // Hardcoded to exactly one jobberClientId on purpose -- this is not a
 // generic "apply to everyone" tool (that's a separate, later step Ryan
-// hasn't approved yet). It does two things, both scoped to Alyssa
+// hasn't approved yet). It does three things, all scoped to Alyssa
 // Baldriche only:
 //   1. Sets customers.full_cleaning_months to [3,6,9,12] (Mar/Jun/Sep/
 //      Dec -- confirmed with Ryan earlier as her Full-cleaning cadence,
@@ -17,8 +17,14 @@
 //      still carry the job's generic title) to match her own historical
 //      convention: "Baldriche - Full - Monthly" -- exactly what her own
 //      past completed visits already say for June/September (see the
-//      2026-09-21 diagnostic). Visits outside those months are left
-//      completely untouched.
+//      2026-09-21 diagnostic).
+//   3. Retitles her future visits OUTSIDE those months (still reading
+//      the generic "Monthly Maintenance Plan" title on the schedule) to
+//      "Baldriche - Maintenance - Monthly" -- Ryan's explicit
+//      instruction (2026-09-22): "all that read Monthly Maintenance
+//      Plan to Maintenance - Monthly. Leave the Full - Monthly visits as
+//      is." Same "<Name> - <Type> - Monthly" convention as her own Full
+//      title above, and the same pattern just applied to Katie Ray.
 //
 // Dry-run by default (?apply=true to write), admin-gated.
 import { NextResponse } from "next/server";
@@ -31,6 +37,7 @@ export const maxDuration = 60;
 const BALDRICHE_CLIENT_ID = "Z2lkOi8vSm9iYmVyL0NsaWVudC85OTcyMjA3Mw==";
 const FULL_MONTHS = [3, 6, 9, 12];
 const FULL_TITLE = "Baldriche - Full - Monthly";
+const MAINTENANCE_TITLE = "Baldriche - Maintenance - Monthly";
 
 export async function GET(request: Request) {
   try {
@@ -69,13 +76,19 @@ export async function GET(request: Request) {
     );
   }
 
-  const visitsToRetitle = (upcomingVisits ?? []).filter((visit) => {
+  const fullVisitsToRetitle = (upcomingVisits ?? []).filter((visit) => {
     const month = new Date(visit.start_at as string).getUTCMonth() + 1;
     return FULL_MONTHS.includes(month) && visit.title !== FULL_TITLE;
   });
 
+  const maintenanceVisitsToRetitle = (upcomingVisits ?? []).filter((visit) => {
+    const month = new Date(visit.start_at as string).getUTCMonth() + 1;
+    return !FULL_MONTHS.includes(month) && visit.title !== MAINTENANCE_TITLE;
+  });
+
   let customerUpdated = false;
-  let visitsRetitled = 0;
+  let fullRetitled = 0;
+  let maintenanceRetitled = 0;
   const errors: string[] = [];
 
   if (apply) {
@@ -90,7 +103,7 @@ export async function GET(request: Request) {
       customerUpdated = true;
     }
 
-    for (const visit of visitsToRetitle) {
+    for (const visit of fullVisitsToRetitle) {
       const { error: updateVisitError } = await supabaseServer
         .from("jobber_visits")
         .update({ title: FULL_TITLE, updated_at: new Date().toISOString() })
@@ -99,7 +112,20 @@ export async function GET(request: Request) {
       if (updateVisitError) {
         errors.push(`${visit.jobber_visit_id}: ${updateVisitError.message}`);
       } else {
-        visitsRetitled++;
+        fullRetitled++;
+      }
+    }
+
+    for (const visit of maintenanceVisitsToRetitle) {
+      const { error: updateVisitError } = await supabaseServer
+        .from("jobber_visits")
+        .update({ title: MAINTENANCE_TITLE, updated_at: new Date().toISOString() })
+        .eq("jobber_visit_id", visit.jobber_visit_id);
+
+      if (updateVisitError) {
+        errors.push(`${visit.jobber_visit_id}: ${updateVisitError.message}`);
+      } else {
+        maintenanceRetitled++;
       }
     }
   }
@@ -113,14 +139,24 @@ export async function GET(request: Request) {
       wouldSetTo: FULL_MONTHS,
       updated: customerUpdated,
     },
-    visits: {
-      wouldRetitle: visitsToRetitle.length,
-      retitled: visitsRetitled,
-      sample: visitsToRetitle.map((v) => ({
+    fullVisits: {
+      wouldRetitle: fullVisitsToRetitle.length,
+      retitled: fullRetitled,
+      sample: fullVisitsToRetitle.map((v) => ({
         jobberVisitId: v.jobber_visit_id,
         startAt: v.start_at,
         previousTitle: v.title,
         newTitle: FULL_TITLE,
+      })),
+    },
+    maintenanceVisits: {
+      wouldRetitle: maintenanceVisitsToRetitle.length,
+      retitled: maintenanceRetitled,
+      sample: maintenanceVisitsToRetitle.map((v) => ({
+        jobberVisitId: v.jobber_visit_id,
+        startAt: v.start_at,
+        previousTitle: v.title,
+        newTitle: MAINTENANCE_TITLE,
       })),
     },
     errors,
