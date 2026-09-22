@@ -19,14 +19,20 @@
 //      every one-off route used), so this is safe to re-run and won't
 //      re-touch the 8 customers already flipped by hand, or clobber a
 //      visit that's already correct.
-// Special case: "Full Cleaning every month" (Scott Tobbe, confirmed
-// with Ryan 2026-09-22) means all 12 months are Full -- no Maintenance
-// months at all for that customer.
+// Two special cases beyond the month-list parse, both confirmed with
+// Ryan 2026-09-22:
+//   - "Full Cleaning every month" (Scott Tobbe) -- all 12 months are
+//     Full, no Maintenance months at all.
+//   - "Maintenance Only" with no full cleanings at all -- zero Full
+//     months, every future visit becomes Maintenance. Excludes anyone
+//     whose instructions also mention a second visit type (e.g. Karen
+//     Contreras's Spray visits), since those need a manual look rather
+//     than a blanket retitle.
 //
 // A customer whose service_instructions doesn't parse (no recognized
-// "Full Cleaning - ..." months, and not the "every month" case above)
-// or has no last_name is skipped and listed separately -- never
-// guessed at.
+// "Full Cleaning - ..." months, and not either special case above) or
+// has no last_name is skipped and listed separately -- never guessed
+// at.
 //
 // Dry-run by default (?apply=true to write), admin-gated. Updates are
 // batched two-per-customer (one for its Full-month visit ids, one for
@@ -63,6 +69,24 @@ function parseFullMonths(serviceInstructions: string | null): number[] | null {
   // a Full cleaning, so there are no Maintenance months at all.
   if (/full cleaning\s+every\s+month/i.test(serviceInstructions)) {
     return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  }
+
+  // "Maintenance Only" with no full cleanings at all (Ryan, 2026-09-22:
+  // "all that are Maintenance Only should all read Maintenance - Monthly
+  // for each month") -> zero Full months, so every future visit falls
+  // into the Maintenance bucket below. Deliberately excludes any
+  // instructions that also describe a second, different visit type in
+  // the same text (e.g. Karen Contreras's "Maintenance Only for first
+  // visit of month. Spray Only for second visit of month.") -- those
+  // aren't pure maintenance-only and would get her Spray visits
+  // mislabeled as Maintenance, so they're left to fall through to the
+  // unparsed/skipped path below instead of being guessed at.
+  if (
+    /maintenance only/i.test(serviceInstructions) &&
+    /no\s+full\s+clean/i.test(serviceInstructions) &&
+    !/spray/i.test(serviceInstructions)
+  ) {
+    return [];
   }
 
   const match = serviceInstructions.match(/full cleaning\s*-\s*([^\n\r]+)/i);
