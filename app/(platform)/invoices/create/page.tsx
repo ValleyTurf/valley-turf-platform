@@ -42,6 +42,15 @@ function visitServiceLabel(title: string | null): string | null {
 
 type VisitRow = ReadyToInvoiceVisit & {
   jobber_job_id: string | null;
+  // migration 085_add_visit_price_override.sql -- a per-visit price that
+  // wins over the job's own line items when set. Exists because pricing
+  // today lives on jobber_jobs (one price for the whole recurring
+  // series), but some customers (e.g. Durkin, Mariscal) need a
+  // different price on their Full-Monthly visits than their
+  // Maintenance-Monthly ones, and both come out of the SAME recurring
+  // job. null for every visit that doesn't need this (the vast
+  // majority) -- those keep suggesting straight from the job as today.
+  price_override: number | string | null;
 };
 
 type VisitCost = {
@@ -100,7 +109,7 @@ export default async function CreateInvoicesPage({
   let visitsQuery = supabaseServer
     .from("jobber_visits")
     .select(
-      "jobber_visit_id, jobber_job_id, jobber_client_id, customer_name, job_number, title, start_at, completed_at",
+      "jobber_visit_id, jobber_job_id, jobber_client_id, customer_name, job_number, title, start_at, completed_at, price_override",
       { count: "exact" }
     )
     .eq("visit_status", "COMPLETED")
@@ -362,9 +371,23 @@ export default async function CreateInvoicesPage({
                 visit={visit}
                 directCost={costMap.get(visit.jobber_visit_id) ?? 0}
                 suggestedLineItems={
-                  visit.jobber_job_id
-                    ? jobLineItemsMap.get(visit.jobber_job_id) ?? []
-                    : []
+                  // A visit-level price_override always wins -- see the
+                  // VisitRow comment above. Built as a single line item
+                  // using the visit's own service label (e.g. "Full -
+                  // Monthly") as the description, same convention
+                  // jobLineItemsMap's items use ("Service" fallback).
+                  visit.price_override != null
+                    ? [
+                        {
+                          description: visitServiceLabel(visit.title) || "Service",
+                          quantity: 1,
+                          unitPrice: toNumber(visit.price_override),
+                          details: null,
+                        },
+                      ]
+                    : visit.jobber_job_id
+                      ? jobLineItemsMap.get(visit.jobber_job_id) ?? []
+                      : []
                 }
               />
             ))}
