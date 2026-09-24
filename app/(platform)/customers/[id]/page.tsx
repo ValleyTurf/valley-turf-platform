@@ -1439,6 +1439,7 @@ type CustomerProfile = {
   referred_by_customer_id: string | null;
   referral_campaign_id: string | null;
   gallery_consent: boolean;
+  notifications_opted_out: boolean;
 };
 
 async function getCustomerProfile(
@@ -1461,7 +1462,8 @@ async function getCustomerProfile(
         referral_source,
         referred_by_customer_id,
         referral_campaign_id,
-        gallery_consent
+        gallery_consent,
+        notifications_opted_out
       `
     )
     .eq("jobber_client_id", jobberClientId)
@@ -2373,6 +2375,37 @@ export default async function CustomerDetailPage({
                     defaultValue={profile?.service_instructions ?? ""}
                     className="mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
                   />
+                </div>
+
+                {/* Ryan (2026-09-24): kept visible alongside Turf Size/
+                   Gate Code/Service Instructions above rather than
+                   buried in "More property details" -- an account-level
+                   opt-out staff should see at a glance, not dig for.
+                   Only blocks automated sends (lib/notifications.ts);
+                   manually sending this customer an email/text still
+                   works either way. */}
+                <div className="flex items-start gap-2 rounded-lg border border-[#e7e2d5] bg-[#f7f6f1] p-3">
+                  <input
+                    id="notifications_opted_out"
+                    name="notifications_opted_out"
+                    type="checkbox"
+                    defaultChecked={profile?.notifications_opted_out ?? false}
+                    className="mt-0.5"
+                  />
+
+                  <label
+                    htmlFor="notifications_opted_out"
+                    className="text-xs text-[#174734]"
+                  >
+                    <span className="font-bold">
+                      Don&apos;t send this customer any automated
+                      notifications
+                    </span>
+                    <br />
+                    Stops visit reminders, review requests, quote/invoice
+                    emails &amp; texts, and payment receipts. Staff can
+                    still email or text them manually.
+                  </label>
                 </div>
 
                 {/* Ryan (2026-09-17): Property Profile was a long form,

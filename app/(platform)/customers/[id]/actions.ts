@@ -83,7 +83,7 @@ export async function updateCustomerProfile(
   const { data: before } = await supabaseServer
     .from("customers")
     .select(
-      "full_name, turf_size_sqft, turf_size_range, gate_code, pet_count, pet_names, odor_level, subscription_plan, service_instructions, referral_source, referred_by_customer_id, referral_campaign_id, gallery_consent, gallery_consent_at"
+      "full_name, turf_size_sqft, turf_size_range, gate_code, pet_count, pet_names, odor_level, subscription_plan, service_instructions, referral_source, referred_by_customer_id, referral_campaign_id, gallery_consent, gallery_consent_at, notifications_opted_out"
     )
     .eq("jobber_client_id", jobberClientId)
     .maybeSingle();
@@ -104,6 +104,12 @@ export async function updateCustomerProfile(
       : new Date().toISOString()
     : null;
 
+  // Same unchecked-checkbox-omits-the-field behavior as gallery_consent
+  // above -- present ("on") means opted out. See migration
+  // 084_add_customer_notifications_opted_out.sql and the file-header
+  // comment in lib/notifications.ts for what this actually gates.
+  const notificationsOptedOut = formData.get("notifications_opted_out") === "on";
+
   const updates = {
     turf_size_sqft: cleanNumber(formData.get("turf_size_sqft")),
     turf_size_range: cleanText(formData.get("turf_size_range")),
@@ -118,6 +124,7 @@ export async function updateCustomerProfile(
     referral_campaign_id: referralCampaignId,
     gallery_consent: galleryConsent,
     gallery_consent_at: galleryConsentAt,
+    notifications_opted_out: notificationsOptedOut,
   };
 
   const { error } = await supabaseServer

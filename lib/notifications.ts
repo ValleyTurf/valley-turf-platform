@@ -15,9 +15,19 @@
 // logging call is fire-and-forget from each send function's
 // perspective: logContactHistory() never throws, so a logging hiccup
 // can't turn a successful text/email into a reported failure.
+//
+// Those same customer-facing sends also all check
+// customers.notifications_opted_out first (isOptedOutOfNotifications
+// below, migration 084) -- Ryan, 2026-09-24: some accounts (starting
+// with Lehi Cove and Hampton Villas) don't want any automated messages.
+// sendManualEmail/sendManualSms are deliberately NOT gated -- those are
+// a staff member's own one-off decision to reach out, not an automated
+// notification -- and neither are the internal staff alerts at the
+// bottom of this file, which were never customer-facing to begin with.
 import "server-only";
 import { logContactHistory } from "@/lib/contactHistory";
 import { replyToAddressFor } from "@/lib/replyRouting";
+import { supabaseServer } from "@/lib/supabase-server";
 
 // Overridable via env vars so who gets alerted doesn't require a code
 // change + redeploy. Falls back to the original hardcoded values if unset.
@@ -44,6 +54,34 @@ function firstNameOf(name: string | null): string {
   const trimmed = name?.trim();
   if (!trimmed) return "there";
   return trimmed.split(/\s+/)[0];
+}
+
+// See the file-header comment: every customer-facing send below checks
+// this first. A null jobberClientId (e.g. a lead with no linked
+// customer record yet) always sends -- there's no customer row that
+// could have opted out. A lookup error also fails open (sends) rather
+// than silently swallowing real notifications over a transient DB
+// hiccup; it's logged so a persistent failure is still visible.
+async function isOptedOutOfNotifications(
+  jobberClientId: string | null
+): Promise<boolean> {
+  if (!jobberClientId) return false;
+
+  const { data, error } = await supabaseServer
+    .from("customers")
+    .select("notifications_opted_out")
+    .eq("jobber_client_id", jobberClientId)
+    .maybeSingle();
+
+  if (error) {
+    console.error(
+      `Failed to check notifications_opted_out for ${jobberClientId}:`,
+      error.message
+    );
+    return false;
+  }
+
+  return data?.notifications_opted_out === true;
 }
 
 export type NewLeadAlert = {
@@ -379,6 +417,10 @@ export type PortalMagicLinkEmail = {
 export async function sendPortalMagicLinkEmail(
   request: PortalMagicLinkEmail
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(request.jobberClientId)) {
+    return false;
+  }
+
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
@@ -460,6 +502,10 @@ export async function sendPortalMagicLinkSms(
   loginUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(jobberClientId)) {
+    return false;
+  }
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromNumber = process.env.TWILIO_FROM_NUMBER;
@@ -687,6 +733,10 @@ export async function sendOnMyWaySms(
   // sendOnWay() before this is ever called.
   etaMinutes: number
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(jobberClientId)) {
+    return false;
+  }
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromNumber = process.env.TWILIO_FROM_NUMBER;
@@ -761,6 +811,10 @@ export async function sendInvoiceSms(
   // unchanged.
   autopayUrl?: string | null
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(jobberClientId)) {
+    return false;
+  }
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromNumber = process.env.TWILIO_FROM_NUMBER;
@@ -836,6 +890,10 @@ export type OverdueInvoiceEmail = {
 export async function sendOverdueInvoiceEmail(
   request: OverdueInvoiceEmail
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(request.jobberClientId)) {
+    return false;
+  }
+
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
@@ -919,6 +977,10 @@ export async function sendOverdueInvoiceSms(
   payUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(jobberClientId)) {
+    return false;
+  }
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromNumber = process.env.TWILIO_FROM_NUMBER;
@@ -991,6 +1053,10 @@ export type QuoteFollowupEmail = {
 export async function sendQuoteFollowupEmail(
   request: QuoteFollowupEmail
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(request.jobberClientId)) {
+    return false;
+  }
+
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
@@ -1065,6 +1131,10 @@ export async function sendQuoteFollowupSms(
   quoteUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(jobberClientId)) {
+    return false;
+  }
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromNumber = process.env.TWILIO_FROM_NUMBER;
@@ -1132,6 +1202,10 @@ export type QuoteSendEmail = {
 };
 
 export async function sendQuoteEmail(request: QuoteSendEmail): Promise<boolean> {
+  if (await isOptedOutOfNotifications(request.jobberClientId)) {
+    return false;
+  }
+
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
@@ -1206,6 +1280,10 @@ export async function sendQuoteSms(
   quoteUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(jobberClientId)) {
+    return false;
+  }
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromNumber = process.env.TWILIO_FROM_NUMBER;
@@ -1418,6 +1496,10 @@ export type InvoiceEmail = {
 export async function sendInvoiceEmail(
   request: InvoiceEmail
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(request.jobberClientId)) {
+    return false;
+  }
+
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
@@ -1573,6 +1655,10 @@ export type AutopayReceiptEmail = {
 export async function sendAutopayReceiptEmail(
   request: AutopayReceiptEmail
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(request.jobberClientId)) {
+    return false;
+  }
+
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
@@ -1660,6 +1746,10 @@ export async function sendAutopayReceiptSms(
   cardLast4: string | null,
   jobberClientId: string | null
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(jobberClientId)) {
+    return false;
+  }
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromNumber = process.env.TWILIO_FROM_NUMBER;
@@ -1750,6 +1840,10 @@ export type ManualPaymentReceiptEmail = {
 export async function sendManualPaymentReceiptEmail(
   request: ManualPaymentReceiptEmail
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(request.jobberClientId)) {
+    return false;
+  }
+
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
@@ -1839,6 +1933,10 @@ export async function sendManualPaymentReceiptSms(
   jobberClientId: string | null,
   tipAmount?: number
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(jobberClientId)) {
+    return false;
+  }
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromNumber = process.env.TWILIO_FROM_NUMBER;
@@ -1912,6 +2010,10 @@ export async function sendVisitReminderSms(
   confirmUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(jobberClientId)) {
+    return false;
+  }
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromNumber = process.env.TWILIO_FROM_NUMBER;
@@ -1976,6 +2078,10 @@ export async function sendVisitReminderEmail(
   confirmUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(jobberClientId)) {
+    return false;
+  }
+
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
@@ -2059,6 +2165,10 @@ export async function sendReviewRequestSms(
   reviewUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(jobberClientId)) {
+    return false;
+  }
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const fromNumber = process.env.TWILIO_FROM_NUMBER;
@@ -2121,6 +2231,10 @@ export async function sendReviewRequestEmail(
   reviewUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  if (await isOptedOutOfNotifications(jobberClientId)) {
+    return false;
+  }
+
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
