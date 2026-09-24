@@ -28,7 +28,20 @@ import { supabaseServer } from "@/lib/supabase-server";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const CUSTOMERS = [
+// Plain number[] (not `as const`) for fullMonths -- an `as const` tuple
+// here types it as [1, 4, 7, 10] rather than number[], which then fails
+// to compile: Array<1|4|7|10>.includes(month) doesn't accept a plain
+// `number` argument, and month (from getUTCMonth() + 1) is always a
+// plain number.
+type PricingCustomer = {
+  label: string;
+  jobberClientId: string;
+  fullMonths: number[];
+  fullPrice: number;
+  maintenancePrice: number;
+};
+
+const CUSTOMERS: PricingCustomer[] = [
   {
     label: "Durkin",
     jobberClientId: "Z2lkOi8vSm9iYmVyL0NsaWVudC8xMjA0MTc2MTU=",
@@ -43,7 +56,7 @@ const CUSTOMERS = [
     fullPrice: 260,
     maintenancePrice: 150,
   },
-] as const;
+];
 
 type VisitRow = {
   jobber_visit_id: string;
@@ -61,7 +74,22 @@ export async function GET(request: Request) {
 
   const apply = new URL(request.url).searchParams.get("apply") === "true";
 
-  const results = [];
+  const results: {
+    customer: string;
+    fullPrice: number;
+    maintenancePrice: number;
+    eligibleVisits: number;
+    wouldUpdate: number;
+    updated: number;
+    sample: {
+      jobberVisitId: string;
+      title: string | null;
+      startAt: string | null;
+      month: number;
+      previousPriceOverride: number | string | null;
+      newPriceOverride: number;
+    }[];
+  }[] = [];
   const errors: string[] = [];
 
   for (const customer of CUSTOMERS) {
