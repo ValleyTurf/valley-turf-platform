@@ -238,6 +238,14 @@ async function fetchNativeFeesByMirrorIds(
 // also claim it. Returns 0 if the invoice has no fee records left —
 // correct and expected for cash/check payments, which never generate a
 // processing fee record in the first place.
+//
+// Robert Cox / Linda Iverson (Ryan, 2026-09-25): some invoices have TWO
+// jobber_payment_fees rows at the exact same amount -- one with the real
+// fee, one a $0 duplicate (Jobber's paymentRecords resolution appears to
+// sometimes emit both). fetchFeesByInvoiceIds has no ORDER BY, so which
+// one lands first in `candidates` is effectively random per invoice --
+// on an exact amount-diff tie, prefer the row with the larger fee so a
+// genuine fee is never silently shadowed by a $0 duplicate.
 function claimClosestFee(candidates: MatchableFee[], amount: number): number {
   if (candidates.length === 0) return 0;
 
@@ -246,7 +254,10 @@ function claimClosestFee(candidates: MatchableFee[], amount: number): number {
 
   for (let i = 1; i < candidates.length; i++) {
     const diff = Math.abs(candidates[i].amount - amount);
-    if (diff < bestDiff) {
+    if (
+      diff < bestDiff ||
+      (diff === bestDiff && candidates[i].fee > candidates[bestIndex].fee)
+    ) {
       bestDiff = diff;
       bestIndex = i;
     }
