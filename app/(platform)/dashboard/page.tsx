@@ -485,6 +485,13 @@ async function getDashboardData(): Promise<DashboardData> {
   const oneOffJobIds = new Set<string>();
   let recurringTotal = 0;
   let recurringVisitCount = 0;
+  // Distinct recurring JOBS seen this month (as opposed to
+  // recurringVisitCount, which counts every occurrence -- a weekly job
+  // contributes 4 visits in a month but is still one job). Kept separate
+  // from oneOffJobIds/recurringVisitCount, which the headline tiles
+  // still use as before -- this is only for the job-vs-job percentage
+  // below.
+  const recurringJobIdsThisMonth = new Set<string>();
   const weekTotals = [0, 0, 0, 0, 0];
 
   for (const visit of monthVisits) {
@@ -494,10 +501,22 @@ async function getDashboardData(): Promise<DashboardData> {
     if (isRecurring) {
       recurringTotal += value;
       recurringVisitCount += 1;
+      if (visit.jobber_job_id) recurringJobIdsThisMonth.add(visit.jobber_job_id);
     } else {
       oneOffTotal += value;
       oneOffVisitCount += 1;
       if (visit.jobber_job_id) oneOffJobIds.add(visit.jobber_job_id);
+    }
+
+    // Ryan (2026-09-25): "I want [Job Value by Week] to be all job
+    // values, not unbilled." Reverted back to summing every visit in the
+    // month regardless of billing status -- same basis as Job Mix just
+    // above it, not the unbilled-pipeline definition used for
+    // scheduledMonthTotal/scheduledTodayTotal below.
+    if (visit.start_at) {
+      const day = getPhoenixDateParts(new Date(visit.start_at)).day;
+      const bucket = Math.min(4, Math.floor((day - 1) / 7));
+      weekTotals[bucket] += value;
     }
 
     // Only count a visit as "unbilled" when its customer is actually on
@@ -520,23 +539,6 @@ async function getDashboardData(): Promise<DashboardData> {
           scheduledTodayCount += 1;
         }
       }
-
-      // Ryan (2026-09-25): "Scheduled job value by week is still showing
-      // the inflated numbers." This bar chart summed EVERY visit's value
-      // by week regardless of billing status -- the exact same bug that
-      // inflated "Scheduled This Month" before the native-invoicing fix
-      // above, just never carried over to this chart. It shares the
-      // "Scheduled ..." name with that fixed tile, so it should share its
-      // definition too: only visits that are actually unbilled pipeline
-      // (native invoicing, not yet invoiced, not dismissed), same as
-      // scheduledMonthTotal. This is deliberately narrower than Job Mix's
-      // totals just above, which intentionally include every visit
-      // regardless of billing status to show total work performed.
-      if (visit.start_at) {
-        const day = getPhoenixDateParts(new Date(visit.start_at)).day;
-        const bucket = Math.min(4, Math.floor((day - 1) / 7));
-        weekTotals[bucket] += value;
-      }
     }
   }
 
@@ -546,10 +548,15 @@ async function getDashboardData(): Promise<DashboardData> {
   const avgJobValueOneOff = oneOffVisitCount > 0 ? oneOffTotal / oneOffVisitCount : 0;
   const avgJobValueRecurring = recurringVisitCount > 0 ? recurringTotal / recurringVisitCount : 0;
 
-  // Same one-off-jobs-vs-recurring-visits basis the Job Mix bars already
-  // use for their widths (Ryan, 2026-09-25: wants the split shown as an
-  // actual percentage, not just implied by bar width).
-  const jobMixTotalCount = oneOffJobIds.size + recurringVisitCount;
+  // Ryan (2026-09-25): "The one off vs recurring seems to be defaulting
+  // the same way to higher numbers." Root cause: the percentage was
+  // built from oneOffJobIds.size (distinct JOBS) vs recurringVisitCount
+  // (total VISITS) -- comparing jobs to visits, not jobs to jobs. A
+  // weekly recurring job racks up 4 visits a month against one-off's
+  // near-guaranteed 1, so recurring always won regardless of the real
+  // job mix. Fixed to compare distinct jobs on both sides, matching what
+  // was actually asked for: "percentage of one off vs recurring jobs."
+  const jobMixTotalCount = oneOffJobIds.size + recurringJobIdsThisMonth.size;
   const oneOffPercent =
     jobMixTotalCount > 0 ? Math.round((oneOffJobIds.size / jobMixTotalCount) * 100) : 0;
   const recurringPercent = jobMixTotalCount > 0 ? 100 - oneOffPercent : 0;
@@ -849,11 +856,10 @@ export default async function DashboardPage() {
 
               <div className="flex flex-col rounded-3xl bg-white p-6 shadow">
                 <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
-                  Unbilled Job Value by Week
+                  Job Value by Week
                 </p>
                 <p className="mt-1 text-xs text-[#6b705c]">
-                  Native-invoiced visits not yet billed — excludes anyone still on Jobber
-                  invoicing.
+                  Every visit scheduled this month, invoiced or not — same basis as Job Mix.
                 </p>
 
                 <div className="mt-4 flex flex-1 items-end gap-3 px-1">
