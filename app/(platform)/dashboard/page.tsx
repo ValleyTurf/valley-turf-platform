@@ -39,8 +39,10 @@ type DashboardData = {
   scheduledMonthCount: number;
   oneOffJobCount: number;
   oneOffTotal: number;
+  oneOffPercent: number;
   recurringVisitCount: number;
   recurringTotal: number;
+  recurringPercent: number;
   avgJobValueOverall: number;
   avgJobValueOneOff: number;
   avgJobValueRecurring: number;
@@ -518,12 +520,23 @@ async function getDashboardData(): Promise<DashboardData> {
           scheduledTodayCount += 1;
         }
       }
-    }
 
-    if (visit.start_at) {
-      const day = getPhoenixDateParts(new Date(visit.start_at)).day;
-      const bucket = Math.min(4, Math.floor((day - 1) / 7));
-      weekTotals[bucket] += value;
+      // Ryan (2026-09-25): "Scheduled job value by week is still showing
+      // the inflated numbers." This bar chart summed EVERY visit's value
+      // by week regardless of billing status -- the exact same bug that
+      // inflated "Scheduled This Month" before the native-invoicing fix
+      // above, just never carried over to this chart. It shares the
+      // "Scheduled ..." name with that fixed tile, so it should share its
+      // definition too: only visits that are actually unbilled pipeline
+      // (native invoicing, not yet invoiced, not dismissed), same as
+      // scheduledMonthTotal. This is deliberately narrower than Job Mix's
+      // totals just above, which intentionally include every visit
+      // regardless of billing status to show total work performed.
+      if (visit.start_at) {
+        const day = getPhoenixDateParts(new Date(visit.start_at)).day;
+        const bucket = Math.min(4, Math.floor((day - 1) / 7));
+        weekTotals[bucket] += value;
+      }
     }
   }
 
@@ -532,6 +545,13 @@ async function getDashboardData(): Promise<DashboardData> {
   const avgJobValueOverall = totalVisitCount > 0 ? totalScheduledValue / totalVisitCount : 0;
   const avgJobValueOneOff = oneOffVisitCount > 0 ? oneOffTotal / oneOffVisitCount : 0;
   const avgJobValueRecurring = recurringVisitCount > 0 ? recurringTotal / recurringVisitCount : 0;
+
+  // Same one-off-jobs-vs-recurring-visits basis the Job Mix bars already
+  // use for their widths (Ryan, 2026-09-25: wants the split shown as an
+  // actual percentage, not just implied by bar width).
+  const jobMixTotalCount = oneOffJobCount + recurringVisitCount;
+  const oneOffPercent = jobMixTotalCount > 0 ? Math.round((oneOffJobCount / jobMixTotalCount) * 100) : 0;
+  const recurringPercent = jobMixTotalCount > 0 ? 100 - oneOffPercent : 0;
 
   const weekRanges: [number, number][] = [
     [1, 7],
@@ -605,8 +625,10 @@ async function getDashboardData(): Promise<DashboardData> {
     scheduledMonthCount,
     oneOffJobCount: oneOffJobIds.size,
     oneOffTotal,
+    oneOffPercent,
     recurringVisitCount,
     recurringTotal,
+    recurringPercent,
     avgJobValueOverall,
     avgJobValueOneOff,
     avgJobValueRecurring,
@@ -770,47 +792,37 @@ export default async function DashboardPage() {
 
                 <div className="flex gap-6">
                   <div className="flex-1">
-                    <p className="text-2xl font-bold">{formatNumber(data.oneOffJobCount)}</p>
+                    <p className="text-2xl font-bold">
+                      {formatNumber(data.oneOffJobCount)}{" "}
+                      <span className="text-base font-semibold text-[#9c7a20]">
+                        ({data.oneOffPercent}%)
+                      </span>
+                    </p>
                     <p className="mt-1 text-sm text-[#6b705c]">
                       One-off jobs · {formatCurrency(data.oneOffTotal)}
                     </p>
                     <div className="mt-3 h-2 rounded-full bg-[#ece8dc]">
                       <div
                         className="h-2 rounded-full bg-[#d4af37]"
-                        style={{
-                          width: `${
-                            data.oneOffJobCount + data.recurringVisitCount > 0
-                              ? Math.round(
-                                  (data.oneOffJobCount /
-                                    (data.oneOffJobCount + data.recurringVisitCount)) *
-                                    100
-                                )
-                              : 0
-                          }%`,
-                        }}
+                        style={{ width: `${data.oneOffPercent}%` }}
                       />
                     </div>
                   </div>
 
                   <div className="flex-1">
-                    <p className="text-2xl font-bold">{formatNumber(data.recurringVisitCount)}</p>
+                    <p className="text-2xl font-bold">
+                      {formatNumber(data.recurringVisitCount)}{" "}
+                      <span className="text-base font-semibold text-[#174734]">
+                        ({data.recurringPercent}%)
+                      </span>
+                    </p>
                     <p className="mt-1 text-sm text-[#6b705c]">
                       Recurring visits · {formatCurrency(data.recurringTotal)}
                     </p>
                     <div className="mt-3 h-2 rounded-full bg-[#ece8dc]">
                       <div
                         className="h-2 rounded-full bg-[#174734]"
-                        style={{
-                          width: `${
-                            data.oneOffJobCount + data.recurringVisitCount > 0
-                              ? Math.round(
-                                  (data.recurringVisitCount /
-                                    (data.oneOffJobCount + data.recurringVisitCount)) *
-                                    100
-                                )
-                              : 0
-                          }%`,
-                        }}
+                        style={{ width: `${data.recurringPercent}%` }}
                       />
                     </div>
                   </div>
@@ -836,7 +848,11 @@ export default async function DashboardPage() {
 
               <div className="flex flex-col rounded-3xl bg-white p-6 shadow">
                 <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
-                  Scheduled Job Value by Week
+                  Unbilled Job Value by Week
+                </p>
+                <p className="mt-1 text-xs text-[#6b705c]">
+                  Native-invoiced visits not yet billed — excludes anyone still on Jobber
+                  invoicing.
                 </p>
 
                 <div className="mt-4 flex flex-1 items-end gap-3 px-1">
