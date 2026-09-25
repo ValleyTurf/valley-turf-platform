@@ -238,9 +238,11 @@ async function fetchNewCustomersThisMonth(): Promise<number> {
 type MonthVisitRow = {
   jobber_visit_id: string;
   jobber_job_id: string | null;
+  jobber_client_id: string | null;
   start_at: string | null;
   price_override: number | string | null;
   jobber_invoice_id: string | null;
+  invoice_dismissed_at: string | null;
 };
 
 async function fetchMonthVisits(monthStart: Date, monthEnd: Date): Promise<MonthVisitRow[]> {
@@ -250,7 +252,9 @@ async function fetchMonthVisits(monthStart: Date, monthEnd: Date): Promise<Month
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabaseServer
       .from("jobber_visits")
-      .select("jobber_visit_id, jobber_job_id, start_at, price_override, jobber_invoice_id")
+      .select(
+        "jobber_visit_id, jobber_job_id, jobber_client_id, start_at, price_override, jobber_invoice_id, invoice_dismissed_at"
+      )
       .gte("start_at", monthStart.toISOString())
       .lt("start_at", monthEnd.toISOString())
       // Ashlye Carll (Ryan, 2026-09-25): "Scheduled Today" showed $230 for
@@ -326,6 +330,45 @@ async function fetchRecurringJobIds(jobIds: string[]): Promise<Set<string>> {
   }
 
   return set;
+}
+
+// Ryan (2026-09-25): "All of those people have paid, you are still missing
+// things." Confirmed against real data -- 35 of the 40 visits flagged as
+// "unbilled" belong to customers still on Jobber invoicing
+// (customers.native_invoicing_enabled = false, migration 048), not native
+// invoicing. Jobber bills and collects for those customers on its own
+// schedule, completely independent of this app's per-visit jobber_visits
+// row -- confirmed by migration 078's own header: for some of these exact
+// customers (Darcy Wearing, Patricia Bach, Dawn Kamal, all three flagged
+// here too) Jobber's own Invoice.visits connection links the invoice back
+// to the WRONG visit, a Jobber-side data issue this app can't infer its
+// way around. A visit whose customer isn't on native invoicing should
+// never be counted as "unbilled" here -- jobber_invoice_id simply isn't a
+// meaningful signal for them, and their real billing status already lives
+// in jobber_invoices, synced separately. Defaults to false (excluded) for
+// any customer never evaluated, matching the column's own db default.
+async function fetchNativeInvoicingByClient(clientIds: string[]): Promise<Map<string, boolean>> {
+  const map = new Map<string, boolean>();
+  if (clientIds.length === 0) return map;
+
+  for (let i = 0; i < clientIds.length; i += 500) {
+    const batch = clientIds.slice(i, i + 500);
+    const { data, error } = await supabaseServer
+      .from("customers")
+      .select("jobber_client_id, native_invoicing_enabled")
+      .in("jobber_client_id", batch);
+
+    if (error) throw error;
+
+    for (const row of (data ?? []) as {
+      jobber_client_id: string;
+      native_invoicing_enabled: boolean | null;
+    }[]) {
+      map.set(row.jobber_client_id, row.native_invoicing_enabled === true);
+    }
+  }
+
+  return map;
 }
 
 type QuoteRow = {
@@ -415,10 +458,14 @@ async function getDashboardData(): Promise<DashboardData> {
   const jobIds = Array.from(
     new Set(monthVisits.map((v) => v.jobber_job_id).filter((id): id is string => Boolean(id)))
   );
+  const clientIds = Array.from(
+    new Set(monthVisits.map((v) => v.jobber_client_id).filter((id): id is string => Boolean(id)))
+  );
 
-  const [jobTotals, recurringJobIds] = await Promise.all([
+  const [jobTotals, recurringJobIds, nativeInvoicingByClient] = await Promise.all([
     fetchJobTotals(jobIds),
     fetchRecurringJobIds(jobIds),
+    fetchNativeInvoicingByClient(clientIds),
   ]);
 
   function resolveVisitValue(visit: MonthVisitRow): number {
@@ -451,7 +498,16 @@ async function getDashboardData(): Promise<DashboardData> {
       if (visit.jobber_job_id) oneOffJobIds.add(visit.jobber_job_id);
     }
 
-    if (visit.jobber_invoice_id == null) {
+    // Only count a visit as "unbilled" when its customer is actually on
+    // native invoicing -- see fetchNativeInvoicingByClient's header for
+    // why jobber_invoice_id can't be trusted for anyone still on Jobber
+    // invoicing. invoice_dismissed_at (migration 078) is staff manually
+    // saying "this one's already invoiced and paid in Jobber, its link is
+    // just wrong" -- same exclusion for the same underlying reason.
+    const isNativelyInvoiced =
+      visit.jobber_client_id != null && nativeInvoicingByClient.get(visit.jobber_client_id) === true;
+
+    if (visit.jobber_invoice_id == null && visit.invoice_dismissed_at == null && isNativelyInvoiced) {
       scheduledMonthTotal += value;
       scheduledMonthCount += 1;
 
