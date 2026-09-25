@@ -1,44 +1,55 @@
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+// Rebuilt 2026-09-25 per Ryan's ask: drop the Customers/Campaigns/scan
+// counts that didn't earn their spot, make Outstanding and Leads expand
+// in place (no new pages -- just who owes what and how much, no aging),
+// combine the three scan counts into one tile, and add a Revenue
+// Pipeline / Job Mix / Requests & Quotes picture of the business that
+// wasn't here before. Approved as a Design-canvas mockup first
+// (https://claude.ai/artifact/RmXa7rtrh5oej3n7vwhfXw) before this build.
 import Link from "next/link";
-import KpiCard from "@/app/components/dashboard/KpiCard";
-import ActivityFeed from "@/app/components/dashboard/ActivityFeed";
 import { supabaseServer } from "@/lib/supabase-server";
-import { getAllCampaignRoi } from "@/lib/campaignRoi";
-import { formatCurrency, formatNumber } from "@/lib/format";
+import { formatCurrency, formatNumber, formatPercent, toNumber } from "@/lib/format";
+import { computeDisplayStatus, type QuoteStatus } from "@/lib/quotes";
+import DashboardTopRow, {
+  type LeadItem,
+  type OutstandingInvoiceItem,
+} from "@/app/components/dashboard/DashboardTopRow";
 
 const PHOENIX_TIME_ZONE = "America/Phoenix";
-
-type ActivityItem = {
-  id: string;
-  scanned_at: string;
-  city: string | null;
-  region: string | null;
-  country: string | null;
-  campaigns:
-    | Array<{
-        name: string | null;
-        alias: string | null;
-        slug: string;
-      }>
-    | null;
-};
+const WEEK_BAR_MAX_HEIGHT = 140;
 
 type DashboardData = {
-  customers: number;
-  campaigns: number;
-  leads: number;
-  scansToday: number;
-  scansWeek: number;
-  activity: ActivityItem[];
-  outstandingBalance: number;
+  outstandingTotal: number;
   outstandingCount: number;
+  outstandingInvoices: OutstandingInvoiceItem[];
+  leadsThisMonth: LeadItem[];
+  leadsThisMonthCount: number;
+  leadsThisWeekCount: number;
   revenueThisMonth: number;
   revenueLastMonthToDate: number;
-  recurringCustomersThisMonth: number;
-  campaignRevenue: number;
-  campaignLeads: number;
+  newCustomersThisMonth: number;
+  scansToday: number;
+  scansWeek: number;
+  scansMtd: number;
+  scheduledTodayTotal: number;
+  scheduledTodayCount: number;
+  scheduledMonthTotal: number;
+  scheduledMonthCount: number;
+  oneOffJobCount: number;
+  oneOffTotal: number;
+  recurringVisitCount: number;
+  recurringTotal: number;
+  avgJobValueOverall: number;
+  avgJobValueOneOff: number;
+  avgJobValueRecurring: number;
+  weekBars: { label: string; rangeLabel: string; total: number; height: number }[];
+  quotesThisWeekCount: number;
+  quotesThisMonthCount: number;
+  quotesThisMonthValue: number;
+  quotesAwaitingResponse: number;
+  quoteAcceptanceRate: number | null;
 };
 
 function getPhoenixDateParts(date = new Date()) {
@@ -50,33 +61,29 @@ function getPhoenixDateParts(date = new Date()) {
   }).formatToParts(date);
 
   return {
-    year: Number(
-      parts.find((part) => part.type === "year")?.value ?? 0
-    ),
-    month: Number(
-      parts.find((part) => part.type === "month")?.value ?? 1
-    ),
-    day: Number(
-      parts.find((part) => part.type === "day")?.value ?? 1
-    ),
+    year: Number(parts.find((part) => part.type === "year")?.value ?? 0),
+    month: Number(parts.find((part) => part.type === "month")?.value ?? 1),
+    day: Number(parts.find((part) => part.type === "day")?.value ?? 1),
   };
 }
 
 function getPhoenixStartOfDayUtc(date = new Date()): Date {
   const { year, month, day } = getPhoenixDateParts(date);
-
-  return new Date(
-    Date.UTC(year, month - 1, day, 7, 0, 0, 0)
-  );
+  return new Date(Date.UTC(year, month - 1, day, 7, 0, 0, 0));
 }
 
 function formatDateInput(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function toNumber(value: number | string | null | undefined): number {
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? parsed : 0;
+function formatLeadDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: PHOENIX_TIME_ZONE,
+    month: "short",
+    day: "numeric",
+  }).format(date);
 }
 
 function formatRevenueComparison(current: number, previous: number): string {
@@ -92,22 +99,51 @@ function formatRevenueComparison(current: number, previous: number): string {
   return "No change";
 }
 
-async function fetchOutstandingSummary(): Promise<{
-  total: number;
-  count: number;
-}> {
+// ---------------------------------------------------------------------
+// Outstanding -- the whole outstanding_invoices view (customer + amount
+// only; Ryan doesn't want days-past-due here), sorted largest first so
+// the expand panel reads as a collection list.
+// ---------------------------------------------------------------------
+type OutstandingRow = {
+  jobber_invoice_id: string;
+  jobber_client_id: string | null;
+  customer_name: string | null;
+  invoice_number: string | null;
+  outstanding_balance: number | string;
+};
+
+async function fetchOutstandingInvoices(): Promise<OutstandingRow[]> {
   const { data, error } = await supabaseServer
     .from("outstanding_invoices")
-    .select("outstanding_balance");
+    .select("jobber_invoice_id, jobber_client_id, customer_name, invoice_number, outstanding_balance")
+    .order("outstanding_balance", { ascending: false });
 
   if (error) throw error;
+  return (data ?? []) as OutstandingRow[];
+}
 
-  const rows = (data ?? []) as { outstanding_balance: number | string }[];
+// ---------------------------------------------------------------------
+// Leads created this month -- same set the KPI count is drawn from, so
+// the number on the tile and the list in the panel never disagree.
+// ---------------------------------------------------------------------
+type LeadRow = {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  source: string | null;
+  city: string | null;
+  created_at: string;
+};
 
-  return {
-    total: rows.reduce((sum, row) => sum + toNumber(row.outstanding_balance), 0),
-    count: rows.length,
-  };
+async function fetchLeadsSince(sinceIso: string): Promise<LeadRow[]> {
+  const { data, error } = await supabaseServer
+    .from("leads")
+    .select("id, first_name, last_name, source, city, created_at")
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return (data ?? []) as LeadRow[];
 }
 
 // This-month-to-date vs the same number of days into last month, so a
@@ -148,189 +184,342 @@ async function fetchMonthlyRevenue(): Promise<{
   };
 }
 
-// Same "is this job recurring" signal used on /recurring-services — a
-// job's own job_type from Jobber, not the fragile category-keyword match.
-async function fetchRecurringCustomersThisMonth(): Promise<number> {
-  const { year, month } = getPhoenixDateParts();
+// New customers this month -- customer_financials.first_invoice_date
+// (their first real payment activity), not customers.created_at. That
+// column got mass-backfilled to a single date when it was added and
+// only reflects "when this app first synced them," not when they
+// actually became a customer, so it's not a reliable "new" signal.
+async function fetchNewCustomersThisMonth(): Promise<number> {
+  const { year, month, day } = getPhoenixDateParts();
+  const monthStart = formatDateInput(new Date(Date.UTC(year, month - 1, 1)));
+  const today = formatDateInput(new Date(Date.UTC(year, month - 1, day)));
 
-  const monthStart = `${formatDateInput(
-    new Date(Date.UTC(year, month - 1, 1)),
-  )}T00:00:00-07:00`;
-  const monthEnd = `${formatDateInput(
-    new Date(Date.UTC(year, month, 0)),
-  )}T23:59:59-07:00`;
-
-  const { data: jobsData, error: jobsError } = await supabaseServer
-    .from("job_service_category")
-    .select("jobber_job_id")
-    .ilike("job_type", "%recur%");
-
-  if (jobsError) throw jobsError;
-
-  const recurringJobIds = (jobsData ?? []).map(
-    (row: { jobber_job_id: string }) => row.jobber_job_id,
-  );
-
-  if (recurringJobIds.length === 0) {
-    return 0;
-  }
-
-  const { data: visitsData, error: visitsError } = await supabaseServer
-    .from("jobber_visits")
+  const { data, error } = await supabaseServer
+    .from("customer_financials")
     .select("jobber_client_id")
-    .in("jobber_job_id", recurringJobIds)
-    .gte("start_at", monthStart)
-    .lte("start_at", monthEnd);
+    .gte("first_invoice_date", monthStart)
+    .lte("first_invoice_date", today);
 
-  if (visitsError) throw visitsError;
-
-  const uniqueCustomers = new Set(
-    (visitsData ?? [])
-      .map((row: { jobber_client_id: string | null }) => row.jobber_client_id)
-      .filter(Boolean),
-  );
-
-  return uniqueCustomers.size;
+  if (error) throw error;
+  return (data ?? []).length;
 }
 
-async function fetchCampaignSummary(): Promise<{
-  revenue: number;
-  leads: number;
-}> {
-  const allRoi = await getAllCampaignRoi();
+// ---------------------------------------------------------------------
+// Revenue Pipeline / Job Mix / weekly bars all come out of the same
+// pass over this month's visits, so it's one query instead of four.
+// ---------------------------------------------------------------------
+type MonthVisitRow = {
+  jobber_visit_id: string;
+  jobber_job_id: string | null;
+  start_at: string | null;
+  price_override: number | string | null;
+  jobber_invoice_id: string | null;
+};
 
-  let revenue = 0;
-  let leads = 0;
+async function fetchMonthVisits(monthStart: Date, monthEnd: Date): Promise<MonthVisitRow[]> {
+  const rows: MonthVisitRow[] = [];
+  const pageSize = 1000;
 
-  for (const roi of allRoi.values()) {
-    revenue += roi.revenue;
-    leads += roi.totalLeads;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseServer
+      .from("jobber_visits")
+      .select("jobber_visit_id, jobber_job_id, start_at, price_override, jobber_invoice_id")
+      .gte("start_at", monthStart.toISOString())
+      .lt("start_at", monthEnd.toISOString())
+      .order("start_at", { ascending: true })
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+
+    const batch = (data ?? []) as MonthVisitRow[];
+    rows.push(...batch);
+
+    if (batch.length < pageSize) break;
   }
 
-  return { revenue, leads };
+  return rows;
+}
+
+// jobber_jobs.total is the authoritative per-occurrence price for a job
+// (the same column every other report/dashboard reads) -- deliberately
+// NOT lib/jobberJob.ts's fetchJobDetails, which live-calls the Jobber
+// API per Jobber-sourced job and would be far too slow across a whole
+// month of jobs.
+async function fetchJobTotals(jobIds: string[]): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (jobIds.length === 0) return map;
+
+  for (let i = 0; i < jobIds.length; i += 500) {
+    const batch = jobIds.slice(i, i + 500);
+    const { data, error } = await supabaseServer
+      .from("jobber_jobs")
+      .select("jobber_job_id, total")
+      .in("jobber_job_id", batch);
+
+    if (error) throw error;
+
+    for (const row of (data ?? []) as { jobber_job_id: string; total: number | string | null }[]) {
+      map.set(row.jobber_job_id, toNumber(row.total));
+    }
+  }
+
+  return map;
+}
+
+async function fetchRecurringJobIds(jobIds: string[]): Promise<Set<string>> {
+  const set = new Set<string>();
+  if (jobIds.length === 0) return set;
+
+  for (let i = 0; i < jobIds.length; i += 500) {
+    const batch = jobIds.slice(i, i + 500);
+    const { data, error } = await supabaseServer
+      .from("job_service_category")
+      .select("jobber_job_id")
+      .in("jobber_job_id", batch)
+      .eq("is_recurring_service", true);
+
+    if (error) throw error;
+
+    for (const row of (data ?? []) as { jobber_job_id: string }[]) {
+      set.add(row.jobber_job_id);
+    }
+  }
+
+  return set;
+}
+
+type QuoteRow = {
+  status: string;
+  price_total: number | string | null;
+  expires_at: string | null;
+  created_at: string;
+};
+
+async function fetchQuotesSince(sinceIso: string): Promise<QuoteRow[]> {
+  const { data, error } = await supabaseServer
+    .from("quotes")
+    .select("status, price_total, expires_at, created_at")
+    .gte("created_at", sinceIso);
+
+  if (error) throw error;
+  return (data ?? []) as QuoteRow[];
+}
+
+async function fetchQuotesAwaitingResponse(): Promise<number> {
+  // "Awaiting response" is a current snapshot, not scoped to this month
+  // -- a quote sent last month and still unanswered still counts.
+  const { data, error } = await supabaseServer
+    .from("quotes")
+    .select("status, expires_at")
+    .eq("status", "sent");
+
+  if (error) throw error;
+
+  const rows = (data ?? []) as { status: string; expires_at: string | null }[];
+  return rows.filter(
+    (row) => computeDisplayStatus(row.status as QuoteStatus, row.expires_at) === "sent"
+  ).length;
 }
 
 async function getDashboardData(): Promise<DashboardData> {
   const phoenixTodayStart = getPhoenixStartOfDayUtc();
+  const phoenixTodayEnd = new Date(phoenixTodayStart.getTime() + 24 * 60 * 60 * 1000);
 
   const phoenixWeekStart = new Date(phoenixTodayStart);
+  phoenixWeekStart.setUTCDate(phoenixWeekStart.getUTCDate() - 7);
 
-  phoenixWeekStart.setUTCDate(
-    phoenixWeekStart.getUTCDate() - 7
-  );
+  const { year, month } = getPhoenixDateParts();
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const phoenixMonthStart = new Date(Date.UTC(year, month - 1, 1, 7, 0, 0, 0));
+  const phoenixMonthEnd = new Date(Date.UTC(year, month, 1, 7, 0, 0, 0));
 
   const [
-    customersResult,
-    campaignsResult,
-    leadsResult,
     scansTodayResult,
     scansWeekResult,
-    activityResult,
-    outstandingSummary,
+    scansMtdResult,
+    outstandingInvoices,
+    leadsThisMonth,
     monthlyRevenue,
-    recurringCustomersThisMonth,
-    campaignSummary,
+    newCustomersThisMonth,
+    monthVisits,
+    quotesThisMonth,
+    quotesAwaitingResponse,
   ] = await Promise.all([
     supabaseServer
-      .from("customers")
-      .select("*", {
-        count: "exact",
-        head: true,
-      }),
-
-    supabaseServer
-      .from("campaigns")
-      .select("*", {
-        count: "exact",
-        head: true,
-      }),
-
-    supabaseServer
-      .from("leads")
-      .select("*", {
-        count: "exact",
-        head: true,
-      }),
-
+      .from("scans")
+      .select("*", { count: "exact", head: true })
+      .gte("scanned_at", phoenixTodayStart.toISOString()),
     supabaseServer
       .from("scans")
-      .select("*", {
-        count: "exact",
-        head: true,
-      })
-      .gte(
-        "scanned_at",
-        phoenixTodayStart.toISOString()
-      ),
-
+      .select("*", { count: "exact", head: true })
+      .gte("scanned_at", phoenixWeekStart.toISOString()),
     supabaseServer
       .from("scans")
-      .select("*", {
-        count: "exact",
-        head: true,
-      })
-      .gte(
-        "scanned_at",
-        phoenixWeekStart.toISOString()
-      ),
-
-    supabaseServer
-      .from("scans")
-      .select(`
-        id,
-        scanned_at,
-        city,
-        region,
-        country,
-        campaigns (
-          name,
-          alias,
-          slug
-        )
-      `)
-      .order("scanned_at", {
-        ascending: false,
-      })
-      .limit(10),
-
-    fetchOutstandingSummary(),
+      .select("*", { count: "exact", head: true })
+      .gte("scanned_at", phoenixMonthStart.toISOString()),
+    fetchOutstandingInvoices(),
+    fetchLeadsSince(phoenixMonthStart.toISOString()),
     fetchMonthlyRevenue(),
-    fetchRecurringCustomersThisMonth(),
-    fetchCampaignSummary(),
+    fetchNewCustomersThisMonth(),
+    fetchMonthVisits(phoenixMonthStart, phoenixMonthEnd),
+    fetchQuotesSince(phoenixMonthStart.toISOString()),
+    fetchQuotesAwaitingResponse(),
   ]);
 
-  const errors = [
-    customersResult.error,
-    campaignsResult.error,
-    leadsResult.error,
-    scansTodayResult.error,
-    scansWeekResult.error,
-    activityResult.error,
-  ].filter(Boolean);
+  if (scansTodayResult.error) throw scansTodayResult.error;
+  if (scansWeekResult.error) throw scansWeekResult.error;
+  if (scansMtdResult.error) throw scansMtdResult.error;
 
-  if (errors.length > 0) {
-    throw new Error(
-      errors
-        .map((error) => error?.message)
-        .filter(Boolean)
-        .join(", ")
-    );
+  // --- Revenue Pipeline / Job Mix / weekly bars, one pass over the
+  // month's visits -----------------------------------------------------
+  const jobIds = Array.from(
+    new Set(monthVisits.map((v) => v.jobber_job_id).filter((id): id is string => Boolean(id)))
+  );
+
+  const [jobTotals, recurringJobIds] = await Promise.all([
+    fetchJobTotals(jobIds),
+    fetchRecurringJobIds(jobIds),
+  ]);
+
+  function resolveVisitValue(visit: MonthVisitRow): number {
+    if (visit.price_override != null) return toNumber(visit.price_override);
+    if (!visit.jobber_job_id) return 0;
+    return jobTotals.get(visit.jobber_job_id) ?? 0;
   }
 
+  let scheduledTodayTotal = 0;
+  let scheduledTodayCount = 0;
+  let scheduledMonthTotal = 0;
+  let scheduledMonthCount = 0;
+  let oneOffTotal = 0;
+  let oneOffVisitCount = 0;
+  const oneOffJobIds = new Set<string>();
+  let recurringTotal = 0;
+  let recurringVisitCount = 0;
+  const weekTotals = [0, 0, 0, 0, 0];
+
+  for (const visit of monthVisits) {
+    const value = resolveVisitValue(visit);
+    const isRecurring = visit.jobber_job_id ? recurringJobIds.has(visit.jobber_job_id) : false;
+
+    if (isRecurring) {
+      recurringTotal += value;
+      recurringVisitCount += 1;
+    } else {
+      oneOffTotal += value;
+      oneOffVisitCount += 1;
+      if (visit.jobber_job_id) oneOffJobIds.add(visit.jobber_job_id);
+    }
+
+    if (visit.jobber_invoice_id == null) {
+      scheduledMonthTotal += value;
+      scheduledMonthCount += 1;
+
+      if (visit.start_at) {
+        const startDate = new Date(visit.start_at);
+        if (startDate >= phoenixTodayStart && startDate < phoenixTodayEnd) {
+          scheduledTodayTotal += value;
+          scheduledTodayCount += 1;
+        }
+      }
+    }
+
+    if (visit.start_at) {
+      const day = getPhoenixDateParts(new Date(visit.start_at)).day;
+      const bucket = Math.min(4, Math.floor((day - 1) / 7));
+      weekTotals[bucket] += value;
+    }
+  }
+
+  const totalVisitCount = monthVisits.length;
+  const totalScheduledValue = oneOffTotal + recurringTotal;
+  const avgJobValueOverall = totalVisitCount > 0 ? totalScheduledValue / totalVisitCount : 0;
+  const avgJobValueOneOff = oneOffVisitCount > 0 ? oneOffTotal / oneOffVisitCount : 0;
+  const avgJobValueRecurring = recurringVisitCount > 0 ? recurringTotal / recurringVisitCount : 0;
+
+  const weekRanges: [number, number][] = [
+    [1, 7],
+    [8, 14],
+    [15, 21],
+    [22, 28],
+    [29, daysInMonth],
+  ];
+  const maxWeekTotal = Math.max(...weekTotals, 1);
+  const weekBars = weekRanges
+    .map(([start, end], index) => ({
+      label: `Wk ${index + 1}`,
+      rangeLabel: start <= daysInMonth ? `${start}–${Math.min(end, daysInMonth)}` : "",
+      total: weekTotals[index],
+      height: Math.max(4, Math.round((weekTotals[index] / maxWeekTotal) * WEEK_BAR_MAX_HEIGHT)),
+    }))
+    .filter((week) => week.rangeLabel !== "");
+
+  // --- Requests & Quotes ------------------------------------------------
+  const quotesThisWeekCount = quotesThisMonth.filter(
+    (quote) => new Date(quote.created_at) >= phoenixWeekStart
+  ).length;
+  const quotesThisMonthValue = quotesThisMonth.reduce(
+    (sum, quote) => sum + toNumber(quote.price_total),
+    0
+  );
+
+  const resolvedThisMonth = quotesThisMonth
+    .map((quote) => computeDisplayStatus(quote.status as QuoteStatus, quote.expires_at))
+    .filter((status) => status === "accepted" || status === "declined");
+  const acceptedThisMonth = resolvedThisMonth.filter((status) => status === "accepted").length;
+  const quoteAcceptanceRate =
+    resolvedThisMonth.length > 0 ? acceptedThisMonth / resolvedThisMonth.length : null;
+
+  const leadItems: LeadItem[] = leadsThisMonth.slice(0, 10).map((lead) => ({
+    id: lead.id,
+    name: `${lead.first_name ?? ""} ${lead.last_name ?? ""}`.trim() || "Unnamed lead",
+    source: [lead.source, lead.city].filter(Boolean).join(" · ") || "Unknown source",
+    date: formatLeadDate(lead.created_at),
+  }));
+
+  const outstandingItems: OutstandingInvoiceItem[] = outstandingInvoices.map((invoice) => ({
+    id: invoice.jobber_invoice_id,
+    name: invoice.customer_name || "Unnamed Customer",
+    amount: formatCurrency(invoice.outstanding_balance),
+    invoiceNumber: invoice.invoice_number || "—",
+    customerId: invoice.jobber_client_id,
+  }));
+
   return {
-    customers: customersResult.count ?? 0,
-    campaigns: campaignsResult.count ?? 0,
-    leads: leadsResult.count ?? 0,
-    scansToday: scansTodayResult.count ?? 0,
-    scansWeek: scansWeekResult.count ?? 0,
-    activity: (activityResult.data ?? []) as ActivityItem[],
-    outstandingBalance: outstandingSummary.total,
-    outstandingCount: outstandingSummary.count,
+    outstandingTotal: outstandingInvoices.reduce(
+      (sum, row) => sum + toNumber(row.outstanding_balance),
+      0
+    ),
+    outstandingCount: outstandingInvoices.length,
+    outstandingInvoices: outstandingItems,
+    leadsThisMonth: leadItems,
+    leadsThisMonthCount: leadsThisMonth.length,
+    leadsThisWeekCount: leadsThisMonth.filter(
+      (lead) => new Date(lead.created_at) >= phoenixWeekStart
+    ).length,
     revenueThisMonth: monthlyRevenue.thisMonth,
     revenueLastMonthToDate: monthlyRevenue.lastMonthToDate,
-    recurringCustomersThisMonth,
-    campaignRevenue: campaignSummary.revenue,
-    campaignLeads: campaignSummary.leads,
+    newCustomersThisMonth,
+    scansToday: scansTodayResult.count ?? 0,
+    scansWeek: scansWeekResult.count ?? 0,
+    scansMtd: scansMtdResult.count ?? 0,
+    scheduledTodayTotal,
+    scheduledTodayCount,
+    scheduledMonthTotal,
+    scheduledMonthCount,
+    oneOffJobCount: oneOffJobIds.size,
+    oneOffTotal,
+    recurringVisitCount,
+    recurringTotal,
+    avgJobValueOverall,
+    avgJobValueOneOff,
+    avgJobValueRecurring,
+    weekBars,
+    quotesThisWeekCount,
+    quotesThisMonthCount: quotesThisMonth.length,
+    quotesThisMonthValue,
+    quotesAwaitingResponse,
+    quoteAcceptanceRate,
   };
 }
 
@@ -342,9 +531,7 @@ export default async function DashboardPage() {
     data = await getDashboardData();
   } catch (error) {
     errorMessage =
-      error instanceof Error
-        ? error.message
-        : "Dashboard data could not be loaded.";
+      error instanceof Error ? error.message : "Dashboard data could not be loaded.";
   }
 
   if (!data || errorMessage) {
@@ -356,9 +543,7 @@ export default async function DashboardPage() {
               Business Intelligence
             </p>
 
-            <h1 className="mt-3 text-3xl font-bold">
-              Dashboard could not be loaded
-            </h1>
+            <h1 className="mt-3 text-3xl font-bold">Dashboard could not be loaded</h1>
 
             <p className="mt-4 text-[#6b705c]">
               {errorMessage ?? "No dashboard data was returned."}
@@ -390,7 +575,7 @@ export default async function DashboardPage() {
             </h1>
 
             <p className="mt-2 text-[#6b705c]">
-              Live customer, campaign, lead, and QR scan metrics.
+              Live revenue, pipeline, and lead metrics.
             </p>
           </div>
 
@@ -411,118 +596,206 @@ export default async function DashboardPage() {
           </div>
         </header>
 
-        <section className="mt-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-6">
-          <KpiCard
-            title="Customers"
-            value={data.customers}
-            icon="👥"
-            subtitle="Synced from Jobber"
+        <div className="mt-8 flex flex-col gap-6">
+          <DashboardTopRow
+            outstandingTotalLabel={formatCurrency(data.outstandingTotal)}
+            outstandingCount={data.outstandingCount}
+            outstandingInvoices={data.outstandingInvoices}
+            leadsCount={data.leadsThisMonthCount}
+            leadsList={data.leadsThisMonth}
+            leadsMoreCount={Math.max(0, data.leadsThisMonthCount - data.leadsThisMonth.length)}
+            revenueThisMonthLabel={formatCurrency(data.revenueThisMonth)}
+            revenueComparisonLabel={formatRevenueComparison(
+              data.revenueThisMonth,
+              data.revenueLastMonthToDate
+            )}
+            newCustomersThisMonth={data.newCustomersThisMonth}
+            scansToday={data.scansToday}
+            scansWeek={data.scansWeek}
+            scansMtd={data.scansMtd}
           />
 
-          <KpiCard
-            title="Outstanding"
-            value={formatCurrency(data.outstandingBalance)}
-            icon="💸"
-            subtitle={`${formatNumber(data.outstandingCount)} unpaid invoice${
-              data.outstandingCount === 1 ? "" : "s"
-            }`}
-          />
-
-          <KpiCard
-            title="Scans Today"
-            value={data.scansToday}
-            icon="📱"
-            subtitle="Since midnight Arizona time"
-          />
-
-          <KpiCard
-            title="Scans This Week"
-            value={data.scansWeek}
-            icon="📅"
-            subtitle="Last 7 days"
-          />
-
-          <KpiCard
-            title="Campaigns"
-            value={data.campaigns}
-            icon="📣"
-            subtitle="Marketing campaigns"
-          />
-
-          <KpiCard
-            title="Leads"
-            value={data.leads}
-            icon="👤"
-            subtitle="Stored in Supabase"
-          />
-        </section>
-
-        <section className="mt-8 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-          <ActivityFeed activity={data.activity} />
-
-          <div className="rounded-3xl bg-white p-5 shadow sm:p-8">
-            <h2 className="text-2xl font-bold">Snapshot</h2>
-
-            <div className="mt-6 space-y-4">
-              <Link
-                href="/revenue"
-                className="block rounded-2xl bg-[#f7f6f1] p-5 transition hover:bg-[#eef4ee]"
-              >
-                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
-                  Revenue
-                </p>
-
-                <p className="mt-2 text-2xl font-bold text-[#174734]">
-                  {formatCurrency(data.revenueThisMonth)}
-                </p>
-
-                <p className="mt-1 text-sm text-[#6b705c]">
-                  {formatRevenueComparison(
-                    data.revenueThisMonth,
-                    data.revenueLastMonthToDate,
-                  )}{" "}
-                  vs last month to date
-                </p>
-              </Link>
-
-              <Link
-                href="/recurring-services"
-                className="block rounded-2xl bg-[#f7f6f1] p-5 transition hover:bg-[#eef4ee]"
-              >
-                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
-                  Recurring Service
-                </p>
-
-                <p className="mt-2 text-2xl font-bold text-[#174734]">
-                  {formatNumber(data.recurringCustomersThisMonth)} customer
-                  {data.recurringCustomersThisMonth === 1 ? "" : "s"}
-                </p>
-
-                <p className="mt-1 text-sm text-[#6b705c]">
-                  Scheduled for recurring service this month
-                </p>
-              </Link>
-
-              <Link
-                href="/codes"
-                className="block rounded-2xl bg-[#f7f6f1] p-5 transition hover:bg-[#eef4ee]"
-              >
-                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
-                  Campaign ROI
-                </p>
-
-                <p className="mt-2 text-2xl font-bold text-[#174734]">
-                  {formatCurrency(data.campaignRevenue)}
-                </p>
-
-                <p className="mt-1 text-sm text-[#6b705c]">
-                  Attributed revenue from {formatNumber(data.campaignLeads)}{" "}
-                  campaign lead{data.campaignLeads === 1 ? "" : "s"}
-                </p>
-              </Link>
+          {/* Revenue Pipeline */}
+          <section className="flex flex-col gap-3">
+            <div>
+              <h2 className="text-xl font-bold">Revenue Pipeline</h2>
+              <p className="text-sm text-[#6b705c]">
+                Scheduled visits that haven&apos;t been invoiced yet — separate from Revenue
+                above, which is already billed.
+              </p>
             </div>
-          </div>
-        </section>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="rounded-3xl bg-white p-6 shadow">
+                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
+                  Scheduled Today
+                </p>
+                <h3 className="mt-3 text-3xl font-bold">
+                  {formatCurrency(data.scheduledTodayTotal)}
+                </h3>
+                <p className="mt-2 text-sm text-[#6b705c]">
+                  {formatNumber(data.scheduledTodayCount)} visit
+                  {data.scheduledTodayCount === 1 ? "" : "s"} on the calendar
+                </p>
+              </div>
+
+              <div className="rounded-3xl bg-white p-6 shadow">
+                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
+                  Scheduled This Month
+                </p>
+                <h3 className="mt-3 text-3xl font-bold">
+                  {formatCurrency(data.scheduledMonthTotal)}
+                </h3>
+                <p className="mt-2 text-sm text-[#6b705c]">
+                  {formatNumber(data.scheduledMonthCount)} visit
+                  {data.scheduledMonthCount === 1 ? "" : "s"} on the calendar
+                </p>
+              </div>
+            </div>
+          </section>
+
+          {/* Job Mix */}
+          <section className="flex flex-col gap-3">
+            <h2 className="text-xl font-bold">Job Mix</h2>
+
+            <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
+              <div className="flex flex-col gap-5 rounded-3xl bg-white p-6 shadow">
+                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
+                  One-off vs. Recurring — this month
+                </p>
+
+                <div className="flex gap-6">
+                  <div className="flex-1">
+                    <p className="text-2xl font-bold">{formatNumber(data.oneOffJobCount)}</p>
+                    <p className="mt-1 text-sm text-[#6b705c]">
+                      One-off jobs · {formatCurrency(data.oneOffTotal)}
+                    </p>
+                    <div className="mt-3 h-2 rounded-full bg-[#ece8dc]">
+                      <div
+                        className="h-2 rounded-full bg-[#d4af37]"
+                        style={{
+                          width: `${
+                            data.oneOffJobCount + data.recurringVisitCount > 0
+                              ? Math.round(
+                                  (data.oneOffJobCount /
+                                    (data.oneOffJobCount + data.recurringVisitCount)) *
+                                    100
+                                )
+                              : 0
+                          }%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex-1">
+                    <p className="text-2xl font-bold">{formatNumber(data.recurringVisitCount)}</p>
+                    <p className="mt-1 text-sm text-[#6b705c]">
+                      Recurring visits · {formatCurrency(data.recurringTotal)}
+                    </p>
+                    <div className="mt-3 h-2 rounded-full bg-[#ece8dc]">
+                      <div
+                        className="h-2 rounded-full bg-[#174734]"
+                        style={{
+                          width: `${
+                            data.oneOffJobCount + data.recurringVisitCount > 0
+                              ? Math.round(
+                                  (data.recurringVisitCount /
+                                    (data.oneOffJobCount + data.recurringVisitCount)) *
+                                    100
+                                )
+                              : 0
+                          }%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-6 border-t border-[#ece8dc] pt-4">
+                  <div className="flex-1">
+                    <p className="text-xl font-bold">{formatCurrency(data.avgJobValueOverall)}</p>
+                    <p className="mt-1 text-xs text-[#6b705c]">Avg job value, overall</p>
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-xl font-bold">{formatCurrency(data.avgJobValueOneOff)}</p>
+                    <p className="mt-1 text-xs text-[#6b705c]">Avg, one-off</p>
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-xl font-bold">
+                      {formatCurrency(data.avgJobValueRecurring)}
+                    </p>
+                    <p className="mt-1 text-xs text-[#6b705c]">Avg, recurring</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col rounded-3xl bg-white p-6 shadow">
+                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
+                  Scheduled Job Value by Week
+                </p>
+
+                <div className="mt-4 flex flex-1 items-end gap-3 px-1">
+                  {data.weekBars.map((week) => (
+                    <div key={week.label} className="flex flex-1 flex-col items-center gap-1.5">
+                      <span className="text-xs font-bold text-[#174734]">
+                        {formatCurrency(week.total)}
+                      </span>
+                      <div
+                        className="w-full max-w-[34px] rounded-t-md rounded-b-sm bg-[#174734]"
+                        style={{ height: `${week.height}px` }}
+                      />
+                      <span className="text-xs text-[#9c9587]">{week.rangeLabel}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Requests & Quotes */}
+          <section className="flex flex-col gap-3">
+            <h2 className="text-xl font-bold">Requests &amp; Quotes</h2>
+
+            <div className="grid gap-5 rounded-3xl bg-white p-6 shadow sm:grid-cols-4">
+              <div className="sm:border-r sm:border-[#ece8dc] sm:pr-5">
+                <p className="text-2xl font-bold">
+                  {formatNumber(data.leadsThisWeekCount)}{" "}
+                  <span className="text-sm font-semibold text-[#6b705c]">
+                    / {formatNumber(data.leadsThisMonthCount)}
+                  </span>
+                </p>
+                <p className="mt-1 text-xs text-[#6b705c]">New leads — week / month</p>
+              </div>
+
+              <div className="sm:border-r sm:border-[#ece8dc] sm:pr-5">
+                <p className="text-2xl font-bold">
+                  {formatNumber(data.quotesThisWeekCount)}{" "}
+                  <span className="text-sm font-semibold text-[#6b705c]">
+                    / {formatNumber(data.quotesThisMonthCount)}
+                  </span>
+                </p>
+                <p className="mt-1 text-xs text-[#6b705c]">
+                  New quotes — week / month · {formatCurrency(data.quotesThisMonthValue)}
+                </p>
+              </div>
+
+              <div className="sm:border-r sm:border-[#ece8dc] sm:pr-5">
+                <p className="text-2xl font-bold">{formatNumber(data.quotesAwaitingResponse)}</p>
+                <p className="mt-1 text-xs text-[#6b705c]">Quotes awaiting response</p>
+              </div>
+
+              <div>
+                <p className="text-2xl font-bold">
+                  {data.quoteAcceptanceRate == null
+                    ? "—"
+                    : formatPercent(data.quoteAcceptanceRate, { decimals: 0 })}
+                </p>
+                <p className="mt-1 text-xs text-[#6b705c]">Quote acceptance rate</p>
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
     </main>
   );
