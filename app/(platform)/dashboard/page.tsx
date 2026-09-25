@@ -660,8 +660,9 @@ export default async function DashboardPage() {
             <div>
               <h2 className="text-xl font-bold">Revenue Pipeline</h2>
               <p className="text-sm text-[#6b705c]">
-                Scheduled visits that haven&apos;t been invoiced yet — separate from Revenue
-                above, which is already billed.
+                Visits that haven&apos;t been invoiced yet — a mix of work already
+                completed and visits still to come. Separate from Revenue above,
+                which is already billed.
               </p>
             </div>
 
@@ -675,20 +676,21 @@ export default async function DashboardPage() {
                 </h3>
                 <p className="mt-2 text-sm text-[#6b705c]">
                   {formatNumber(data.scheduledTodayCount)} visit
-                  {data.scheduledTodayCount === 1 ? "" : "s"} on the calendar
+                  {data.scheduledTodayCount === 1 ? "" : "s"} on today&apos;s calendar
                 </p>
               </div>
 
               <div className="rounded-3xl bg-white p-6 shadow">
                 <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
-                  Scheduled This Month
+                  Unbilled This Month
                 </p>
                 <h3 className="mt-3 text-3xl font-bold">
                   {formatCurrency(data.scheduledMonthTotal)}
                 </h3>
                 <p className="mt-2 text-sm text-[#6b705c]">
                   {formatNumber(data.scheduledMonthCount)} visit
-                  {data.scheduledMonthCount === 1 ? "" : "s"} on the calendar
+                  {data.scheduledMonthCount === 1 ? "" : "s"} not yet invoiced —
+                  completed and upcoming combined
                 </p>
               </div>
             </div>
