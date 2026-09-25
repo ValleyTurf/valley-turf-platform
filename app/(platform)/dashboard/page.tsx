@@ -119,7 +119,34 @@ async function fetchOutstandingInvoices(): Promise<OutstandingRow[]> {
     .order("outstanding_balance", { ascending: false });
 
   if (error) throw error;
-  return (data ?? []) as OutstandingRow[];
+  const rows = (data ?? []) as OutstandingRow[];
+  if (rows.length === 0) return rows;
+
+  // Tyson Lane (Ryan, first flagged 2026-09-20, still present 2026-09-25):
+  // the outstanding_invoices view computes its balance from invoiced total
+  // minus actual jobber_payments rows, never from the invoice's own status
+  // column. debug-outstanding-check2 confirmed his $5 invoice has
+  // jobber_invoices.status = "paid" but zero synced payment rows -- some
+  // path in Jobber marked it paid without ever emitting a payment record
+  // we captured, so the view has shown a phantom balance for it ever
+  // since. jobber_invoices.status is the trustworthy source for "is this
+  // actually paid"; cross-check against it here so any invoice Jobber
+  // already considers paid can't get stuck showing as outstanding, no
+  // matter what the view's own payment-sum math thinks.
+  const invoiceIds = rows.map((row) => row.jobber_invoice_id);
+  const { data: statusRows, error: statusError } = await supabaseServer
+    .from("jobber_invoices")
+    .select("jobber_invoice_id, status")
+    .in("jobber_invoice_id", invoiceIds);
+  if (statusError) throw statusError;
+
+  const paidInvoiceIds = new Set(
+    (statusRows ?? [])
+      .filter((row: { status: string | null }) => row.status === "paid")
+      .map((row: { jobber_invoice_id: string }) => row.jobber_invoice_id)
+  );
+
+  return rows.filter((row) => !paidInvoiceIds.has(row.jobber_invoice_id));
 }
 
 // ---------------------------------------------------------------------
@@ -226,6 +253,19 @@ async function fetchMonthVisits(monthStart: Date, monthEnd: Date): Promise<Month
       .select("jobber_visit_id, jobber_job_id, start_at, price_override, jobber_invoice_id")
       .gte("start_at", monthStart.toISOString())
       .lt("start_at", monthEnd.toISOString())
+      // Ashlye Carll (Ryan, 2026-09-25): "Scheduled Today" showed $230 for
+      // a visit whose job had been archived in Jobber -- it was never
+      // going to be invoiced, just an orphaned visit row left behind.
+      // Every other page that reads jobber_visits for "what's actually
+      // happening" (schedule, my-day, crew-status, customers/[id]) already
+      // excludes archived jobs with this exact filter -- see
+      // 051_add_job_status_to_visits.sql. This was the one place that
+      // still read raw, unfiltered visits. Written as an .or() (not a
+      // plain .neq()) so a visit not yet backfilled with a job_status at
+      // all isn't silently dropped, and completed_at.not.is.null keeps a
+      // one-off job's visit that legitimately finished before Jobber
+      // auto-archived the job behind it.
+      .or("job_status.is.null,job_status.neq.archived,completed_at.not.is.null")
       .order("start_at", { ascending: true })
       .range(from, from + pageSize - 1);
 
@@ -656,7 +696,13 @@ export default async function DashboardPage() {
 
           {/* Job Mix */}
           <section className="flex flex-col gap-3">
-            <h2 className="text-xl font-bold">Job Mix</h2>
+            <div>
+              <h2 className="text-xl font-bold">Job Mix</h2>
+              <p className="text-sm text-[#6b705c]">
+                Recurring total is every recurring visit scheduled this month, invoiced
+                or not — for what&apos;s actually been billed, see Revenue above.
+              </p>
+            </div>
 
             <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
               <div className="flex flex-col gap-5 rounded-3xl bg-white p-6 shadow">
