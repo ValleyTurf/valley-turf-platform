@@ -286,11 +286,21 @@ async function fetchMonthVisits(monthStart: Date, monthEnd: Date): Promise<Month
   return rows;
 }
 
-// jobber_jobs.total is the authoritative per-occurrence price for a job
-// (the same column every other report/dashboard reads) -- deliberately
+// jobber_jobs.total is the authoritative price for a job -- deliberately
 // NOT lib/jobberJob.ts's fetchJobDetails, which live-calls the Jobber
 // API per Jobber-sourced job and would be far too slow across a whole
 // month of jobs.
+//
+// Ryan (2026-09-25), after the by-hand vs. dashboard math didn't match
+// on the 3rd: "Hampton Villas has 2 [visits] at $200 so $100 for each
+// visit and Lehi [Cove] $500 for 4 visits for $125 each." Confirmed:
+// this column is NOT a per-occurrence price for a recurring job -- it's
+// the job's period total (what Jobber bills for the whole cycle), and a
+// job whose recurrence generates more than one visit within a given
+// calendar month (weekly, biweekly, ...) was getting its full total
+// counted on EVERY one of those visits instead of its fair share. See
+// resolveVisitValue below, where this gets divided by how many of that
+// job's visits actually fall in this month.
 async function fetchJobTotals(jobIds: string[]): Promise<Map<string, number>> {
   const map = new Map<string, number>();
   if (jobIds.length === 0) return map;
@@ -470,10 +480,26 @@ async function getDashboardData(): Promise<DashboardData> {
     fetchNativeInvoicingByClient(clientIds),
   ]);
 
+  // How many of this job's visits actually land in this calendar month --
+  // e.g. a weekly job normally shows up 4 times. jobTotals is a period
+  // total (see fetchJobTotals's header), so a job with more than one
+  // visit this month needs its total split across them, or every visit
+  // counts the whole period's value on its own.
+  const jobVisitCountThisMonth = new Map<string, number>();
+  for (const visit of monthVisits) {
+    if (!visit.jobber_job_id) continue;
+    jobVisitCountThisMonth.set(
+      visit.jobber_job_id,
+      (jobVisitCountThisMonth.get(visit.jobber_job_id) ?? 0) + 1
+    );
+  }
+
   function resolveVisitValue(visit: MonthVisitRow): number {
     if (visit.price_override != null) return toNumber(visit.price_override);
     if (!visit.jobber_job_id) return 0;
-    return jobTotals.get(visit.jobber_job_id) ?? 0;
+    const periodTotal = jobTotals.get(visit.jobber_job_id) ?? 0;
+    const visitsThisMonth = jobVisitCountThisMonth.get(visit.jobber_job_id) ?? 1;
+    return visitsThisMonth > 0 ? periodTotal / visitsThisMonth : periodTotal;
   }
 
   let scheduledTodayTotal = 0;

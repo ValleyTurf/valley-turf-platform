@@ -126,10 +126,23 @@ export async function GET() {
     }
   }
 
+  // Ryan (2026-09-25) confirmed jobTotals is a PERIOD total, not a
+  // per-visit price: "Hampton Villas has 2 [visits] at $200 so $100 for
+  // each visit and Lehi [Cove] $500 for 4 visits for $125 each." Split
+  // across however many of that job's visits land in this month, same
+  // as the dashboard's resolveVisitValue.
+  const jobVisitCountThisMonth = new Map<string, number>();
+  for (const v of rows) {
+    if (!v.jobber_job_id) continue;
+    jobVisitCountThisMonth.set(v.jobber_job_id, (jobVisitCountThisMonth.get(v.jobber_job_id) ?? 0) + 1);
+  }
+
   function resolveValue(v: VisitRow): number {
     if (v.price_override != null) return toNumber(v.price_override);
     if (!v.jobber_job_id) return 0;
-    return jobTotals.get(v.jobber_job_id) ?? 0;
+    const periodTotal = jobTotals.get(v.jobber_job_id) ?? 0;
+    const visitsThisMonth = jobVisitCountThisMonth.get(v.jobber_job_id) ?? 1;
+    return visitsThisMonth > 0 ? periodTotal / visitsThisMonth : periodTotal;
   }
 
   function phoenixDay(iso: string) {
@@ -166,6 +179,7 @@ export async function GET() {
         startAt: v.start_at,
         priceOverride: v.price_override,
         jobTotal: v.jobber_job_id ? jobTotals.get(v.jobber_job_id) ?? null : null,
+        jobVisitsThisMonth: v.jobber_job_id ? jobVisitCountThisMonth.get(v.jobber_job_id) ?? null : null,
         resolvedValue: resolveValue(v),
         jobMeta: v.jobber_job_id ? jobMeta.get(v.jobber_job_id) ?? null : null,
         invoiceId: v.jobber_invoice_id,
