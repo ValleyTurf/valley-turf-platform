@@ -549,8 +549,9 @@ async function getDashboardData(): Promise<DashboardData> {
   // Same one-off-jobs-vs-recurring-visits basis the Job Mix bars already
   // use for their widths (Ryan, 2026-09-25: wants the split shown as an
   // actual percentage, not just implied by bar width).
-  const jobMixTotalCount = oneOffJobCount + recurringVisitCount;
-  const oneOffPercent = jobMixTotalCount > 0 ? Math.round((oneOffJobCount / jobMixTotalCount) * 100) : 0;
+  const jobMixTotalCount = oneOffJobIds.size + recurringVisitCount;
+  const oneOffPercent =
+    jobMixTotalCount > 0 ? Math.round((oneOffJobIds.size / jobMixTotalCount) * 100) : 0;
   const recurringPercent = jobMixTotalCount > 0 ? 100 - oneOffPercent : 0;
 
   const weekRanges: [number, number][] = [
