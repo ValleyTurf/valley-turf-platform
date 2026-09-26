@@ -759,11 +759,6 @@ export default async function DashboardPage() {
           <section className="flex flex-col gap-3">
             <div>
               <h2 className="text-xl font-bold">Revenue Pipeline</h2>
-              <p className="text-sm text-[#6b705c]">
-                Visits that haven&apos;t been invoiced yet — a mix of work already
-                completed and visits still to come. Separate from Revenue above,
-                which is already billed.
-              </p>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
