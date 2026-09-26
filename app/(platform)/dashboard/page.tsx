@@ -731,15 +731,15 @@ export default async function DashboardPage() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="rounded-3xl bg-white p-6 shadow">
                 <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
-                  Scheduled Today
+                  Scheduled Today —{" "}
+                  <span className="normal-case tracking-normal text-[#6b705c]">
+                    {formatNumber(data.scheduledTodayCount)} visit
+                    {data.scheduledTodayCount === 1 ? "" : "s"} on today&apos;s calendar
+                  </span>
                 </p>
                 <h3 className="mt-3 text-3xl font-bold">
                   {formatCurrency(data.scheduledTodayTotal)}
                 </h3>
-                <p className="mt-2 text-sm text-[#6b705c]">
-                  {formatNumber(data.scheduledTodayCount)} visit
-                  {data.scheduledTodayCount === 1 ? "" : "s"} on today&apos;s calendar
-                </p>
               </div>
 
               <div className="rounded-3xl bg-white p-6 shadow">
