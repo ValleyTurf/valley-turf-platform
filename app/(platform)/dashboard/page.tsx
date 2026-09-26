@@ -691,10 +691,6 @@ export default async function DashboardPage() {
       <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
         <div className="mx-auto max-w-7xl">
           <section className="rounded-3xl bg-white p-5 shadow sm:p-8">
-            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
-              Business Intelligence
-            </p>
-
             <h1 className="mt-3 text-3xl font-bold">Dashboard could not be loaded</h1>
 
             <p className="mt-4 text-[#6b705c]">
@@ -718,17 +714,9 @@ export default async function DashboardPage() {
       <div className="mx-auto max-w-7xl">
         <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
-              Business Intelligence
-            </p>
-
             <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
               Valley Turf Revival Dashboard
             </h1>
-
-            <p className="mt-2 text-[#6b705c]">
-              Live revenue, pipeline, and lead metrics.
-            </p>
           </div>
 
           <div className="flex flex-wrap gap-3">
@@ -799,11 +787,6 @@ export default async function DashboardPage() {
                 <h3 className="mt-3 text-3xl font-bold">
                   {formatCurrency(data.scheduledMonthTotal)}
                 </h3>
-                <p className="mt-2 text-sm text-[#6b705c]">
-                  {formatNumber(data.scheduledMonthCount)} visit
-                  {data.scheduledMonthCount === 1 ? "" : "s"} not yet invoiced —
-                  completed and upcoming combined
-                </p>
               </div>
             </div>
           </section>
@@ -812,10 +795,6 @@ export default async function DashboardPage() {
           <section className="flex flex-col gap-3">
             <div>
               <h2 className="text-xl font-bold">Job Mix</h2>
-              <p className="text-sm text-[#6b705c]">
-                Recurring total is every recurring visit scheduled this month, invoiced
-                or not — for what&apos;s actually been billed, see Revenue above.
-              </p>
             </div>
 
             <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
