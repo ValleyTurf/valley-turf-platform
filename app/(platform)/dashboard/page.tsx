@@ -679,27 +679,11 @@ export default async function DashboardPage() {
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
       <div className="mx-auto max-w-7xl">
-        <header className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+        <header className="flex flex-col gap-5">
           <div>
             <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
               Valley Turf Revival Dashboard
             </h1>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <Link
-              href="/customers"
-              className="rounded-xl bg-[#d4af37] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#e6c766]"
-            >
-              View Customers
-            </Link>
-
-            <Link
-              href="/"
-              className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
-            >
-              Home
-            </Link>
           </div>
         </header>
 
