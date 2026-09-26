@@ -866,8 +866,18 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
   }
 
   const topCustomers = (topCustomersResult.data ?? []) as CustomerFinancial[];
-  const outstandingInvoices = (outstandingResult.data ??
-    []) as OutstandingInvoice[];
+  // Ryan Sawyer (Ryan, 2026-09-26): the outstanding_invoices view's own
+  // balance math ignores its own status column (see dashboard/page.tsx's
+  // fetchOutstandingInvoices for the full history -- Tyson Lane's "paid"
+  // invoice with no synced payment rows, then Sawyer's "draft" invoice he
+  // deleted in Jobber after collecting via a separate native invoice for
+  // the same visit). This page pulled straight from the view with no
+  // filter at all, so it had both gaps. Same exclusion as the dashboard:
+  // a paid invoice isn't outstanding, and a draft was never sent, so it
+  // was never actually owed either.
+  const outstandingInvoices = (
+    (outstandingResult.data ?? []) as OutstandingInvoice[]
+  ).filter((invoice) => invoice.status !== "paid" && invoice.status !== "draft");
   const forecastMonths = (forecastResult.data ?? []) as ForecastMonth[];
 
   // Each invoice represents a completed service visit, so invoice count

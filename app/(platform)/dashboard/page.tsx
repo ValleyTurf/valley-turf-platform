@@ -135,6 +135,19 @@ async function fetchOutstandingInvoices(): Promise<OutstandingRow[]> {
   // actually paid"; cross-check against it here so any invoice Jobber
   // already considers paid can't get stuck showing as outstanding, no
   // matter what the view's own payment-sum math thinks.
+  //
+  // Ryan Sawyer (Ryan, 2026-09-26): "I have deleted the invoice in
+  // Jobber, but it is still showing as outstanding." debug-lookup-invoice
+  // found the actual invoice (#1242) sitting at status = "draft", not
+  // "paid" -- he'd created it, never sent it, ended up collecting via a
+  // separate native invoice for the same visit instead, then deleted the
+  // draft in Jobber. jobberWebhookProcessor.ts's handleDestroyedInvoice
+  // only fires on a true INVOICE_DESTROY webhook and deliberately keeps
+  // the row either way ("historical invoice data was retained"), so a
+  // deleted draft was never going to clear itself from here. But the
+  // simpler fix covers it without needing that webhook to land at all: a
+  // draft was never sent, so it was never actually owed -- exclude it
+  // the same way a paid one already is.
   const invoiceIds = rows.map((row) => row.jobber_invoice_id);
   const { data: statusRows, error: statusError } = await supabaseServer
     .from("jobber_invoices")
@@ -142,13 +155,13 @@ async function fetchOutstandingInvoices(): Promise<OutstandingRow[]> {
     .in("jobber_invoice_id", invoiceIds);
   if (statusError) throw statusError;
 
-  const paidInvoiceIds = new Set(
+  const notActuallyOutstandingIds = new Set(
     (statusRows ?? [])
-      .filter((row: { status: string | null }) => row.status === "paid")
+      .filter((row: { status: string | null }) => row.status === "paid" || row.status === "draft")
       .map((row: { jobber_invoice_id: string }) => row.jobber_invoice_id)
   );
 
-  return rows.filter((row) => !paidInvoiceIds.has(row.jobber_invoice_id));
+  return rows.filter((row) => !notActuallyOutstandingIds.has(row.jobber_invoice_id));
 }
 
 // ---------------------------------------------------------------------
