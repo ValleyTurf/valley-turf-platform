@@ -118,7 +118,7 @@ export async function GET() {
 
   // invoicing_mode -- is this customer actually still invoiced via Jobber
   // despite their job living natively?
-  let invoicingModeByClient = new Map<
+  const invoicingModeByClient = new Map<
     string,
     { native_invoicing_enabled: boolean | null; invoicing_mode_source: string | null }
   >();
@@ -143,7 +143,7 @@ export async function GET() {
   // ANY jobber_invoices row for that client -- regardless of visit link --
   // near this month, so a Jobber-side invoice that Jobber's own
   // visits(first:50) could never link back to still shows up here.
-  let jobberInvoicesByClient = new Map<
+  const jobberInvoicesByClient = new Map<
     string,
     { jobber_invoice_id: string; invoice_number: string | null; status: string | null; total: number | string | null; issue_date: string | null }[]
   >();

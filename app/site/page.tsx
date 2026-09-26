@@ -388,7 +388,7 @@ export default async function MarketingHomePage() {
             </h2>
 
             <p className="mt-5 max-w-md text-base leading-7 text-[#5e7068]">
-              We don't just clean your turf — we restore it. Our
+              We don&apos;t just clean your turf — we restore it. Our
               professional services remove buildup, eliminate odors,
               and bring your artificial grass back to life.
             </p>
@@ -666,7 +666,7 @@ export default async function MarketingHomePage() {
 
             <p className="mt-5 max-w-md leading-7 text-[#5e7068]">
               Take a look at some of the artificial turf projects
-              we've cleaned and revived throughout the Phoenix Metro Area.
+              we&apos;ve cleaned and revived throughout the Phoenix Metro Area.
             </p>
 
             <Link
@@ -874,7 +874,7 @@ export default async function MarketingHomePage() {
 
               <p className="mt-4 max-w-lg text-white/75">
                 From Queen Creek to Mesa and throughout the surrounding
-                communities, we're your local artificial turf cleaning experts.
+                communities, we&apos;re your local artificial turf cleaning experts.
               </p>
 
               <Link

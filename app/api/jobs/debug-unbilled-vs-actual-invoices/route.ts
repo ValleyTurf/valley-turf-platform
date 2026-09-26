@@ -119,7 +119,7 @@ export async function GET() {
   // The REAL native invoices table (lib/invoices.ts), not just its
   // jobber_invoices mirror -- this is the source of truth for status and
   // paid_at.
-  let invoicesByClient = new Map<
+  const invoicesByClient = new Map<
     string,
     { id: string; invoice_number: string | null; status: string | null; total: number | string | null; issue_date: string | null; paid_at: string | null; created_at: string | null }[]
   >();
@@ -143,7 +143,7 @@ export async function GET() {
   // case the invoice link exists at the line-item level but the
   // jobber_visits.jobber_invoice_id write silently failed/was skipped.
   const visitIds = nativeUnbilled.map((v) => v.jobber_visit_id);
-  let lineItemsByVisit = new Map<string, { invoice_id: string }[]>();
+  const lineItemsByVisit = new Map<string, { invoice_id: string }[]>();
   if (visitIds.length > 0) {
     const { data: lineItems, error: lineItemsError } = await supabaseServer
       .from("invoice_line_items")
