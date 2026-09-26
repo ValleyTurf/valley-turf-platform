@@ -792,7 +792,7 @@ export default async function DashboardPage() {
               <h2 className="text-xl font-bold">Job Mix</h2>
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-5 rounded-3xl bg-white p-6 shadow">
                 <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
                   One-off vs. Recurring — this month
