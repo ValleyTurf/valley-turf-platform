@@ -751,13 +751,6 @@ export default async function DashboardPage() {
                 </h3>
               </div>
             </div>
-          </section>
-
-          {/* Job Mix */}
-          <section className="flex flex-col gap-3">
-            <div>
-              <h2 className="text-xl font-bold">Job Mix</h2>
-            </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-5 rounded-3xl bg-white p-6 shadow">
@@ -825,9 +818,6 @@ export default async function DashboardPage() {
                 <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9c7a20]">
                   Job Value by Week
                 </p>
-                <p className="mt-1 text-xs text-[#6b705c]">
-                  Every visit scheduled this month, invoiced or not — same basis as Job Mix.
-                </p>
 
                 <div className="mt-4 flex flex-1 items-end gap-3 px-1">
                   {data.weekBars.map((week) => (
@@ -836,7 +826,7 @@ export default async function DashboardPage() {
                         {formatCurrency(week.total)}
                       </span>
                       <div
-                        className="w-full max-w-[34px] rounded-t-md rounded-b-sm bg-[#174734]"
+                        className="w-full max-w-[56px] rounded-t-md rounded-b-sm bg-[#174734]"
                         style={{ height: `${week.height}px` }}
                       />
                       <span className="text-xs text-[#9c9587]">{week.rangeLabel}</span>
