@@ -354,16 +354,24 @@ export default async function RecurringServicesPage({
     ])
   );
 
+  // Exclude visits whose job has since been archived/canceled -- same
+  // convention already used by fetchMonthVisits (dashboard) and the
+  // schedule/my-day pages. Without this, a canceled customer's
+  // future-dated recurring visits (Jobber/native keeps generating them
+  // on the recurrence schedule regardless of job status) kept showing
+  // up here as "upcoming recurring" (Ryan: Brittany Pratz, Steven
+  // Hensley, 2026-09-27).
   const { data: visitsData, error: visitsError } =
     recurringJobIds.length > 0
       ? await supabaseServer
           .from("jobber_visits")
           .select(
-            "jobber_visit_id, jobber_job_id, jobber_client_id, customer_name, start_at"
+            "jobber_visit_id, jobber_job_id, jobber_client_id, customer_name, start_at, job_status, completed_at"
           )
           .in("jobber_job_id", recurringJobIds)
           .gte("start_at", rangeStart)
           .lte("start_at", rangeEnd)
+          .or("job_status.is.null,job_status.neq.archived,completed_at.not.is.null")
           .order("start_at", { ascending: true })
       : { data: [] as VisitRow[], error: null };
 
