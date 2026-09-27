@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
   const { data: visits, error: visitsError } = await supabaseServer
     .from("jobber_visits")
     .select(
-      "jobber_visit_id, jobber_job_id, customer_name, title, start_at, job_status, completed_at, price_override, source"
+      "jobber_visit_id, jobber_job_id, jobber_client_id, customer_name, title, start_at, job_status, completed_at, price_override, source"
     )
     .ilike("customer_name", `%${name}%`)
     .order("start_at", { ascending: true });
@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
     ? await supabaseServer
         .from("jobber_jobs")
         .select(
-          "jobber_job_id, title, total, source, job_type, job_status, recurrence_frequency, recurrence_anchor_date, recurrence_generated_through, updated_at"
+          "jobber_job_id, jobber_client_id, title, total, source, job_type, job_status, recurrence_frequency, recurrence_anchor_date, recurrence_generated_through, updated_at"
         )
         .in("jobber_job_id", jobIds)
     : { data: [], error: null };
@@ -64,6 +64,29 @@ export async function GET(request: NextRequest) {
   if (jobsError) {
     return NextResponse.json({ error: jobsError.message, step: "jobber_jobs" }, { status: 500 });
   }
+
+  // 2026-09-27: added after finding that flip-all-full-months reported
+  // 0 retitles needed for Mariscal even though several of her visits
+  // (Oct/Nov 2026, May 2029, the final 2031-06-27 occurrence) still show
+  // the job's flat "Monthly Maintenance Plan" title -- that route
+  // matches visits to a customer purely by jobber_visits.jobber_client_id,
+  // so a visit whose jobber_client_id is null or wrong would be silently
+  // excluded from its scan without ever showing up as "skipped". Cross-
+  // checking each visit's own jobber_client_id against its job's here to
+  // confirm or rule that out before guessing further.
+  const clientIdMismatches = (visits ?? [])
+    .map((v) => {
+      const job = (jobs ?? []).find((j) => j.jobber_job_id === v.jobber_job_id);
+      return {
+        jobber_visit_id: v.jobber_visit_id,
+        title: v.title,
+        start_at: v.start_at,
+        visit_jobber_client_id: v.jobber_client_id,
+        job_jobber_client_id: job?.jobber_client_id ?? null,
+        matches: Boolean(job) && job?.jobber_client_id === v.jobber_client_id,
+      };
+    })
+    .filter((row) => !row.matches);
 
   const { data: categories, error: categoriesError } = jobIds.length
     ? await supabaseServer
@@ -81,6 +104,7 @@ export async function GET(request: NextRequest) {
     searchedFor: name,
     jobs,
     jobServiceCategoryRows: categories,
+    clientIdMismatches,
     visits,
   });
 }
