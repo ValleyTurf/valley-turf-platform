@@ -169,16 +169,55 @@ export async function GET(request: Request) {
 
   const clientIds = eligible.map((e) => e.customer.jobber_client_id);
 
-  const { data: visitRows, error: visitsError } =
-    clientIds.length > 0
-      ? await supabaseServer
-          .from("jobber_visits")
-          .select("jobber_visit_id, jobber_client_id, title, start_at")
-          .in("jobber_client_id", clientIds)
-          .eq("source", "native")
-          .not("start_at", "is", null)
-          .gte("start_at", new Date().toISOString())
-      : { data: [] as VisitRow[], error: null };
+  // Mariscal (Ryan, 2026-09-27): flip-all-full-months kept reporting 0
+  // needing retitle for her, twice, while several of her visits (Oct/Nov
+  // 2026, May 2029, and the final 2031-06-27 occurrence) plainly still
+  // showed the job's flat "Monthly Maintenance Plan" title. Traced to
+  // this select having no .order()/pagination -- the exact bug class
+  // already found and fixed in lib/dailyDigest.ts, lib/jobberMigrationAudit.ts,
+  // lib/invoiceReminders.ts, lib/jobCostingSummary.ts, and
+  // lib/reactivationSummary.ts: Supabase/PostgREST silently caps an
+  // unpaginated select at 1000 rows, in whatever scan order Postgres
+  // happens to pick rather than any guaranteed ordering, so which rows
+  // survive isn't even stable across calls. With several customers now
+  // carrying bulk-generated schedules stretching years out (Mariscal
+  // through 2031, Ludeman through 2030, Durkin similarly), the combined
+  // future-visit count across all eligible customers has grown past that
+  // cap -- so a handful of rows silently vanished from the scan every
+  // run, for whichever customers happened to have rows that fell outside
+  // the cutoff that time. Paginated in fixed PAGE_SIZE chunks, ordered by
+  // the unique jobber_visit_id so each page is a stable, non-overlapping
+  // slice, to make sure every matching visit actually gets seen.
+  const VISITS_PAGE_SIZE = 1000;
+  const visitRows: VisitRow[] = [];
+  let visitsError: { message: string } | null = null;
+
+  if (clientIds.length > 0) {
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await supabaseServer
+        .from("jobber_visits")
+        .select("jobber_visit_id, jobber_client_id, title, start_at")
+        .in("jobber_client_id", clientIds)
+        .eq("source", "native")
+        .not("start_at", "is", null)
+        .gte("start_at", new Date().toISOString())
+        .order("jobber_visit_id", { ascending: true })
+        .range(from, from + VISITS_PAGE_SIZE - 1);
+
+      if (error) {
+        visitsError = error;
+        break;
+      }
+
+      const page = (data ?? []) as VisitRow[];
+      visitRows.push(...page);
+
+      if (page.length < VISITS_PAGE_SIZE) break;
+      from += VISITS_PAGE_SIZE;
+    }
+  }
 
   if (visitsError) {
     return NextResponse.json(
