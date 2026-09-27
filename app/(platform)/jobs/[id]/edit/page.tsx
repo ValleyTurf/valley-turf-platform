@@ -3,12 +3,52 @@ export const revalidate = 0;
 
 import Link from "next/link";
 import { fetchJobDetails } from "@/lib/jobberJob";
-import ManageJobForm from "./ManageJobForm";
+import { supabaseServer } from "@/lib/supabase-server";
+import { fetchVisitOneTimeChargesForVisits } from "@/lib/visitCharges";
+import ManageJobForm, { type VisitWithCharges } from "./ManageJobForm";
 
 type JobEditPageProps = {
   params: Promise<{ id: string }>;
   searchParams: Promise<{ saved?: string; error?: string }>;
 };
+
+// One-time visit charges (Ryan, 2026-09-27) -- window wide enough to
+// cover a charge added shortly after a visit happens (before it's been
+// invoiced) as well as one planned ahead for an upcoming visit. See
+// lib/visitCharges.ts's header comment for what this is for.
+const VISIT_WINDOW_PAST_DAYS = 30;
+const VISIT_WINDOW_FUTURE_DAYS = 180;
+const MAX_VISITS_SHOWN = 30;
+
+async function fetchVisitsForCharges(jobId: string): Promise<VisitWithCharges[]> {
+  const now = Date.now();
+  const rangeStart = new Date(now - VISIT_WINDOW_PAST_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const rangeEnd = new Date(now + VISIT_WINDOW_FUTURE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await supabaseServer
+    .from("jobber_visits")
+    .select("jobber_visit_id, start_at")
+    .eq("jobber_job_id", jobId)
+    .gte("start_at", rangeStart)
+    .lte("start_at", rangeEnd)
+    .order("start_at", { ascending: true })
+    .limit(MAX_VISITS_SHOWN);
+
+  if (error || !data) return [];
+
+  const visitIds = data.map((row) => row.jobber_visit_id as string);
+  const chargesByVisit = await fetchVisitOneTimeChargesForVisits(visitIds);
+
+  return data.map((row) => ({
+    id: row.jobber_visit_id as string,
+    startAt: row.start_at as string | null,
+    charges: (chargesByVisit.get(row.jobber_visit_id as string) ?? []).map((charge) => ({
+      id: charge.id,
+      name: charge.name,
+      unitPrice: charge.unitPrice,
+    })),
+  }));
+}
 
 export default async function JobEditPage({
   params,
@@ -18,7 +58,10 @@ export default async function JobEditPage({
   const jobId = decodeURIComponent(id);
   const search = await searchParams;
 
-  const job = await fetchJobDetails(jobId);
+  const [job, visits] = await Promise.all([
+    fetchJobDetails(jobId),
+    fetchVisitsForCharges(jobId),
+  ]);
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
@@ -57,7 +100,7 @@ export default async function JobEditPage({
             </p>
           </section>
         ) : (
-          <ManageJobForm job={job} />
+          <ManageJobForm job={job} visits={visits} />
         )}
 
         <Link

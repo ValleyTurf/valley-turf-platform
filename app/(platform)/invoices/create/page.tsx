@@ -8,6 +8,7 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { fetchJobDetails } from "@/lib/jobberJob";
+import { fetchVisitOneTimeChargesForVisits } from "@/lib/visitCharges";
 import { escapeSearchValue } from "@/lib/searchUtils";
 import CustomerTypeahead from "@/app/components/CustomerTypeahead";
 import InvoiceCard, { type ReadyToInvoiceVisit } from "../InvoiceCard";
@@ -172,6 +173,12 @@ export default async function CreateInvoicesPage({
   for (const row of (costData ?? []) as VisitCost[]) {
     costMap.set(row.jobber_visit_id, toNumber(row.material_cost));
   }
+
+  // One-time per-visit add-ons (Ryan, 2026-09-27) -- see
+  // lib/visitCharges.ts's header comment. Appended below as their own
+  // suggested line items, on top of whatever the visit already
+  // suggests from price_override or the job's line items.
+  const oneTimeChargesByVisit = await fetchVisitOneTimeChargesForVisits(visitIds);
 
   // Suggested line items per visit, pulled straight from the job's own
   // line items in Jobber -- this app's own job-creation flow
@@ -370,13 +377,13 @@ export default async function CreateInvoicesPage({
                 key={visit.jobber_visit_id}
                 visit={visit}
                 directCost={costMap.get(visit.jobber_visit_id) ?? 0}
-                suggestedLineItems={
+                suggestedLineItems={[
                   // A visit-level price_override always wins -- see the
                   // VisitRow comment above. Built as a single line item
                   // using the visit's own service label (e.g. "Full -
                   // Monthly") as the description, same convention
                   // jobLineItemsMap's items use ("Service" fallback).
-                  visit.price_override != null
+                  ...(visit.price_override != null
                     ? [
                         {
                           description: visitServiceLabel(visit.title) || "Service",
@@ -387,8 +394,20 @@ export default async function CreateInvoicesPage({
                       ]
                     : visit.jobber_job_id
                       ? jobLineItemsMap.get(visit.jobber_job_id) ?? []
-                      : []
-                }
+                      : []),
+                  // One-time add-ons for this specific occurrence (e.g.
+                  // "One Time Urine Extraction") -- always appended, own
+                  // line item each, regardless of which branch above
+                  // supplied the base service.
+                  ...(oneTimeChargesByVisit.get(visit.jobber_visit_id) ?? []).map(
+                    (charge) => ({
+                      description: charge.name,
+                      quantity: 1,
+                      unitPrice: charge.unitPrice,
+                      details: null,
+                    })
+                  ),
+                ]}
               />
             ))}
           </div>

@@ -1,7 +1,13 @@
 "use client";
 
 import { useActionState, useState, type FormEvent } from "react";
-import { updateJob, cancelJob, reopenJob } from "./actions";
+import {
+  updateJob,
+  cancelJob,
+  reopenJob,
+  addOneTimeCharge,
+  removeOneTimeCharge,
+} from "./actions";
 import { initialActionState } from "./actionState";
 
 // Deliberately a locally-defined, structural subset rather than an
@@ -25,6 +31,31 @@ type Job = {
   }[];
 };
 
+export type VisitWithCharges = {
+  id: string;
+  startAt: string | null;
+  charges: { id: string; name: string; unitPrice: number }[];
+};
+
+function formatVisitDate(startAt: string | null): string {
+  if (!startAt) return "Unscheduled visit";
+  return new Date(startAt).toLocaleDateString("en-US", {
+    timeZone: "America/Phoenix",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatDollars(value: number): string {
+  return value.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+  });
+}
+
 const FREQUENCY_OPTIONS: { value: string; label: string }[] = [
   { value: "one_time", label: "One-Time" },
   { value: "weekly", label: "Weekly" },
@@ -36,7 +67,13 @@ const FREQUENCY_OPTIONS: { value: string; label: string }[] = [
   { value: "semiannual", label: "Semi-Annual" },
 ];
 
-export default function ManageJobForm({ job }: { job: Job }) {
+export default function ManageJobForm({
+  job,
+  visits,
+}: {
+  job: Job;
+  visits: VisitWithCharges[];
+}) {
   const [state, formAction, isPending] = useActionState(
     updateJob,
     initialActionState
@@ -309,6 +346,92 @@ export default function ManageJobForm({ job }: { job: Job }) {
           {isPending ? "Saving…" : "Save Changes"}
         </button>
       </form>
+
+      {visits.length > 0 && (
+        <div className="rounded-2xl border border-[#e7e2d5] bg-white p-5 shadow">
+          <p className="text-sm font-bold">One-Time Charges</p>
+          <p className="mt-1 text-xs text-[#6b705c]">
+            Add an extra charge to a single visit below (e.g. &ldquo;One
+            Time Urine Extraction&rdquo;) without changing the price of
+            every other visit on this job. Shows up on the dashboard and
+            as its own line item when that visit gets invoiced.
+          </p>
+
+          <div className="mt-4 space-y-3">
+            {visits.map((visit) => (
+              <div
+                key={visit.id}
+                className="rounded-xl border border-[#eee9dc] p-3"
+              >
+                <p className="text-sm font-semibold">
+                  {formatVisitDate(visit.startAt)}
+                </p>
+
+                {visit.charges.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {visit.charges.map((charge) => (
+                      <li
+                        key={charge.id}
+                        className="flex items-center justify-between rounded-lg bg-[#f7f6f1] px-3 py-1.5 text-sm"
+                      >
+                        <span>
+                          {charge.name}{" "}
+                          <span className="text-[#6b705c]">
+                            {formatDollars(charge.unitPrice)}
+                          </span>
+                        </span>
+                        <form action={removeOneTimeCharge}>
+                          <input type="hidden" name="job_id" value={job.id} />
+                          <input
+                            type="hidden"
+                            name="charge_id"
+                            value={charge.id}
+                          />
+                          <button
+                            type="submit"
+                            aria-label="Remove charge"
+                            className="text-xs font-bold text-red-600 hover:underline"
+                          >
+                            Remove
+                          </button>
+                        </form>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                <form
+                  action={addOneTimeCharge}
+                  className="mt-2 flex flex-wrap gap-2"
+                >
+                  <input type="hidden" name="job_id" value={job.id} />
+                  <input type="hidden" name="visit_id" value={visit.id} />
+                  <input
+                    type="text"
+                    name="charge_name"
+                    placeholder="e.g. One Time Urine Extraction"
+                    className="min-w-0 flex-1 rounded-lg border border-[#d9d4c6] px-3 py-1.5 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                  />
+                  <input
+                    type="number"
+                    name="charge_price"
+                    step="0.01"
+                    min="0.01"
+                    placeholder="0.00"
+                    className="w-24 rounded-lg border border-[#d9d4c6] px-3 py-1.5 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+                  />
+                  <button
+                    type="submit"
+                    className="rounded-lg border border-[#174734] px-3 py-1.5 text-xs font-bold transition hover:bg-[#f7f6f1]"
+                  >
+                    Add
+                  </button>
+                </form>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="rounded-2xl border border-[#e7e2d5] bg-white p-5 shadow">
         <p className="text-sm font-bold">Recurring Service Status</p>

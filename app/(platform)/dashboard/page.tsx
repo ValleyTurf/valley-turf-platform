@@ -12,6 +12,7 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { formatCurrency, formatNumber, formatPercent, toNumber } from "@/lib/format";
 import { computeDisplayStatus, type QuoteStatus } from "@/lib/quotes";
+import { fetchVisitOneTimeChargesForVisits, sumOneTimeCharges } from "@/lib/visitCharges";
 import DashboardTopRow, {
   type LeadItem,
   type OutstandingInvoiceItem,
@@ -442,9 +443,16 @@ async function getDashboardData(): Promise<DashboardData> {
     new Set(monthVisits.map((v) => v.jobber_job_id).filter((id): id is string => Boolean(id)))
   );
 
-  const [jobTotals, recurringJobIds] = await Promise.all([
+  const [jobTotals, recurringJobIds, oneTimeChargesByVisit] = await Promise.all([
     fetchJobTotals(jobIds),
     fetchRecurringJobIds(jobIds),
+    // One-time per-visit add-ons (Ryan, 2026-09-27: Ludeman's October
+    // "One Time Urine Extraction") -- see lib/visitCharges.ts's header
+    // comment. Additive on top of whatever resolveVisitValue would
+    // otherwise compute for that one visit, so a single occurrence can
+    // charge more than the rest of the recurring series without
+    // touching jobber_jobs.total (which would repeat every month).
+    fetchVisitOneTimeChargesForVisits(monthVisits.map((v) => v.jobber_visit_id)),
   ]);
 
   // How many of this job's visits actually land in this calendar month --
@@ -462,11 +470,18 @@ async function getDashboardData(): Promise<DashboardData> {
   }
 
   function resolveVisitValue(visit: MonthVisitRow): number {
-    if (visit.price_override != null) return toNumber(visit.price_override);
-    if (!visit.jobber_job_id) return 0;
+    const oneTimeExtra = sumOneTimeCharges(
+      oneTimeChargesByVisit.get(visit.jobber_visit_id) ?? []
+    );
+
+    if (visit.price_override != null) {
+      return toNumber(visit.price_override) + oneTimeExtra;
+    }
+    if (!visit.jobber_job_id) return oneTimeExtra;
     const periodTotal = jobTotals.get(visit.jobber_job_id) ?? 0;
     const visitsThisMonth = jobVisitCountThisMonth.get(visit.jobber_job_id) ?? 1;
-    return visitsThisMonth > 0 ? periodTotal / visitsThisMonth : periodTotal;
+    const baseValue = visitsThisMonth > 0 ? periodTotal / visitsThisMonth : periodTotal;
+    return baseValue + oneTimeExtra;
   }
 
   let scheduledTodayTotal = 0;

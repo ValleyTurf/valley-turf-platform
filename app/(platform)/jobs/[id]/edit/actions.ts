@@ -11,6 +11,10 @@ import {
   type RecurrenceFrequency,
   type NativeLineItemInput,
 } from "@/lib/jobberJob";
+import {
+  addVisitOneTimeCharge,
+  removeVisitOneTimeCharge,
+} from "@/lib/visitCharges";
 import type { ActionState } from "./actionState";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
@@ -204,6 +208,86 @@ export async function reopenJob(formData: FormData): Promise<void> {
     entityId: jobId,
     entityLabel: "Reopen job",
     after: { action: "reopen" },
+  });
+
+  redirect(`/jobs/${encodeURIComponent(jobId)}/edit?saved=1`);
+}
+
+// One-time visit charges (Ryan, 2026-09-27): "I still want to be able
+// to add these without having to have it coded in" -- a self-serve
+// alternative to the job-level line items above, scoped to exactly one
+// visit instead of every future occurrence. See lib/visitCharges.ts's
+// header comment for the full reasoning.
+export async function addOneTimeCharge(formData: FormData): Promise<void> {
+  const actor = await getCurrentUser();
+  const jobId = cleanText(formData.get("job_id"));
+  const visitId = cleanText(formData.get("visit_id"));
+  const name = cleanText(formData.get("charge_name"));
+  const priceRaw = cleanText(formData.get("charge_price"));
+  const price = priceRaw ? Number(priceRaw) : NaN;
+
+  if (!actor || !jobId || !visitId) {
+    redirect(
+      `/jobs/${encodeURIComponent(jobId ?? "")}/edit?error=${encodeURIComponent("Missing visit or not signed in.")}`
+    );
+  }
+
+  if (!name || !Number.isFinite(price) || price <= 0) {
+    redirect(
+      `/jobs/${encodeURIComponent(jobId)}/edit?error=${encodeURIComponent("Enter a charge name and an amount greater than zero.")}`
+    );
+  }
+
+  const result = await addVisitOneTimeCharge({
+    visitId,
+    name,
+    unitPrice: price,
+  });
+
+  if (!result.ok) {
+    redirect(
+      `/jobs/${encodeURIComponent(jobId)}/edit?error=${encodeURIComponent(`Couldn't add charge: ${result.error}`)}`
+    );
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "job",
+    entityId: jobId,
+    entityLabel: "Add one-time visit charge",
+    after: { visit_id: visitId, charge_name: name, charge_price: price },
+  });
+
+  redirect(`/jobs/${encodeURIComponent(jobId)}/edit?saved=1`);
+}
+
+export async function removeOneTimeCharge(formData: FormData): Promise<void> {
+  const actor = await getCurrentUser();
+  const jobId = cleanText(formData.get("job_id"));
+  const chargeId = cleanText(formData.get("charge_id"));
+
+  if (!actor || !jobId || !chargeId) {
+    redirect(
+      `/jobs/${encodeURIComponent(jobId ?? "")}/edit?error=${encodeURIComponent("Missing charge or not signed in.")}`
+    );
+  }
+
+  const result = await removeVisitOneTimeCharge(chargeId);
+
+  if (!result.ok) {
+    redirect(
+      `/jobs/${encodeURIComponent(jobId)}/edit?error=${encodeURIComponent(`Couldn't remove charge: ${result.error}`)}`
+    );
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "job",
+    entityId: jobId,
+    entityLabel: "Remove one-time visit charge",
+    after: { charge_id: chargeId },
   });
 
   redirect(`/jobs/${encodeURIComponent(jobId)}/edit?saved=1`);
