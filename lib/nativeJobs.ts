@@ -160,6 +160,55 @@ type VisitInsertRow = {
   updated_at: string;
 };
 
+// Full vs. Maintenance monthly titling (roadmap item 19; Ryan,
+// 2026-09-27, re Ludeman: "You flipped all of these customers in our
+// CRM to have the right jobs in the right months. Don't know why you
+// changed it back"). The one-off flip-*-full-months routes
+// (2026-09-22) retitled the visit ROWS that existed at the time, but
+// never taught the GENERATOR itself about Full/Maintenance months --
+// so any later regeneration of a job's future visits (the routine
+// top-up cron, or "Update recurring schedule" wiping and recreating
+// them) reverted straight back to the job's one flat title, since
+// that's all buildVisitRow ever knew how to stamp. This is the
+// permanent fix roadmap item 19 called for: every path that generates
+// a monthly visit's title now consults the customer's own
+// full_cleaning_months (set by the flip routes, read here, never
+// written here) and picks Full or Maintenance per occurrence -- so a
+// customer who's already been flipped stays correctly labeled no
+// matter how their schedule gets regenerated afterward. A customer
+// with full_cleaning_months left null (the vast majority -- one-off,
+// quarterly, bimonthly, etc. jobs that were never part of this
+// convention) is completely unaffected: falls straight through to the
+// existing flat-title behavior.
+function resolveMonthlyVisitTitle(
+  date: string,
+  fallbackTitle: string,
+  fullCleaningMonths: number[] | null,
+  lastName: string | null
+): string {
+  if (fullCleaningMonths == null || !lastName) return fallbackTitle;
+
+  const month = Number(date.slice(5, 7));
+  return fullCleaningMonths.includes(month)
+    ? `${lastName} - Full - Monthly`
+    : `${lastName} - Maintenance - Monthly`;
+}
+
+async function fetchCustomerFullCleaningInfo(
+  jobberClientId: string
+): Promise<{ fullCleaningMonths: number[] | null; lastName: string | null }> {
+  const { data } = await supabaseServer
+    .from("customers")
+    .select("last_name, full_cleaning_months")
+    .eq("jobber_client_id", jobberClientId)
+    .maybeSingle();
+
+  return {
+    fullCleaningMonths: (data?.full_cleaning_months as number[] | null) ?? null,
+    lastName: data?.last_name?.trim() || null,
+  };
+}
+
 function buildVisitRow(params: {
   jobId: string;
   jobberClientId: string;
@@ -329,13 +378,16 @@ export async function createNativeJob(
   }
 
   if (dates.length > 0) {
+    const { fullCleaningMonths, lastName } =
+      await fetchCustomerFullCleaningInfo(jobberClientId);
+
     const visitRows = dates.map((date, index) =>
       buildVisitRow({
         jobId,
         jobberClientId,
         customerName,
         jobNumber,
-        title,
+        title: resolveMonthlyVisitTitle(date, title, fullCleaningMonths, lastName),
         date,
         isLast: !isRecurring && index === dates.length - 1,
       })
@@ -436,19 +488,13 @@ export async function generateUpcomingNativeVisits(): Promise<{
     };
   }
 
-  // Roadmap item 19 (2026-09-22): auto-flip Maintenance to Full on the
-  // right months. customers.full_cleaning_months is empty for every
-  // customer except the ones explicitly configured (Alyssa Baldriche
-  // first, as the real test case -- see migration 083) -- batch-fetched
-  // once here rather than per job to avoid N+1, and this lookup is a
-  // pure no-op for any customer whose array is empty, which is
-  // everyone else today. That's what keeps this change safe to ship
-  // globally while only actually affecting one customer: the title
-  // override below only ever fires when a customer's own
-  // full_cleaning_months contains the date's month.
+  // Batch-fetch Full/Maintenance info for every job's customer in one
+  // query rather than one per job -- this loop can cover 100+ jobs a
+  // run (see debug-runaway-recurrence-scan's 106-job count, 2026-09-27).
   const clientIds = Array.from(
-    new Set((jobs ?? []).map((job) => job.jobber_client_id))
+    new Set((jobs ?? []).map((j) => j.jobber_client_id).filter(Boolean))
   );
+
   const { data: customerRows } =
     clientIds.length > 0
       ? await supabaseServer
@@ -457,18 +503,15 @@ export async function generateUpcomingNativeVisits(): Promise<{
           .in("jobber_client_id", clientIds)
       : { data: [] as { jobber_client_id: string; last_name: string | null; full_cleaning_months: number[] | null }[] };
 
-  const fullMonthsByClient = new Map(
-    (customerRows ?? []).map((row) => [
-      row.jobber_client_id,
-      {
-        lastName: row.last_name,
-        months: new Set(row.full_cleaning_months ?? []),
-      },
-    ])
-  );
-
-  function cadenceWord(frequency: string): string {
-    return frequency.charAt(0).toUpperCase() + frequency.slice(1);
+  const fullCleaningInfoByClientId = new Map<
+    string,
+    { fullCleaningMonths: number[] | null; lastName: string | null }
+  >();
+  for (const row of customerRows ?? []) {
+    fullCleaningInfoByClientId.set(row.jobber_client_id, {
+      fullCleaningMonths: row.full_cleaning_months ?? null,
+      lastName: row.last_name?.trim() || null,
+    });
   }
 
   let visitsCreated = 0;
@@ -502,28 +545,27 @@ export async function generateUpcomingNativeVisits(): Promise<{
       continue;
     }
 
-    const customerFullMonths = fullMonthsByClient.get(job.jobber_client_id);
+    const fullCleaningInfo = fullCleaningInfoByClientId.get(job.jobber_client_id) ?? {
+      fullCleaningMonths: null,
+      lastName: null,
+    };
 
-    const visitRows = newDates.map((date) => {
-      // "YYYY-MM-DD" -> month number, no Date parsing/timezone involved.
-      const month = Number(date.slice(5, 7));
-      const isFullMonth = customerFullMonths?.months.has(month) ?? false;
-
-      const title =
-        isFullMonth && customerFullMonths?.lastName
-          ? `${customerFullMonths.lastName} - Full - ${cadenceWord(job.recurrence_frequency!)}`
-          : job.title ?? "Service";
-
-      return buildVisitRow({
+    const visitRows = newDates.map((date) =>
+      buildVisitRow({
         jobId: job.jobber_job_id,
         jobberClientId: job.jobber_client_id,
         customerName: job.customer_name,
         jobNumber: job.job_number ?? "",
-        title,
+        title: resolveMonthlyVisitTitle(
+          date,
+          job.title ?? "Service",
+          fullCleaningInfo.fullCleaningMonths,
+          fullCleaningInfo.lastName
+        ),
         date,
         isLast: false,
-      });
-    });
+      })
+    );
 
     const { error: insertError } = await supabaseServer
       .from("jobber_visits")
@@ -742,13 +784,24 @@ export async function editNativeJob(params: {
       .maybeSingle();
 
     if (jobRow) {
+      // This is exactly the path that silently reverted Ludeman's (and
+      // presumably others') Full/Maintenance titling back to the job's
+      // flat title (Ryan, 2026-09-27) -- "Update recurring schedule"
+      // wipes every future visit and rebuilds them from scratch, so it
+      // needs the same Full/Maintenance resolution as the other two
+      // generation paths above, not just the job's bare title.
+      const { fullCleaningMonths, lastName } = await fetchCustomerFullCleaningInfo(
+        jobRow.jobber_client_id
+      );
+      const baseTitle = jobRow.title ?? title ?? "Service";
+
       const visitRows = newDates.map((date, index) =>
         buildVisitRow({
           jobId,
           jobberClientId: jobRow.jobber_client_id,
           customerName: jobRow.customer_name,
           jobNumber: jobRow.job_number ?? "",
-          title: jobRow.title ?? title ?? "Service",
+          title: resolveMonthlyVisitTitle(date, baseTitle, fullCleaningMonths, lastName),
           date,
           isLast: !isRecurring && index === newDates.length - 1,
         })
