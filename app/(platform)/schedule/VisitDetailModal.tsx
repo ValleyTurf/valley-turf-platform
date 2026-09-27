@@ -187,6 +187,12 @@ export default function VisitDetailModal({
                     {visit.jobVisitCountThisMonth} visits this month)
                   </span>
                 )}
+                {visit.oneTimeChargeTotal > 0 && (
+                  <span className="ml-2 text-xs font-normal normal-case text-[#6b705c]">
+                    (includes {formatCurrency(visit.oneTimeChargeTotal)}{" "}
+                    one-time charge)
+                  </span>
+                )}
               </dd>
             </div>
           )}

@@ -5,6 +5,10 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { formatCurrency } from "@/lib/format";
+import {
+  fetchVisitOneTimeChargesForVisits,
+  sumOneTimeCharges,
+} from "@/lib/visitCharges";
 import ScheduleInteractive from "./ScheduleInteractive";
 import type { AssignableUser, GridDate, SchedulePin, ScheduleVisit } from "./types";
 
@@ -32,6 +36,10 @@ type VisitRow = {
   completed_at: string | null;
   duration_minutes: number | string | null;
   confirmed_at: string | null;
+  // Migration 085 — replaces (not adds to) this one visit's computed
+  // value, same convention as dashboard/page.tsx's resolveVisitValue.
+  // Used by Durkin/Mariscal's alternating Full/Maintenance pricing.
+  price_override: number | string | null;
 };
 
 type JobRow = {
@@ -78,6 +86,12 @@ function toNumber(value: number | string | null | undefined): number {
   const parsed = Number(value ?? 0);
 
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toNumberOrNull(value: number | string | null | undefined): number | null {
+  if (value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function getPhoenixToday(): Date {
@@ -390,7 +404,8 @@ function buildScheduleVisit(
   contact: CustomerContact | null,
   assignedUsers: AssignableUser[],
   jobPricing: JobPricing | null,
-  jobVisitCountThisMonth: number
+  jobVisitCountThisMonth: number,
+  oneTimeChargeTotal: number
 ): ScheduleVisit {
   const meta = statusMeta(visit.visit_status);
   const address = contact
@@ -441,11 +456,42 @@ function buildScheduleVisit(
     jobId: visit.jobber_job_id,
     jobTotal: jobPricing ? jobPricing.total : null,
     jobVisitCountThisMonth,
-    visitPrice:
-      jobPricing && jobVisitCountThisMonth > 0
-        ? jobPricing.total / jobVisitCountThisMonth
-        : jobPricing?.total ?? null,
+    // Same precedence as dashboard/page.tsx's resolveVisitValue: a
+    // price_override replaces the job-total-split base value outright
+    // (Durkin/Mariscal's alternating Full/Maintenance pricing), while a
+    // one-time charge (migration 086) always adds on top of whichever
+    // base applies. Ryan, 2026-09-27: this page had never read either
+    // one, so a one-time charge added from the Manage Job page didn't
+    // show up here at all.
+    visitPrice: resolveScheduleVisitPrice(
+      jobPricing,
+      jobVisitCountThisMonth,
+      toNumberOrNull(visit.price_override),
+      oneTimeChargeTotal
+    ),
+    oneTimeChargeTotal,
   };
+}
+
+function resolveScheduleVisitPrice(
+  jobPricing: JobPricing | null,
+  jobVisitCountThisMonth: number,
+  priceOverride: number | null,
+  oneTimeChargeTotal: number
+): number | null {
+  if (priceOverride != null) {
+    return priceOverride + oneTimeChargeTotal;
+  }
+
+  if (jobPricing) {
+    const base =
+      jobVisitCountThisMonth > 0
+        ? jobPricing.total / jobVisitCountThisMonth
+        : jobPricing.total;
+    return base + oneTimeChargeTotal;
+  }
+
+  return oneTimeChargeTotal > 0 ? oneTimeChargeTotal : null;
 }
 
 // Every visit already carries its own fair share of its job's total (see
@@ -544,7 +590,7 @@ export default async function SchedulePage({
     supabaseServer
       .from("jobber_visits")
       .select(
-        "jobber_visit_id, jobber_job_id, jobber_client_id, jobber_invoice_id, customer_name, job_number, job_status, title, visit_status, start_at, end_at, completed_at, duration_minutes, confirmed_at"
+        "jobber_visit_id, jobber_job_id, jobber_client_id, jobber_invoice_id, customer_name, job_number, job_status, title, visit_status, start_at, end_at, completed_at, duration_minutes, confirmed_at, price_override"
       )
       // Job canceled directly in Jobber's own UI (not through this app)
       // only fires a job-level webhook — it never touches the visit rows
@@ -619,6 +665,7 @@ export default async function SchedulePage({
     { data: usersData },
     { data: jobsData },
     { data: monthVisitsData },
+    oneTimeChargesByVisit,
   ] = await Promise.all([
     clientIds.length > 0
       ? supabaseServer
@@ -660,6 +707,7 @@ export default async function SchedulePage({
           .gte("start_at", jobCountRangeStartIso)
           .lte("start_at", jobCountRangeEndIso)
       : Promise.resolve({ data: [] as MonthVisitRow[] }),
+    fetchVisitOneTimeChargesForVisits(visitIds),
   ]);
 
   const contactMap = new Map<string, CustomerContact>(
@@ -727,7 +775,8 @@ export default async function SchedulePage({
       visit.jobber_client_id ? contactMap.get(visit.jobber_client_id) ?? null : null,
       assignmentMap.get(visit.jobber_visit_id) ?? [],
       visit.jobber_job_id ? jobPricingMap.get(visit.jobber_job_id) ?? null : null,
-      jobVisitCountThisMonth
+      jobVisitCountThisMonth,
+      sumOneTimeCharges(oneTimeChargesByVisit.get(visit.jobber_visit_id) ?? [])
     );
   });
 

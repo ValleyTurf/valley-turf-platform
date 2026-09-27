@@ -52,12 +52,23 @@ export type ScheduleVisit = {
   // calendar month as this visit — the denominator behind visitPrice.
   // 1 for a true one-off job; >1 splits jobTotal evenly.
   jobVisitCountThisMonth: number;
-  // jobTotal ÷ jobVisitCountThisMonth — what actually gets displayed as
-  // "the price" for this visit (pills, modal, day/period sums). Summing
-  // visitPrice across a job's visits always reconstructs jobTotal
-  // exactly, so day/week/period totals can just add these up directly —
-  // see sumVisitPrices in page.tsx.
+  // jobTotal ÷ jobVisitCountThisMonth (or the visit's own price_override,
+  // when set — see migration 085), plus this visit's one-time charges
+  // (migration 086, lib/visitCharges.ts) — what actually gets displayed
+  // as "the price" for this visit (pills, modal, day/period sums).
+  // Ryan, 2026-09-27: added a $125 one-time charge to Ludeman's visit
+  // but the schedule still showed the plain $125 -- this page had never
+  // been wired to price_override or one-time charges at all, only the
+  // dashboard and invoicing had. Summing visitPrice across a job's
+  // visits still reconstructs jobTotal (plus whatever one-time charges
+  // landed on those visits) exactly, so day/week/period totals can just
+  // add these up directly — see sumVisitPrices in page.tsx.
   visitPrice: number | null;
+  // The one-time-charge portion of visitPrice, broken out separately so
+  // the detail modal can note it explicitly (e.g. "includes $125
+  // one-time charge") rather than just folding it into one opaque
+  // number. 0 when the visit has none.
+  oneTimeChargeTotal: number;
 };
 
 export type AssignableUser = {
