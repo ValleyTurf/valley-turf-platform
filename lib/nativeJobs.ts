@@ -749,13 +749,60 @@ export async function editNativeJob(params: {
   // just to take effect. Only not-yet-completed visits: a finished
   // visit's title is history, not something a later rename should
   // rewrite.
+  //
+  // This used to stamp the SAME flat title onto every not-yet-completed
+  // visit -- a second, independent way to silently wipe out a
+  // customer's Full/Maintenance alternation, distinct from (and missed
+  // by) the "Update recurring schedule" fix below: this one fires on
+  // ANY title save, whether or not the schedule toggle is touched.
+  // Ryan, 2026-09-27, re Mariscal: "got defaulted back to Monthly
+  // Maintenance Plan also" -- with no schedule change involved, this
+  // plain-title-edit path is the only one that could have done it. Now
+  // resolves each not-yet-completed visit's title individually against
+  // the customer's own full_cleaning_months, same as every other
+  // generation/sync path; a customer outside the convention (the vast
+  // majority) still just gets the one flat title on every visit,
+  // exactly as before.
   if (title) {
-    await supabaseServer
+    const { data: jobForTitleSync } = await supabaseServer
+      .from("jobber_jobs")
+      .select("jobber_client_id")
+      .eq("jobber_job_id", jobId)
+      .maybeSingle();
+
+    const { data: visitsToRetitle } = await supabaseServer
       .from("jobber_visits")
-      .update({ title, updated_at: new Date().toISOString() })
+      .select("jobber_visit_id, start_at")
       .eq("jobber_job_id", jobId)
       .eq("source", "native")
       .is("completed_at", null);
+
+    const { fullCleaningMonths, lastName } = jobForTitleSync?.jobber_client_id
+      ? await fetchCustomerFullCleaningInfo(jobForTitleSync.jobber_client_id)
+      : { fullCleaningMonths: null, lastName: null };
+
+    const visitIdsByResolvedTitle = new Map<string, string[]>();
+    for (const v of visitsToRetitle ?? []) {
+      const resolvedTitle = resolveMonthlyVisitTitle(
+        v.start_at ?? "",
+        title,
+        fullCleaningMonths,
+        lastName
+      );
+      const ids = visitIdsByResolvedTitle.get(resolvedTitle) ?? [];
+      ids.push(v.jobber_visit_id);
+      visitIdsByResolvedTitle.set(resolvedTitle, ids);
+    }
+
+    const titleSyncNowIso = new Date().toISOString();
+    await Promise.all(
+      Array.from(visitIdsByResolvedTitle.entries()).map(([resolvedTitle, ids]) =>
+        supabaseServer
+          .from("jobber_visits")
+          .update({ title: resolvedTitle, updated_at: titleSyncNowIso })
+          .in("jobber_visit_id", ids)
+      )
+    );
   }
 
   // A schedule change on a recurring job means the old future visits
