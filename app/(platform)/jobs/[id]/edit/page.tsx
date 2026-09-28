@@ -34,6 +34,23 @@ const VISIT_WINDOW_PAST_DAYS = 30;
 const VISIT_WINDOW_FUTURE_DAYS = 365;
 const MAX_VISITS_SHOWN = 60;
 
+// Ryan, 2026-09-28: lets the Cancel form on ManageJobForm.tsx log a
+// cancellation reason against this job's customer without a second
+// lookup of its own. JobDetails (lib/jobberJob.ts) doesn't carry a
+// client id -- adding one there would mean touching the Jobber GraphQL
+// query shape for every job, not just this cancel flow -- so this is a
+// small, separate, always-available lookup straight off the row every
+// job (native or Jobber-sourced) already has in this same table.
+async function fetchJobberClientId(jobId: string): Promise<string | null> {
+  const { data } = await supabaseServer
+    .from("jobber_jobs")
+    .select("jobber_client_id")
+    .eq("jobber_job_id", jobId)
+    .maybeSingle();
+
+  return (data?.jobber_client_id as string | null | undefined) ?? null;
+}
+
 async function fetchVisitsForCharges(jobId: string): Promise<VisitWithCharges[]> {
   const now = Date.now();
   const rangeStart = new Date(now - VISIT_WINDOW_PAST_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -72,9 +89,10 @@ export default async function JobEditPage({
   const jobId = decodeURIComponent(id);
   const search = await searchParams;
 
-  const [job, visits] = await Promise.all([
+  const [job, visits, jobberClientId] = await Promise.all([
     fetchJobDetails(jobId),
     fetchVisitsForCharges(jobId),
+    fetchJobberClientId(jobId),
   ]);
 
   return (
@@ -114,7 +132,7 @@ export default async function JobEditPage({
             </p>
           </section>
         ) : (
-          <ManageJobForm job={job} visits={visits} />
+          <ManageJobForm job={job} visits={visits} jobberClientId={jobberClientId} />
         )}
 
         <Link

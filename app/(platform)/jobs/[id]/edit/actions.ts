@@ -15,6 +15,17 @@ import {
   addVisitOneTimeCharge,
   removeVisitOneTimeCharge,
 } from "@/lib/visitCharges";
+import { isChurnReason } from "@/lib/deactivation";
+// Reused rather than re-implemented -- this already logs a reason
+// against a customer (customer_intelligence_exclusions, exclusion_type
+// "deactivation") for the Deactivation queue on /customers/intelligence,
+// which is exactly what canceling a recurring job usually means. Ryan,
+// 2026-09-28: "can it ask the cancelation reasons... so we don't have
+// to do it in the other screen" -- calling the same server action from
+// here means a reason picked at cancel time and one picked later on
+// that queue write to the exact same place, with no separate
+// vocabulary or table to keep in sync.
+import { saveExclusionReason } from "../../customers/intelligence/actions";
 import type { ActionState } from "./actionState";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
@@ -160,6 +171,8 @@ export async function updateJob(
 export async function cancelJob(formData: FormData): Promise<void> {
   const actor = await getCurrentUser();
   const jobId = cleanText(formData.get("job_id"));
+  const jobberClientId = cleanText(formData.get("jobber_client_id"));
+  const reason = cleanText(formData.get("reason"));
 
   if (!actor || !jobId) {
     redirect(`/jobs/${encodeURIComponent(jobId ?? "")}/edit?error=${encodeURIComponent("Missing job or not signed in.")}`);
@@ -179,8 +192,28 @@ export async function cancelJob(formData: FormData): Promise<void> {
     entityType: "job",
     entityId: jobId,
     entityLabel: "Cancel recurring service",
-    after: { action: "cancel_future_visits" },
+    after: { action: "cancel_future_visits", cancellation_reason: reason },
   });
+
+  // Best-effort: the job is already canceled at this point regardless
+  // of what happens below, so a reason picked on the way out logs to
+  // the Deactivation queue's own table instead of leaving Ryan to find
+  // and log it there separately later. Never blocks or fails the
+  // cancel itself -- reason was optional on the form, and a failure to
+  // save it (or no jobberClientId, e.g. an older job this lookup
+  // couldn't resolve) just means that customer shows up needing a
+  // reason on /customers/intelligence, same as before this existed.
+  if (jobberClientId && reason && isChurnReason(reason)) {
+    try {
+      const exclusionFormData = new FormData();
+      exclusionFormData.set("jobber_client_id", jobberClientId);
+      exclusionFormData.set("exclusion_type", "deactivation");
+      exclusionFormData.set("reason", reason);
+      await saveExclusionReason(exclusionFormData);
+    } catch (error) {
+      console.error("Couldn't log cancellation reason:", error);
+    }
+  }
 
   redirect(`/jobs/${encodeURIComponent(jobId)}/edit?saved=1`);
 }

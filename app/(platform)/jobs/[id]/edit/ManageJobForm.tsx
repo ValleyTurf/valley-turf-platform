@@ -9,6 +9,15 @@ import {
   removeOneTimeCharge,
 } from "./actions";
 import { initialActionState } from "./actionState";
+// Ryan, 2026-09-28: "can it ask the cancelation reasons so we can
+// select it right as we cancel and don't have to do it in the other
+// screen" -- reuses the exact same reason vocabulary the Deactivation
+// queue on /customers/intelligence already logs against a customer, so
+// picking one here writes to the same place and this job's customer
+// simply won't show up needing a reason there afterward. Safe to
+// import into a client component: lib/deactivation.ts has no
+// "server-only" dependency (see its own header comment).
+import { CHURN_REASONS } from "@/lib/deactivation";
 
 // Deliberately a locally-defined, structural subset rather than an
 // `import type { JobDetails } from "@/lib/jobberJob"` — that file has
@@ -70,9 +79,11 @@ const FREQUENCY_OPTIONS: { value: string; label: string }[] = [
 export default function ManageJobForm({
   job,
   visits,
+  jobberClientId,
 }: {
   job: Job;
   visits: VisitWithCharges[];
+  jobberClientId: string | null;
 }) {
   const [state, formAction, isPending] = useActionState(
     updateJob,
@@ -81,6 +92,13 @@ export default function ManageJobForm({
   const [updateSchedule, setUpdateSchedule] = useState(false);
   const [frequency, setFrequency] = useState("one_time");
   const isRecurring = frequency !== "one_time";
+  // Empty string = no reason picked yet -- deliberately optional. This
+  // is a convenience capture (saves a trip to the Deactivation queue
+  // afterward), not a gate on the cancel itself; canceling without
+  // picking one still works exactly as it always has, and that
+  // customer just shows up needing a reason on /customers/intelligence
+  // later, same as any other cancellation before this existed.
+  const [cancelReason, setCancelReason] = useState("");
 
   // Roadmap item 18 (native multi-line-item jobs) -- one row per line
   // item, always at least one. A job with a real add-on (an extra
@@ -441,9 +459,38 @@ export default function ManageJobForm({
           it with a new schedule above if service should keep recurring.
         </p>
 
-        <div className="mt-3 flex flex-wrap gap-2">
-          <form action={cancelJob} onSubmit={confirmCancel}>
+        <div className="mt-3 flex flex-wrap items-start gap-2">
+          <form
+            action={cancelJob}
+            onSubmit={confirmCancel}
+            className="flex flex-wrap items-center gap-2"
+          >
             <input type="hidden" name="job_id" value={job.id} />
+            {jobberClientId && (
+              <input
+                type="hidden"
+                name="jobber_client_id"
+                value={jobberClientId}
+              />
+            )}
+
+            <select
+              name="reason"
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              aria-label="Cancellation reason"
+              className="rounded-xl border border-[#d9d4c6] bg-white px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+            >
+              <option value="">Reason (optional)</option>
+              {CHURN_REASONS.filter((reason) => reason.value !== "not_a_cancel").map(
+                (reason) => (
+                  <option key={reason.value} value={reason.value}>
+                    {reason.label}
+                  </option>
+                )
+              )}
+            </select>
+
             <button
               type="submit"
               className="rounded-xl border border-red-300 bg-red-50 px-4 py-2 text-sm font-bold text-red-700 transition hover:bg-red-100"
