@@ -25,7 +25,7 @@ import { isChurnReason } from "@/lib/deactivation";
 // here means a reason picked at cancel time and one picked later on
 // that queue write to the exact same place, with no separate
 // vocabulary or table to keep in sync.
-import { saveExclusionReason } from "../../customers/intelligence/actions";
+import { saveExclusionReason } from "../../../customers/intelligence/actions";
 import type { ActionState } from "./actionState";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
