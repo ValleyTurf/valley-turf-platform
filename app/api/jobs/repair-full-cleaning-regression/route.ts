@@ -31,6 +31,23 @@ export const maxDuration = 60;
 
 const BUG_STAMP_PATTERN = / - (Full|Maintenance) - Monthly$/i;
 
+// jobber_client_id values are long opaque base64 strings -- an .in()
+// filter over hundreds of them (this bug's victim list is expected to
+// be most of the customer base) builds a GET request whose query
+// string can run past request-size limits and come back as a flat 400
+// with no further detail (hit in debug-full-cleaning-regression-scope
+// first). Chunking keeps every request's .in() list short regardless
+// of how many victims there turn out to be.
+const CLIENT_ID_CHUNK_SIZE = 40;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
 type CustomerRow = {
   jobber_client_id: string;
   first_name: string | null;
@@ -102,13 +119,13 @@ export async function GET(request: Request) {
   }
 
   const jobs: JobRow[] = [];
-  {
+  for (const clientIdChunk of chunk(victimClientIds, CLIENT_ID_CHUNK_SIZE)) {
     let from = 0;
     while (true) {
       const { data, error } = await supabaseServer
         .from("jobber_jobs")
         .select("jobber_job_id, jobber_client_id, title")
-        .in("jobber_client_id", victimClientIds)
+        .in("jobber_client_id", clientIdChunk)
         .eq("source", "native")
         .order("jobber_job_id", { ascending: true })
         .range(from, from + PAGE_SIZE - 1);
@@ -127,13 +144,13 @@ export async function GET(request: Request) {
   const jobById = new Map(jobs.map((j) => [j.jobber_job_id, j]));
 
   const visits: VisitRow[] = [];
-  {
+  for (const clientIdChunk of chunk(victimClientIds, CLIENT_ID_CHUNK_SIZE)) {
     let from = 0;
     while (true) {
       const { data, error } = await supabaseServer
         .from("jobber_visits")
         .select("jobber_visit_id, jobber_job_id, jobber_client_id, title, start_at")
-        .in("jobber_client_id", victimClientIds)
+        .in("jobber_client_id", clientIdChunk)
         .eq("source", "native")
         .is("completed_at", null)
         .not("start_at", "is", null)

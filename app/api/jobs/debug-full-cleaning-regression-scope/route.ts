@@ -30,6 +30,26 @@ type CustomerRow = {
   service_instructions: string | null;
 };
 
+type VisitRow = { jobber_visit_id: string; jobber_client_id: string; title: string | null };
+
+const BUG_STAMP_PATTERN = / - (Full|Maintenance) - Monthly$/i;
+
+// jobber_client_id values are long opaque base64 strings -- an .in()
+// filter over hundreds of them (this bug's "victim" list is expected to
+// be most of the customer base) builds a GET request whose query
+// string can run past request-size limits and come back as a flat 400
+// with no further detail. Chunking keeps every request's .in() list
+// short regardless of how many victims there turn out to be.
+const CLIENT_ID_CHUNK_SIZE = 40;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
 export async function GET() {
   try {
     await requireAdmin();
@@ -68,29 +88,22 @@ export async function GET() {
 
   const victimClientIds = victims.map((c) => c.jobber_client_id);
 
-  // Count how many of the victims' future, native, not-yet-completed
-  // visits currently carry a title this bug could have produced --
-  // i.e. how many rows would actually need repairing, not just how many
-  // customers are theoretically exposed.
-  type VisitRow = { jobber_visit_id: string; jobber_client_id: string; title: string | null };
-  // Filtering the title pattern client-side rather than via .or() --
-  // PostgREST's or-filter syntax choked on the " - Maintenance - Monthly"
-  // values (400 Bad Request) once tried against real data. Pulling every
-  // native, not-yet-completed visit for these client ids and testing the
-  // regex in JS sidesteps that entirely and matches the same
-  // already-proven pagination pattern used everywhere else in this
-  // feature.
-  const BUG_STAMP_PATTERN = / - (Full|Maintenance) - Monthly$/i;
+  // Count how many of the victims' native, not-yet-completed visits
+  // currently carry a title this bug could have produced -- i.e. how
+  // many rows would actually need repairing, not just how many
+  // customers are theoretically exposed. Chunked by client id (see
+  // CLIENT_ID_CHUNK_SIZE above) and, within each chunk, paginated by
+  // the usual 1000-row range loop.
   const mistitledVisits: VisitRow[] = [];
 
-  if (victimClientIds.length > 0) {
+  for (const clientIdChunk of chunk(victimClientIds, CLIENT_ID_CHUNK_SIZE)) {
     const VISITS_PAGE_SIZE = 1000;
     let from = 0;
     while (true) {
       const { data, error } = await supabaseServer
         .from("jobber_visits")
         .select("jobber_visit_id, jobber_client_id, title")
-        .in("jobber_client_id", victimClientIds)
+        .in("jobber_client_id", clientIdChunk)
         .eq("source", "native")
         .is("completed_at", null)
         .order("jobber_visit_id", { ascending: true })
