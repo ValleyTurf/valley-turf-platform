@@ -73,6 +73,14 @@ export async function GET() {
   // i.e. how many rows would actually need repairing, not just how many
   // customers are theoretically exposed.
   type VisitRow = { jobber_visit_id: string; jobber_client_id: string; title: string | null };
+  // Filtering the title pattern client-side rather than via .or() --
+  // PostgREST's or-filter syntax choked on the " - Maintenance - Monthly"
+  // values (400 Bad Request) once tried against real data. Pulling every
+  // native, not-yet-completed visit for these client ids and testing the
+  // regex in JS sidesteps that entirely and matches the same
+  // already-proven pagination pattern used everywhere else in this
+  // feature.
+  const BUG_STAMP_PATTERN = / - (Full|Maintenance) - Monthly$/i;
   const mistitledVisits: VisitRow[] = [];
 
   if (victimClientIds.length > 0) {
@@ -85,7 +93,6 @@ export async function GET() {
         .in("jobber_client_id", victimClientIds)
         .eq("source", "native")
         .is("completed_at", null)
-        .or("title.ilike.% - Maintenance - Monthly,title.ilike.% - Full - Monthly")
         .order("jobber_visit_id", { ascending: true })
         .range(from, from + VISITS_PAGE_SIZE - 1);
 
@@ -93,9 +100,11 @@ export async function GET() {
         return NextResponse.json({ success: false, error: error.message, step: "jobber_visits" }, { status: 500 });
       }
 
-      const page = (data ?? []) as VisitRow[];
+      const page = ((data ?? []) as VisitRow[]).filter(
+        (v) => v.title && BUG_STAMP_PATTERN.test(v.title)
+      );
       mistitledVisits.push(...page);
-      if (page.length < VISITS_PAGE_SIZE) break;
+      if ((data ?? []).length < VISITS_PAGE_SIZE) break;
       from += VISITS_PAGE_SIZE;
     }
   }
