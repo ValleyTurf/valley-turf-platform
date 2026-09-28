@@ -37,6 +37,144 @@ type JobRow = {
 
 const PAGE_SIZE = 20;
 
+const JOB_ROW_SELECT =
+  "jobber_job_id, jobber_client_id, customer_name, title, job_number, job_status, job_type, jobber_web_uri, end_at, total, source";
+
+// Ryan, 2026-09-28: "let's start doing it with the native jobs, the old
+// jobber ones can stay as is as long as the new jobs are above that" --
+// native jobs (this app's own, created going forward) sort newest
+// first by updated_at, the closest thing native jobs have to a creation
+// timestamp (lib/nativeJobs.ts's createNativeJob stamps it at creation
+// and only touches it again on a real edit). Jobber-sourced jobs keep
+// their existing end_at ordering exactly as before -- nothing about
+// them changes.
+//
+// PostgREST can't express "sort by a different column depending on
+// which group a row is in" within one ORDER BY without a database view
+// or migration, so this runs native and jobber as two separately
+// counted, separately ordered, separately paginated queries and
+// stitches together only the row range a given page actually needs
+// from each -- never fetches more than one page's worth combined.
+function buildJobsQuery(opts: {
+  select: string;
+  count?: "exact";
+  head?: boolean;
+  sourceFilter: "native" | "not_native";
+  search: string;
+  showArchived: boolean;
+}) {
+  let query = supabaseServer
+    .from("jobber_jobs")
+    .select(opts.select, { count: opts.count, head: opts.head });
+
+  query =
+    opts.sourceFilter === "native"
+      ? query.eq("source", "native")
+      : query.neq("source", "native");
+
+  if (!opts.showArchived) {
+    // Same convention as schedule/my-day/crew-status: a null job_status
+    // is a job Jobber hasn't reported a status for yet, treated as
+    // active rather than filtered out.
+    query = query.or("job_status.is.null,job_status.neq.archived");
+  }
+
+  if (opts.search) {
+    const safeSearch = escapeSearchValue(opts.search);
+
+    query = query.or(
+      [
+        `customer_name.ilike.%${safeSearch}%`,
+        `title.ilike.%${safeSearch}%`,
+        `job_number.ilike.%${safeSearch}%`,
+      ].join(",")
+    );
+  }
+
+  return query;
+}
+
+async function fetchJobsPage(params: {
+  currentPage: number;
+  search: string;
+  showArchived: boolean;
+}): Promise<{ jobs: JobRow[]; totalJobs: number; error: string | null }> {
+  const { currentPage, search, showArchived } = params;
+  const from = (currentPage - 1) * PAGE_SIZE;
+  const to = from + PAGE_SIZE - 1;
+
+  const [{ count: nativeCount, error: nativeCountError }, { count: jobberCount, error: jobberCountError }] =
+    await Promise.all([
+      buildJobsQuery({
+        select: "jobber_job_id",
+        count: "exact",
+        head: true,
+        sourceFilter: "native",
+        search,
+        showArchived,
+      }),
+      buildJobsQuery({
+        select: "jobber_job_id",
+        count: "exact",
+        head: true,
+        sourceFilter: "not_native",
+        search,
+        showArchived,
+      }),
+    ]);
+
+  if (nativeCountError || jobberCountError) {
+    return {
+      jobs: [],
+      totalJobs: 0,
+      error: (nativeCountError ?? jobberCountError)!.message,
+    };
+  }
+
+  const nCount = nativeCount ?? 0;
+  const totalJobs = nCount + (jobberCount ?? 0);
+  const rows: JobRow[] = [];
+
+  // Native slice: whatever part of [from, to] falls within [0, nCount).
+  const nativeFrom = from;
+  const nativeTo = Math.min(to, nCount - 1);
+
+  if (nativeFrom <= nativeTo) {
+    const { data, error } = await buildJobsQuery({
+      select: JOB_ROW_SELECT,
+      sourceFilter: "native",
+      search,
+      showArchived,
+    })
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .range(nativeFrom, nativeTo);
+
+    if (error) return { jobs: [], totalJobs: 0, error: error.message };
+    rows.push(...((data ?? []) as JobRow[]));
+  }
+
+  // Jobber slice: whatever part of [from, to] falls after the native
+  // block, shifted back down to that query's own 0-based range.
+  const jobberFrom = Math.max(from, nCount) - nCount;
+  const jobberTo = to - nCount;
+
+  if (jobberFrom <= jobberTo) {
+    const { data, error } = await buildJobsQuery({
+      select: JOB_ROW_SELECT,
+      sourceFilter: "not_native",
+      search,
+      showArchived,
+    })
+      .order("end_at", { ascending: false, nullsFirst: false })
+      .range(jobberFrom, jobberTo);
+
+    if (error) return { jobs: rows, totalJobs, error: error.message };
+    rows.push(...((data ?? []) as JobRow[]));
+  }
+
+  return { jobs: rows, totalJobs, error: null };
+}
+
 function toNumber(value: number | string | null | undefined): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -129,41 +267,12 @@ export default async function JobsPage({ searchParams }: JobsPageProps) {
   const currentPage =
     Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
 
-  const from = (currentPage - 1) * PAGE_SIZE;
-  const to = from + PAGE_SIZE - 1;
+  const { jobs, totalJobs, error } = await fetchJobsPage({
+    currentPage,
+    search,
+    showArchived,
+  });
 
-  let jobsQuery = supabaseServer
-    .from("jobber_jobs")
-    .select(
-      "jobber_job_id, jobber_client_id, customer_name, title, job_number, job_status, job_type, jobber_web_uri, end_at, total, source",
-      { count: "exact" }
-    )
-    .order("end_at", { ascending: false, nullsFirst: false })
-    .range(from, to);
-
-  if (!showArchived) {
-    // Same convention as schedule/my-day/crew-status: a null job_status
-    // is a job Jobber hasn't reported a status for yet, treated as
-    // active rather than filtered out.
-    jobsQuery = jobsQuery.or("job_status.is.null,job_status.neq.archived");
-  }
-
-  if (search) {
-    const safeSearch = escapeSearchValue(search);
-
-    jobsQuery = jobsQuery.or(
-      [
-        `customer_name.ilike.%${safeSearch}%`,
-        `title.ilike.%${safeSearch}%`,
-        `job_number.ilike.%${safeSearch}%`,
-      ].join(",")
-    );
-  }
-
-  const { data, count, error } = await jobsQuery;
-
-  const jobs = (data ?? []) as JobRow[];
-  const totalJobs = count ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalJobs / PAGE_SIZE));
 
   const previousPageUrl = buildJobsUrl(Math.max(1, currentPage - 1), search, showArchived);
@@ -183,7 +292,8 @@ export default async function JobsPage({ searchParams }: JobsPageProps) {
 
             <p className="mt-2 text-sm text-[#6b705c]">
               Every job this app knows about, whether it was created here
-              or in Jobber — most recently ending first.
+              or in Jobber — jobs created here show newest first, above
+              the Jobber-sourced ones (still most recently ending first).
             </p>
           </div>
 
@@ -238,7 +348,7 @@ export default async function JobsPage({ searchParams }: JobsPageProps) {
         {error ? (
           <section className="mt-5 rounded-2xl border border-red-200 bg-white p-5 shadow">
             <p className="font-bold text-red-700">Jobs could not be loaded</p>
-            <p className="mt-1 text-sm text-red-600">{error.message}</p>
+            <p className="mt-1 text-sm text-red-600">{error}</p>
           </section>
         ) : jobs.length === 0 ? (
           <section className="mt-5 rounded-2xl bg-white p-5 shadow">
