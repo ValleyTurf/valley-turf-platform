@@ -16,9 +16,23 @@ type JobEditPageProps = {
 // cover a charge added shortly after a visit happens (before it's been
 // invoiced) as well as one planned ahead for an upcoming visit. See
 // lib/visitCharges.ts's header comment for what this is for.
+//
+// Future window was 180 days -- found 2026-09-28 (Ryan, re: Alexis
+// Lytle, quarterly) to cut a slower-cadence job off before its full set
+// of generated visits: lib/nativeJobs.ts's RECURRING_WINDOW_DAYS now
+// keeps a full year of visits generated for every recurring job (12/
+// year monthly down to 2/year semiannual -- see that constant's own
+// comment), but this page's own 180-day window meant only 2 of
+// Lytle's 4 generated quarterly visits were ever selectable here.
+// Matched to the same 365 days so every visit the schedule shows is
+// also reachable for a one-time charge. MAX_VISITS_SHOWN raised
+// alongside it -- a weekly job now has up to ~56 visits in range (30
+// days back + 365 ahead, at 1/week), comfortably past the old cap of
+// 30, which would have silently truncated the list for exactly the
+// high-frequency jobs least likely to need cutting off.
 const VISIT_WINDOW_PAST_DAYS = 30;
-const VISIT_WINDOW_FUTURE_DAYS = 180;
-const MAX_VISITS_SHOWN = 30;
+const VISIT_WINDOW_FUTURE_DAYS = 365;
+const MAX_VISITS_SHOWN = 60;
 
 async function fetchVisitsForCharges(jobId: string): Promise<VisitWithCharges[]> {
   const now = Date.now();
