@@ -194,17 +194,56 @@ function resolveMonthlyVisitTitle(
     : `${lastName} - Maintenance - Monthly`;
 }
 
+// Regression found 2026-09-28 (Ryan, re: Alexis Lytle's brand-new job
+// getting a visit titled "Lytle - Maintenance - Monthly" despite never
+// being part of this convention): the header comment above claimed "a
+// customer with full_cleaning_months left null... is completely
+// unaffected," on the assumption that an un-flipped customer's column
+// reads back as null. It doesn't -- confirmed via a diagnostic route
+// that Lytle, and every Johnson, and Stych (none ever touched by any
+// flip-*-full-months route: all have service_instructions null) all
+// read back full_cleaning_months: [] , not null. That's a database
+// default on this schema-drift column, not an application write --
+// flip-all-full-months/route.ts is the ONLY code that ever writes this
+// column, and only for customers whose service_instructions actually
+// matches its own "%full cleaning%" eligibility filter. So an empty
+// array is genuinely ambiguous: it means "opted into Maintenance-Only,
+// zero Full months" for a customer the flip route actually processed
+// (Tillawi/Kamal/Kuszka/Cox/Haynes/Hensley and similar), but means
+// "never touched, this is just the column's default" for everyone
+// else -- and resolveMonthlyVisitTitle's `== null` check couldn't tell
+// the two apart, so it treated every never-flipped customer as if they
+// were a Maintenance-Only opt-in, mislabeling their visits on every
+// job create/edit or cron regeneration.
+//
+// Fix: mirror the flip route's own eligibility test. A non-empty array
+// can only exist because that route (or one of the earlier per-customer
+// ones using the same rule) deliberately wrote it, so it's always
+// trusted. An empty array is only trusted when service_instructions
+// itself would have made this customer eligible for that route (that's
+// exactly how the legitimate Maintenance-Only customers qualify) --
+// otherwise it's treated as if it were null, same as before this
+// customer was ever touched.
+function hasFullCleaningSignal(serviceInstructions: string | null): boolean {
+  return typeof serviceInstructions === "string" && /full cleaning/i.test(serviceInstructions);
+}
+
 async function fetchCustomerFullCleaningInfo(
   jobberClientId: string
 ): Promise<{ fullCleaningMonths: number[] | null; lastName: string | null }> {
   const { data } = await supabaseServer
     .from("customers")
-    .select("last_name, full_cleaning_months")
+    .select("last_name, full_cleaning_months, service_instructions")
     .eq("jobber_client_id", jobberClientId)
     .maybeSingle();
 
+  const rawMonths = (data?.full_cleaning_months as number[] | null) ?? null;
+  const trusted =
+    rawMonths != null &&
+    (rawMonths.length > 0 || hasFullCleaningSignal(data?.service_instructions ?? null));
+
   return {
-    fullCleaningMonths: (data?.full_cleaning_months as number[] | null) ?? null,
+    fullCleaningMonths: trusted ? rawMonths : null,
     lastName: data?.last_name?.trim() || null,
   };
 }
