@@ -123,7 +123,24 @@ const DEFAULT_VISIT_DURATION_MINUTES = 60;
 // does the same for the initial batch at creation time, so a brand-new
 // recurring job doesn't have to wait for the next cron tick to show more
 // than its first visit.
-export const RECURRING_WINDOW_DAYS = 90;
+//
+// Was 90 days -- found 2026-09-28 (Ryan, re: Alexis Lytle/Emily Johnson/
+// Shannon Stych) to be too short for anything slower than monthly: one
+// quarterly interval alone (~91-92 days) already falls just past a
+// 90-day window, so any quarterly/triannual/semiannual job's initial
+// batch generated exactly one visit -- the anchor date itself -- and
+// then sat there until the cron finally got close enough to the next
+// occurrence to add it. Raised to 365 (Ryan: "let's show the next
+// upcoming year... allows the planning needed for forecasting the next
+// year") so every cadence keeps a full year of visits ahead: 12 for
+// monthly, 6 for bimonthly, 4 for quarterly, 3 for triannual, 2 for
+// semiannual. Deliberately still a rolling window the cron keeps
+// topping up to "today + 365," not a one-time bulk generation -- this
+// is NOT a return to Jobber's old 5-year-upfront default (see this
+// file's header and debug-runaway-recurrence-scan's for why that caused
+// this week's other bugs); a job's total generated-visit count stays
+// bounded to roughly one year's worth at any point in time.
+export const RECURRING_WINDOW_DAYS = 365;
 
 function toUtcRange(date: string): { startAt: string; endAt: string } {
   const start = new Date(
@@ -534,21 +551,44 @@ export async function generateUpcomingNativeVisits(): Promise<{
     new Set((jobs ?? []).map((j) => j.jobber_client_id).filter(Boolean))
   );
 
+  // 2026-09-28: this batch pre-fetch used to read full_cleaning_months
+  // straight off the row, duplicating fetchCustomerFullCleaningInfo's
+  // OLD (buggy) logic instead of calling that helper -- so the fix just
+  // added there (don't trust an empty array unless service_instructions
+  // itself carries the flip route's own eligibility signal) never
+  // covered this call site. Since this is the routine cron -- the exact
+  // path that runs when a job's window gets topped up -- leaving this
+  // unfixed would have silently re-mislabeled every never-flipped
+  // customer's newly-generated visits right back to "<LastName> -
+  // Maintenance - Monthly" on the very next run. Applies the same
+  // hasFullCleaningSignal() guard here instead of re-deriving it.
   const { data: customerRows } =
     clientIds.length > 0
       ? await supabaseServer
           .from("customers")
-          .select("jobber_client_id, last_name, full_cleaning_months")
+          .select("jobber_client_id, last_name, full_cleaning_months, service_instructions")
           .in("jobber_client_id", clientIds)
-      : { data: [] as { jobber_client_id: string; last_name: string | null; full_cleaning_months: number[] | null }[] };
+      : {
+          data: [] as {
+            jobber_client_id: string;
+            last_name: string | null;
+            full_cleaning_months: number[] | null;
+            service_instructions: string | null;
+          }[],
+        };
 
   const fullCleaningInfoByClientId = new Map<
     string,
     { fullCleaningMonths: number[] | null; lastName: string | null }
   >();
   for (const row of customerRows ?? []) {
+    const rawMonths = row.full_cleaning_months ?? null;
+    const trusted =
+      rawMonths != null &&
+      (rawMonths.length > 0 || hasFullCleaningSignal(row.service_instructions ?? null));
+
     fullCleaningInfoByClientId.set(row.jobber_client_id, {
-      fullCleaningMonths: row.full_cleaning_months ?? null,
+      fullCleaningMonths: trusted ? rawMonths : null,
       lastName: row.last_name?.trim() || null,
     });
   }
