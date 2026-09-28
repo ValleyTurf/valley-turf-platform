@@ -150,7 +150,7 @@ async function fetchJobsPage(params: {
       .range(nativeFrom, nativeTo);
 
     if (error) return { jobs: [], totalJobs: 0, error: error.message };
-    rows.push(...((data ?? []) as JobRow[]));
+    rows.push(...((data ?? []) as unknown as JobRow[]));
   }
 
   // Jobber slice: whatever part of [from, to] falls after the native
@@ -169,7 +169,7 @@ async function fetchJobsPage(params: {
       .range(jobberFrom, jobberTo);
 
     if (error) return { jobs: rows, totalJobs, error: error.message };
-    rows.push(...((data ?? []) as JobRow[]));
+    rows.push(...((data ?? []) as unknown as JobRow[]));
   }
 
   return { jobs: rows, totalJobs, error: null };
