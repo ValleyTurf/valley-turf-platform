@@ -5,6 +5,7 @@
 // to /quotes/new?leadId=..., which that page reads directly (see its own
 // searchParams handling) to pre-select the lead in QuoteRecipientPicker.
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
@@ -80,6 +81,11 @@ export async function setLeadStatus(id: string, status: string): Promise<void> {
   });
 
   revalidatePath("/leads");
+  // Detail page (app/(platform)/leads/[id]/page.tsx, added 2026-09-28) --
+  // this action is bound to buttons on both /leads and /leads/[id], and
+  // a status change made from the detail page should reflect there too
+  // without a manual reload.
+  revalidatePath(`/leads/${id}`);
 }
 
 // Hard delete -- safe to do: quotes.lead_id is `on delete set null`
@@ -124,4 +130,8 @@ export async function deleteLead(id: string): Promise<void> {
   });
 
   revalidatePath("/leads");
+  // Also bound to the Delete button on /leads/[id] (added 2026-09-28) --
+  // that page no longer has a lead to show once this runs, so send
+  // staff back to the list instead of leaving them on a 404.
+  redirect("/leads");
 }

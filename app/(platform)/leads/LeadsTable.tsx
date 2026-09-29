@@ -95,7 +95,14 @@ export default function LeadsTable({ rows }: { rows: LeadRow[] }) {
                   <td className="whitespace-nowrap py-2 pr-4">
                     {row.capturedAt}
                   </td>
-                  <td className="py-2 pr-4">{row.name}</td>
+                  <td className="py-2 pr-4">
+                    <Link
+                      href={`/leads/${encodeURIComponent(row.id)}`}
+                      className="font-semibold text-[#174734] hover:underline"
+                    >
+                      {row.name}
+                    </Link>
+                  </td>
                   <td className="py-2 pr-4">{row.phone || "—"}</td>
                   <td className="py-2 pr-4">{row.email || "—"}</td>
                   <td className="py-2 pr-4">

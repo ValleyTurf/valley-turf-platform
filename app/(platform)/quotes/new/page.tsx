@@ -6,7 +6,6 @@ import { supabaseServer } from "@/lib/supabase-server";
 import NewQuoteForm from "./NewQuoteForm";
 import type { PickerCustomer, PickerLead } from "../QuoteRecipientPicker";
 import type { ServicePriceRow } from "@/lib/servicePricing";
-import type { IncludedItemRow } from "@/lib/serviceIncludedItems";
 
 type CustomerRow = {
   jobber_client_id: string;
@@ -29,12 +28,6 @@ type ServicePricingRow = {
   price: number | string;
 };
 
-type IncludedItemsQueryRow = {
-  service_name: string;
-  item: string;
-  sort_order: number;
-};
-
 type LeadRow = {
   id: string;
   first_name: string | null;
@@ -46,6 +39,7 @@ type LeadRow = {
   state: string | null;
   zip: string | null;
   address_formatted: string | null;
+  turf_size_range: string | null;
 };
 
 function customerDisplayName(row: CustomerRow): string {
@@ -96,7 +90,7 @@ export default async function NewQuotePage({ searchParams }: NewQuotePageProps) 
   const params = await searchParams;
   const preselectedLeadId = params.leadId?.trim() || null;
 
-  const [customersResult, leadsResult, servicePricingResult, includedItemsResult, preselectedLeadResult] = await Promise.all([
+  const [customersResult, leadsResult, servicePricingResult, preselectedLeadResult] = await Promise.all([
     supabaseServer
       .from("customers")
       .select(
@@ -108,7 +102,7 @@ export default async function NewQuotePage({ searchParams }: NewQuotePageProps) 
     supabaseServer
       .from("leads")
       .select(
-        "id, first_name, last_name, email, phone, address, city, state, zip, address_formatted"
+        "id, first_name, last_name, email, phone, address, city, state, zip, address_formatted, turf_size_range"
       )
       .order("created_at", { ascending: false })
       .limit(500),
@@ -117,10 +111,6 @@ export default async function NewQuotePage({ searchParams }: NewQuotePageProps) 
       .from("service_pricing")
       .select("service_name, turf_size_range, price"),
 
-    supabaseServer
-      .from("service_included_items")
-      .select("service_name, item, sort_order"),
-
     // A dedicated lookup rather than relying on the capped/recent-500
     // leads list above -- a lead reached via its own "Create Quote"
     // button (however old) still needs to resolve here.
@@ -128,7 +118,7 @@ export default async function NewQuotePage({ searchParams }: NewQuotePageProps) 
       ? supabaseServer
           .from("leads")
           .select(
-            "id, first_name, last_name, email, phone, address, city, state, zip, address_formatted"
+            "id, first_name, last_name, email, phone, address, city, state, zip, address_formatted, turf_size_range"
           )
           .eq("id", preselectedLeadId)
           .maybeSingle()
@@ -152,13 +142,6 @@ export default async function NewQuotePage({ searchParams }: NewQuotePageProps) 
     price: Number(row.price),
   }));
 
-  const includedItems: IncludedItemRow[] = ((includedItemsResult.data ??
-    []) as IncludedItemsQueryRow[]).map((row) => ({
-    serviceName: row.service_name,
-    item: row.item,
-    sortOrder: row.sort_order,
-  }));
-
   const leads: PickerLead[] = ((leadsResult.data ?? []) as LeadRow[]).map(
     (row) => ({
       id: row.id,
@@ -166,6 +149,7 @@ export default async function NewQuotePage({ searchParams }: NewQuotePageProps) 
       email: row.email,
       phone: row.phone,
       address: leadDisplayAddress(row),
+      turfSizeRange: row.turf_size_range,
     })
   );
 
@@ -177,6 +161,7 @@ export default async function NewQuotePage({ searchParams }: NewQuotePageProps) 
         email: preselectedLeadRow.email,
         phone: preselectedLeadRow.phone,
         address: leadDisplayAddress(preselectedLeadRow),
+        turfSizeRange: preselectedLeadRow.turf_size_range,
       }
     : null;
 
@@ -225,7 +210,6 @@ export default async function NewQuotePage({ searchParams }: NewQuotePageProps) 
             initialLead={initialLead}
             defaultExpiresAt={defaultExpiresAt()}
             servicePrices={servicePrices}
-            includedItems={includedItems}
           />
         </section>
       </div>

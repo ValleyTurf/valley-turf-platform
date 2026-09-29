@@ -17,6 +17,11 @@ export type PickerLead = {
   email: string | null;
   phone: string | null;
   address: string | null;
+  // Ryan, 2026-09-28: leads that came through /request-quote already
+  // have this (see leads.turf_size_range, 050_add_lead_form_fields.sql)
+  // -- it just never made it this far. Same as PickerCustomer's field
+  // above, just optional-in-practice since not every lead has one.
+  turfSizeRange: string | null;
 };
 
 type Mode = "customer" | "lead" | "new";
@@ -104,7 +109,7 @@ export default function QuoteRecipientPicker({
     setEmail(lead.email ?? "");
     setPhone(lead.phone ?? "");
     setAddress(lead.address ?? "");
-    onTurfSizeChange?.(null);
+    onTurfSizeChange?.(lead.turfSizeRange);
   }
 
   const tabClasses = (active: boolean) =>
