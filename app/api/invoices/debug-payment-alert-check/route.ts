@@ -124,7 +124,7 @@ export async function GET(request: NextRequest) {
   const { data: recentPaymentEvents, error: recentPaymentEventsError } =
     await supabaseServer
       .from("stripe_webhook_events")
-      .select("id, type, status, attempts, last_error, payload, created_at, updated_at")
+      .select("id, stripe_event_id, type, status, attempts, error_message, payload, created_at, processed_at")
       .in("type", [
         "checkout.session.completed",
         "payment_intent.succeeded",
@@ -154,7 +154,7 @@ export async function GET(request: NextRequest) {
       manualCashCheckPayment:
         "A payments row with stripe_payment_intent_id starting 'manual-' means staff clicked Mark Paid -- by design, no alert email is ever sent for this.",
       realStripePayment:
-        "A payments row with a real 'pi_...' id means it went through Stripe -- check recentStripeWebhookEvents_last2Days for that same window to see if the event processed cleanly (status 'processed') or errored (status 'failed', see last_error).",
+        "A payments row with a real 'pi_...' id means it went through Stripe -- check recentStripeWebhookEvents_last2Days for that same window to see if the event processed cleanly (status 'processed') or errored (status 'failed', see error_message).",
       jobberOnlyPayment:
         "If nativeInvoices/nativePayments are empty but jobberInvoices shows a 'paid' status, the payment was recorded directly in Jobber -- this app has no notification path for that at all today.",
     },
