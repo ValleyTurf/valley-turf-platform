@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 import Link from "next/link";
 import { SITE_URL } from "./config";
 import { GOOGLE_RATING, GOOGLE_REVIEW_COUNT } from "./testimonials";
@@ -20,7 +20,7 @@ export const metadata: Metadata = {
     template: "%s | Valley Turf Revival",
   },
   description:
-    "Professional artificial turf cleaning and pet odor removal serving Queen Creek and the greater Phoenix/East Valley area. Free quotes, licensed & experienced crews.",
+    "Professional artificial turf cleaning and pet odor removal serving Queen Creek and the Phoenix Metro Area. Free quotes, licensed & experienced crews.",
   robots: {
     index: true,
     follow: true,
@@ -47,7 +47,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Valley Turf Revival | Artificial Turf Cleaning & Pet Odor Removal",
     description:
-      "Professional artificial turf cleaning and pet odor removal serving Queen Creek and the greater Phoenix/East Valley area.",
+      "Professional artificial turf cleaning and pet odor removal serving Queen Creek and the Phoenix Metro Area.",
     images: ["/images/hero/hero-1.jpg"],
   },
 };
@@ -77,7 +77,7 @@ const ORGANIZATION_SCHEMA = {
   },
   areaServed: {
     "@type": "AdministrativeArea",
-    name: "Phoenix/East Valley, Arizona",
+    name: "Phoenix Metro Area, Arizona",
   },
   aggregateRating: {
     "@type": "AggregateRating",
@@ -182,7 +182,7 @@ function SiteFooter() {
           <img src="/branding/logo.svg" alt="Valley Turf Revival" className="mb-3 h-9 w-auto" />
           <p className="text-sm" style={{ color: MUTED_GRAY }}>
             Artificial turf cleaning and pet odor removal, based in Queen Creek and serving the
-            greater Phoenix/East Valley area.
+            Phoenix Metro Area.
           </p>
         </div>
 
@@ -268,3 +268,4 @@ function SiteFooter() {
     </footer>
   );
 }
+
