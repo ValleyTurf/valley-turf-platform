@@ -257,6 +257,11 @@ export default async function ProfitAndLossPage() {
 
         <section className="mt-6 overflow-x-auto rounded-2xl bg-white p-5 shadow">
           <h2 className="text-lg font-bold">Last {MONTHS_SHOWN} Months</h2>
+          <p className="mt-1 text-sm text-[#6b705c]">
+            Click a month for the full breakdown -- every invoice, every
+            overhead line item, and every logged expense that rolled up
+            into its numbers.
+          </p>
 
           <table className="mt-4 w-full min-w-[640px] text-sm">
             <thead>
@@ -271,7 +276,14 @@ export default async function ProfitAndLossPage() {
             <tbody>
               {monthRows.map((row) => (
                 <tr key={row.key} className="border-b border-[#f0eee4]">
-                  <td className="py-2 pr-4 font-semibold">{row.label}</td>
+                  <td className="py-2 pr-4 font-semibold">
+                    <Link
+                      href={`/revenue/profit-loss/${row.key}`}
+                      className="text-[#174734] underline decoration-[#d4af37] decoration-2 underline-offset-2 hover:text-[#226246]"
+                    >
+                      {row.label}
+                    </Link>
+                  </td>
                   <td className="py-2 pr-4 text-right">
                     {formatCurrency(row.revenue)}
                   </td>
