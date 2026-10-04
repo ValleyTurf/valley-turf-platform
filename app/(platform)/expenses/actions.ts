@@ -101,9 +101,13 @@ export async function updateExpense(
     notes: cleanText(formData.get("notes")),
   };
 
+  // Saving this form is Ryan looking at the row and confirming/fixing its
+  // category -- the exact thing "needs_review" (set by the QuickBooks
+  // import for anything it wasn't confident mapping) is waiting for. So
+  // any manual save clears it, same as if he'd entered the row by hand.
   const { error } = await supabaseServer
     .from("expenses")
-    .update({ ...row, updated_at: new Date().toISOString() })
+    .update({ ...row, status: "categorized", updated_at: new Date().toISOString() })
     .eq("id", id);
 
   if (error) {
