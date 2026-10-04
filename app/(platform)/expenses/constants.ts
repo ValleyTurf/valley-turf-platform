@@ -1,8 +1,17 @@
 // Single source of truth for the expense category list -- matches the
-// check constraint in supabase/migrations/087_add_expenses.sql exactly.
-// Shared between the add form, the row editor, and the P&L grouping
-// this feeds in a later phase, so there's one place to add/rename a
-// category rather than three.
+// check constraint in supabase/migrations/088_split_expense_categories.sql
+// (which supersedes 087's original, narrower list). Shared between the
+// add form, the row editor, and the P&L grouping this feeds, so there's
+// one place to add/rename a category rather than three.
+//
+// "office", "supplies", "tools_equipment", and "repairs_maintenance" used
+// to all be one "Other"/"Office & Supplies" catch-all -- split out per
+// Ryan (2026-10-04): "I think Other is too broad still. Should we have a
+// category for Supplies as well as Tools, Equipment and Machinery, then
+// Repairs and Maintenance also. I think you have Office and Supplies the
+// same, they should be split." See that migration for the one-time
+// backfill that reclassified already-imported rows using the original
+// QuickBooks category recorded in each row's notes.
 export type ExpenseCategory =
   | "cost_of_service"
   | "fuel"
@@ -12,16 +21,19 @@ export type ExpenseCategory =
   | "insurance"
   | "vehicle"
   | "office"
+  | "supplies"
+  | "tools_equipment"
+  | "repairs_maintenance"
   | "professional"
   | "bank_fees"
   | "rent_utilities"
   | "taxes_licenses"
   | "other";
 
-// "group" is for the future P&L/job-costing wiring (phase 3) -- cogs
-// rolls up under Cost of Service, payroll gets its own line (Gusto runs
-// payroll itself, but the P&L still needs to show the cost), everything
-// else is a plain operating expense. Not read by anything yet.
+// "group" is for the P&L/job-costing wiring -- cogs rolls up under Cost
+// of Service, payroll gets its own line (Gusto runs payroll itself, but
+// the P&L still needs to show the cost), everything else is a plain
+// operating expense.
 export const EXPENSE_CATEGORIES: {
   value: ExpenseCategory;
   label: string;
@@ -34,7 +46,10 @@ export const EXPENSE_CATEGORIES: {
   { value: "software", label: "Software & Subscriptions", group: "opex" },
   { value: "insurance", label: "Insurance", group: "opex" },
   { value: "vehicle", label: "Vehicle (Non-Fuel)", group: "opex" },
-  { value: "office", label: "Office & Supplies", group: "opex" },
+  { value: "office", label: "Office", group: "opex" },
+  { value: "supplies", label: "Supplies", group: "opex" },
+  { value: "tools_equipment", label: "Tools, Equipment & Machinery", group: "opex" },
+  { value: "repairs_maintenance", label: "Repairs & Maintenance", group: "opex" },
   { value: "professional", label: "Professional & Legal", group: "opex" },
   { value: "bank_fees", label: "Bank & Payment Processing Fees", group: "opex" },
   { value: "rent_utilities", label: "Rent & Utilities", group: "opex" },

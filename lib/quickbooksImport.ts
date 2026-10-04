@@ -74,15 +74,14 @@ const SECTION_CATEGORY_MAP: Record<
   Insurance: { category: "insurance", needsReview: false },
   "Jobber Payment Fees": { category: "bank_fees", needsReview: false },
   "Office expenses": { category: "office", needsReview: false },
-  // Generic "repairs" could be vehicle or equipment -- QuickBooks doesn't
-  // say which here (there's a separate, unambiguous "Vehicle repairs").
-  "Repairs & maintenance": { category: "other", needsReview: true },
+  // Ryan (2026-10-04): split out of the old "other" catch-all into its
+  // own category (migration 088) -- no longer ambiguous.
+  "Repairs & maintenance": { category: "repairs_maintenance", needsReview: false },
   Rent: { category: "rent_utilities", needsReview: false },
   "Software/Apps": { category: "software", needsReview: false },
-  // Generic "Supplies" (distinct from "Direct supplies & materials") --
-  // could be job-tied cost_of_service or office/shop supplies.
-  Supplies: { category: "other", needsReview: true },
-  "Tools, machinery, & equipment": { category: "other", needsReview: true },
+  // Same -- was "other" + needsReview, now has its own category.
+  Supplies: { category: "supplies", needsReview: false },
+  "Tools, machinery, & equipment": { category: "tools_equipment", needsReview: false },
   "Vehicle expenses": { category: "vehicle", needsReview: false },
   "Vehicle gas & fuel": { category: "fuel", needsReview: false },
   // Could arguably be "insurance" instead of "vehicle" -- flagged either way.
