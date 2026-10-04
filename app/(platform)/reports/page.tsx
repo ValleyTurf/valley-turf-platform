@@ -61,6 +61,13 @@ const REPORT_CARDS: ReportCard[] = [
     icon: "🔁",
   },
   {
+    title: "Profit & Loss",
+    description:
+      "Revenue minus fixed overhead minus logged expenses, by month.",
+    href: "/revenue/profit-loss",
+    icon: "📒",
+  },
+  {
     title: "Team Performance",
     description:
       "Avg time per visit and tips per crew member, for any date range.",

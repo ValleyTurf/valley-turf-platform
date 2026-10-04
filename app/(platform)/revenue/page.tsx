@@ -9,6 +9,10 @@ import {
   formatPercent,
   formatDateOnly as formatDate,
 } from "@/lib/format";
+import {
+  fetchOverheadCosts,
+  calculateOverheadForRange,
+} from "@/lib/overhead";
 
 type MarketInvoice = {
   jobber_client_id: string | null;
@@ -113,13 +117,6 @@ type ForecastMonth = {
   recurring_revenue_projected: number | string;
   seasonal_one_off_estimate: number | string;
   projected_total_revenue: number | string;
-};
-
-type OverheadCostRow = {
-  cost_type: string;
-  amount: number | string;
-  start_date: string;
-  end_date: string | null;
 };
 
 function formatDateInput(date: Date): string {
@@ -656,67 +653,6 @@ async function fetchMarketCustomers(): Promise<MarketCustomer[]> {
   }
 
   return rows;
-}
-
-async function fetchOverheadCosts(): Promise<OverheadCostRow[]> {
-  const { data, error } = await supabaseServer
-    .from("overhead_costs")
-    .select("cost_type, amount, start_date, end_date");
-
-  if (error) throw error;
-
-  return (data ?? []) as OverheadCostRow[];
-}
-
-function daysBetweenInclusive(start: Date, end: Date): number {
-  return Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
-}
-
-function calculateOverheadForRange(
-  costs: OverheadCostRow[],
-  rangeStart: string,
-  rangeEnd: string,
-): number {
-  const rangeStartDate = new Date(`${rangeStart}T00:00:00Z`);
-  const rangeEndDate = new Date(`${rangeEnd}T00:00:00Z`);
-
-  let total = 0;
-
-  for (const cost of costs) {
-    const amount = toNumber(cost.amount);
-    const costStart = new Date(`${cost.start_date}T00:00:00Z`);
-    const costEnd = cost.end_date
-      ? new Date(`${cost.end_date}T00:00:00Z`)
-      : null;
-
-    if (cost.cost_type === "recurring") {
-      // Smooth a monthly amount into a daily burn rate so it can be
-      // prorated across any arbitrary date range, not just calendar months.
-      const dailyRate = (amount * 12) / 365.25;
-
-      const overlapStart =
-        costStart > rangeStartDate ? costStart : rangeStartDate;
-      const overlapEnd =
-        costEnd && costEnd < rangeEndDate ? costEnd : rangeEndDate;
-
-      if (overlapStart <= overlapEnd) {
-        total += dailyRate * daysBetweenInclusive(overlapStart, overlapEnd);
-      }
-    } else if (cost.cost_type === "amortized" && costEnd) {
-      const totalDays = daysBetweenInclusive(costStart, costEnd);
-      const dailyRate = totalDays > 0 ? amount / totalDays : 0;
-
-      const overlapStart =
-        costStart > rangeStartDate ? costStart : rangeStartDate;
-      const overlapEnd = costEnd < rangeEndDate ? costEnd : rangeEndDate;
-
-      if (overlapStart <= overlapEnd) {
-        total += dailyRate * daysBetweenInclusive(overlapStart, overlapEnd);
-      }
-    }
-  }
-
-  return total;
 }
 
 function toNumber(value: number | string | null | undefined): number {
