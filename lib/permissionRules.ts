@@ -93,6 +93,11 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
     "/equipment",
     "/costs",
     "/invoices",
+    // New native expense ledger (Ryan, 2026-10-04) -- same delegable
+    // gate as Overhead Costs (/costs) and Invoices, since it's the same
+    // kind of real financial data an admin may or may not want to hand
+    // a manager/staff member.
+    "/expenses",
   ],
   // /job-costing-analytics/trends is deliberately listed here, not under
   // job_costing below, even though its URL still lives under

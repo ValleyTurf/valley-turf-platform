@@ -96,6 +96,7 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
       { name: "Reports", href: "/reports", icon: "📊" },
       { name: "Log Job Costs", href: "/job-costs", icon: "🧾" },
       { name: "Materials & Costs", href: "/materials", icon: "🧰" },
+      { name: "Expenses", href: "/expenses", icon: "💸" },
     ],
   },
   {
@@ -118,8 +119,6 @@ const groups: { title: string; icon: string; items: NavItem[] }[] = [
     items: [
       { name: "Leads", href: "/leads", icon: "🎯" },
       { name: "Links & QR", href: "/codes", icon: "📱" },
-      { name: "Campaigns", href: "/campaigns", icon: "📢" },
-      { name: "Photo Gallery", href: "/gallery", icon: "🖼️" },
     ],
   },
   {
