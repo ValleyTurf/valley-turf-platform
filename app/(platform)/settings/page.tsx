@@ -45,6 +45,14 @@ const settingsSections: SettingsSection[] = [
     status: "Connected",
   },
   {
+    title: "Bank Feed",
+    description:
+      "Connect a bank account to pull in expenses automatically from 10/1/2026 forward, instead of typing them in by hand.",
+    href: "/settings/bank-feed",
+    icon: "🏦",
+    status: "Connect",
+  },
+  {
     title: "Notifications",
     description:
       "Configure automated pre-visit text/email reminders and (once ready) review request messages.",
