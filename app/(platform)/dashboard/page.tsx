@@ -149,6 +149,17 @@ async function fetchOutstandingInvoices(): Promise<OutstandingRow[]> {
   // simpler fix covers it without needing that webhook to land at all: a
   // draft was never sent, so it was never actually owed -- exclude it
   // the same way a paid one already is.
+  //
+  // Gabrielle Tobeck (Ryan, 2026-10-05): "she paid in Jobber, and we
+  // voided her invoice in our CRM. Why is it still showing as due?"
+  // "void" was simply never added to this exclusion set -- lib/
+  // dailyDigest.ts's isUnpaidInvoiceStatus has treated VOID the same as
+  // PAID/DRAFT (not outstanding) since it was written, and
+  // void-duplicate-invoice/route.ts's own comments assumed this view did
+  // too, but this was the one other place "is this invoice actually
+  // owed" gets decided and it had drifted from that definition. Added so
+  // a voided invoice (whether voided here natively or in Jobber itself)
+  // can't get stuck showing as due, same as paid/draft.
   const invoiceIds = rows.map((row) => row.jobber_invoice_id);
   const { data: statusRows, error: statusError } = await supabaseServer
     .from("jobber_invoices")
@@ -158,7 +169,10 @@ async function fetchOutstandingInvoices(): Promise<OutstandingRow[]> {
 
   const notActuallyOutstandingIds = new Set(
     (statusRows ?? [])
-      .filter((row: { status: string | null }) => row.status === "paid" || row.status === "draft")
+      .filter(
+        (row: { status: string | null }) =>
+          row.status === "paid" || row.status === "draft" || row.status === "void"
+      )
       .map((row: { jobber_invoice_id: string }) => row.jobber_invoice_id)
   );
 
