@@ -244,6 +244,17 @@ type JobberQuote = {
   createdAt: string | null;
   transitionedAt: string | null;
   jobberWebUri: string | null;
+  // Ryan (2026-10-05): "is it possible to put the price of the quote on
+  // the pill so I don't have to click into it?" -- null for anything
+  // that isn't a native quote (the Jobber-sourced path below is dead,
+  // see getNativeQuotesForCustomer's header comment, so in practice
+  // this is always populated). tierPriceRange covers a 'tiered' quote
+  // that hasn't had a tier accepted yet, so there's no single
+  // priceTotal -- same Good/Better/Best range shown on the quote detail
+  // page (app/(platform)/quotes/[id]/page.tsx).
+  priceTotal: number | string | null;
+  pricingMode: "flat" | "tiered" | null;
+  tierPriceRange: { min: number; max: number } | null;
 };
 
 type JobberInvoice = {
@@ -1371,6 +1382,8 @@ type LocalNativeQuoteRow = {
   description: string | null;
   created_at: string | null;
   responded_at: string | null;
+  price_total: number | string | null;
+  pricing_mode: string | null;
 };
 
 // Ryan (2026-09-22): the native `quotes` table (built for the on-site
@@ -1389,7 +1402,7 @@ async function getNativeQuotesForCustomer(
   const { data, error } = await supabaseServer
     .from("quotes")
     .select(
-      "id, quote_number, status, expires_at, service_category, description, created_at, responded_at"
+      "id, quote_number, status, expires_at, service_category, description, created_at, responded_at, price_total, pricing_mode"
     )
     .eq("customer_id", jobberClientId)
     .order("created_at", { ascending: false, nullsFirst: false })
@@ -1400,9 +1413,45 @@ async function getNativeQuotesForCustomer(
     return [];
   }
 
-  return ((data ?? []) as LocalNativeQuoteRow[]).map((quote) => {
+  const rows = (data ?? []) as LocalNativeQuoteRow[];
+
+  // Good/Better/Best tiered quotes have no single price_total until a
+  // tier is accepted (see lib/quotes.ts's PricingMode comment) -- same
+  // situation the quote detail page handles by showing a min-max range
+  // across quote_tiers instead. Batched once for every tiered/unpriced
+  // quote on this customer rather than per-row.
+  const tieredIdsNeedingRange = rows
+    .filter((quote) => quote.pricing_mode === "tiered" && quote.price_total === null)
+    .map((quote) => quote.id);
+
+  const tierRangeByQuoteId = new Map<string, { min: number; max: number }>();
+
+  if (tieredIdsNeedingRange.length > 0) {
+    const { data: tierRows, error: tierError } = await supabaseServer
+      .from("quote_tiers")
+      .select("quote_id, price")
+      .in("quote_id", tieredIdsNeedingRange);
+
+    if (tierError) {
+      console.error("Quote tiers lookup for customer failed:", tierError.message);
+    } else {
+      for (const tier of (tierRows ?? []) as { quote_id: string; price: number | string }[]) {
+        const price = Number(tier.price);
+        const existing = tierRangeByQuoteId.get(tier.quote_id);
+        tierRangeByQuoteId.set(
+          tier.quote_id,
+          existing
+            ? { min: Math.min(existing.min, price), max: Math.max(existing.max, price) }
+            : { min: price, max: price }
+        );
+      }
+    }
+  }
+
+  return rows.map((quote) => {
     const status = isQuoteStatus(quote.status) ? quote.status : "draft";
     const displayStatus = computeDisplayStatus(status, quote.expires_at);
+    const pricingMode = quote.pricing_mode === "tiered" ? "tiered" : "flat";
 
     return {
       id: quote.id,
@@ -1419,6 +1468,9 @@ async function getNativeQuotesForCustomer(
       quoteStatus: displayStatus,
       createdAt: quote.created_at,
       transitionedAt: quote.responded_at,
+      priceTotal: quote.price_total,
+      pricingMode,
+      tierPriceRange: tierRangeByQuoteId.get(quote.id) ?? null,
       jobberWebUri: `/quotes/${quote.id}`,
     };
   });
@@ -1664,6 +1716,27 @@ function statusClasses(status: string | null): string {
   }
 
   return "bg-gray-100 text-gray-700";
+}
+
+// Ryan (2026-10-05): "is it possible to put the price of the quote on
+// the pill so I don't have to click into it?" -- same flat vs. tiered
+// display rule as the quote detail page (app/(platform)/quotes/[id]/page.tsx):
+// a flat quote always has a price_total; a tiered quote shows that same
+// single price once a tier's been accepted, and a Good/Better/Best
+// range from quote_tiers before that.
+function formatQuotePrice(quote: JobberQuote): string | null {
+  if (quote.priceTotal !== null) {
+    return formatCurrency(quote.priceTotal);
+  }
+
+  if (quote.pricingMode === "tiered" && quote.tierPriceRange) {
+    const { min, max } = quote.tierPriceRange;
+    return min === max
+      ? formatCurrency(min)
+      : `${formatCurrency(min)}–${formatCurrency(max)}`;
+  }
+
+  return null;
 }
 
 function VisitCostForm({
@@ -3413,6 +3486,8 @@ export default async function CustomerDetailPage({
               <div className="mt-3 space-y-2">
                 {quotesPagination.pageItems.length > 0 ? (
                   quotesPagination.pageItems.map((quote) => {
+                    const quotePrice = formatQuotePrice(quote);
+
                     const content = (
                       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                         <div className="min-w-0">
@@ -3426,13 +3501,21 @@ export default async function CustomerDetailPage({
                           </p>
                         </div>
 
-                        <span
-                          className={`w-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
-                            quote.quoteStatus
-                          )}`}
-                        >
-                          {formatStatus(quote.quoteStatus)}
-                        </span>
+                        <div className="flex shrink-0 flex-row items-center gap-2 sm:flex-col sm:items-end sm:gap-1">
+                          {quotePrice ? (
+                            <span className="text-sm font-bold text-[#174734]">
+                              {quotePrice}
+                            </span>
+                          ) : null}
+
+                          <span
+                            className={`w-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${statusClasses(
+                              quote.quoteStatus
+                            )}`}
+                          >
+                            {formatStatus(quote.quoteStatus)}
+                          </span>
+                        </div>
                       </div>
                     );
 
