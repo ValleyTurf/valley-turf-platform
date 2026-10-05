@@ -55,7 +55,14 @@ type MonthBucket = {
   end: string; // "YYYY-MM-DD", inclusive
 };
 
-const MONTHS_SHOWN = 6;
+// Ryan, 2026-10-05: "can we see each month for the year and then maybe
+// YTD numbers on the page?" -- switched from a rolling trailing window
+// to every month of the current calendar year through today, so the
+// table itself becomes the year-to-date view instead of always trailing
+// 6 months behind whatever "now" is.
+function monthsElapsedThisYear(): number {
+  return new Date().getMonth() + 1; // January = 1 ... current month inclusive
+}
 
 function buildMonthBuckets(count: number): MonthBucket[] {
   const buckets: MonthBucket[] = [];
@@ -145,7 +152,8 @@ const CATEGORY_GROUP = new Map<string, "cogs" | "payroll" | "opex">(
 );
 
 export default async function ProfitAndLossPage() {
-  const months = buildMonthBuckets(MONTHS_SHOWN);
+  const currentYear = new Date().getFullYear();
+  const months = buildMonthBuckets(monthsElapsedThisYear());
   const rangeStart = months[0].start;
   const rangeEnd = months[months.length - 1].end;
 
@@ -195,6 +203,16 @@ export default async function ProfitAndLossPage() {
       netProfit,
     };
   });
+
+  const yearToDate = monthRows.reduce(
+    (totals, row) => ({
+      revenue: totals.revenue + row.revenue,
+      overhead: totals.overhead + row.overhead,
+      totalLoggedExpenses: totals.totalLoggedExpenses + row.totalLoggedExpenses,
+      netProfit: totals.netProfit + row.netProfit,
+    }),
+    { revenue: 0, overhead: 0, totalLoggedExpenses: 0, netProfit: 0 }
+  );
 
   const currentMonthExpenses = expenseRows.filter(
     (row) =>
@@ -256,7 +274,7 @@ export default async function ProfitAndLossPage() {
         </section>
 
         <section className="mt-6 overflow-x-auto rounded-2xl bg-white p-5 shadow">
-          <h2 className="text-lg font-bold">Last {MONTHS_SHOWN} Months</h2>
+          <h2 className="text-lg font-bold">{currentYear} Month by Month</h2>
           <p className="mt-1 text-sm text-[#6b705c]">
             Click a month for the full breakdown -- every invoice, every
             overhead line item, and every logged expense that rolled up
@@ -303,6 +321,29 @@ export default async function ProfitAndLossPage() {
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-[#174734]/20 bg-[#f7f6f1] text-sm font-bold">
+                <td className="py-3 pr-4 text-[#174734]">
+                  {currentYear} Year to Date
+                </td>
+                <td className="py-3 pr-4 text-right text-[#174734]">
+                  {formatCurrency(yearToDate.revenue)}
+                </td>
+                <td className="py-3 pr-4 text-right text-[#6b705c]">
+                  {formatCurrency(yearToDate.overhead)}
+                </td>
+                <td className="py-3 pr-4 text-right text-[#6b705c]">
+                  {formatCurrency(yearToDate.totalLoggedExpenses)}
+                </td>
+                <td
+                  className={`py-3 pr-4 text-right ${
+                    yearToDate.netProfit < 0 ? "text-red-700" : "text-[#174734]"
+                  }`}
+                >
+                  {formatCurrency(yearToDate.netProfit)}
+                </td>
+              </tr>
+            </tfoot>
           </table>
         </section>
 
