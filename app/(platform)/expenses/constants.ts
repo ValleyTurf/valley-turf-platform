@@ -34,13 +34,23 @@ export type ExpenseCategory =
 // of Service, payroll gets its own line (Gusto runs payroll itself, but
 // the P&L still needs to show the cost), everything else is a plain
 // operating expense.
+//
+// Fuel moved from cogs to opex and was relabeled "Vehicle (Fuel)" per
+// Ryan (2026-10-05): "Can we move Fuel out of COGS and move it to
+// expenses and maybe rename to Vehicle (Fuel)?" -- pairs it with the
+// existing "Vehicle (Non-Fuel)" category instead of standing alone
+// under Cost of Goods Sold. Both P&L pages derive their cogs/payroll/opex
+// groupings straight from this `group` field, so moving it here is the
+// whole change -- it reclassifies existing rows without touching any
+// dollar amount (Net Operating Income is unaffected; only which bucket
+// Fuel's total lands in changes).
 export const EXPENSE_CATEGORIES: {
   value: ExpenseCategory;
   label: string;
   group: "cogs" | "payroll" | "opex";
 }[] = [
   { value: "cost_of_service", label: "Cost of Service", group: "cogs" },
-  { value: "fuel", label: "Fuel", group: "cogs" },
+  { value: "fuel", label: "Vehicle (Fuel)", group: "opex" },
   { value: "payroll", label: "Payroll", group: "payroll" },
   { value: "marketing", label: "Marketing & Advertising", group: "opex" },
   { value: "software", label: "Software & Subscriptions", group: "opex" },
