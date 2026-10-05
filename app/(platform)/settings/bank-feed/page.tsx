@@ -311,7 +311,24 @@ export default async function BankFeedSettingsPage() {
                 const changes = (entry.changes ?? {}) as {
                   rowsImported?: number;
                   _note?: string;
+                  connections?: Array<{
+                    institutionName: string | null;
+                    skippedDeposits?: number;
+                    skippedBeforeCutoff?: number;
+                    error?: string;
+                  }>;
                 };
+
+                const connections = changes.connections ?? [];
+                const totalSkippedCutoff = connections.reduce(
+                  (sum, c) => sum + (c.skippedBeforeCutoff ?? 0),
+                  0
+                );
+                const totalSkippedDeposits = connections.reduce(
+                  (sum, c) => sum + (c.skippedDeposits ?? 0),
+                  0
+                );
+                const connectionErrors = connections.filter((c) => c.error);
 
                 return (
                   <div
@@ -336,6 +353,27 @@ export default async function BankFeedSettingsPage() {
                       <div style={{ color: "#64748b", fontSize: "13px", marginTop: "3px" }}>
                         {formatDate(entry.created_at)}
                       </div>
+
+                      {totalSkippedCutoff > 0 || totalSkippedDeposits > 0 ? (
+                        <div style={{ color: "#64748b", fontSize: "12px", marginTop: "4px" }}>
+                          {totalSkippedCutoff > 0
+                            ? `${totalSkippedCutoff} dated before 10/1/2026`
+                            : ""}
+                          {totalSkippedCutoff > 0 && totalSkippedDeposits > 0 ? " · " : ""}
+                          {totalSkippedDeposits > 0
+                            ? `${totalSkippedDeposits} deposits/credits (not expenses)`
+                            : ""}
+                          {" -- skipped on purpose."}
+                        </div>
+                      ) : null}
+
+                      {connectionErrors.length > 0 ? (
+                        <div style={{ color: "#991b1b", fontSize: "12px", marginTop: "4px" }}>
+                          {connectionErrors
+                            .map((c) => `${c.institutionName ?? "Connection"}: ${c.error}`)
+                            .join("; ")}
+                        </div>
+                      ) : null}
 
                       {changes._note ? (
                         <div style={{ color: "#991b1b", fontSize: "12px", marginTop: "4px" }}>
