@@ -11,6 +11,8 @@ import { useRouter } from "next/navigation";
 type ConnectionSummary = {
   institutionName: string | null;
   added: number;
+  skippedDeposits: number;
+  skippedBeforeCutoff: number;
   needsReviewCount: number;
   error?: string;
 };
@@ -54,11 +56,30 @@ export default function SyncButton({ disabled }: { disabled?: boolean }) {
             } failed: ${failed.map((c) => c.error).join("; ")}`
           );
         } else {
+          const totalSkippedCutoff = connections.reduce(
+            (sum, c) => sum + (c.skippedBeforeCutoff ?? 0),
+            0
+          );
+          const totalSkippedDeposits = connections.reduce(
+            (sum, c) => sum + (c.skippedDeposits ?? 0),
+            0
+          );
+
+          const skippedNote =
+            totalInserted === 0 && (totalSkippedCutoff > 0 || totalSkippedDeposits > 0)
+              ? ` (Plaid returned transactions, but ${
+                  totalSkippedCutoff > 0 ? `${totalSkippedCutoff} were dated before 10/1/2026` : ""
+                }${totalSkippedCutoff > 0 && totalSkippedDeposits > 0 ? " and " : ""}${
+                  totalSkippedDeposits > 0 ? `${totalSkippedDeposits} were deposits/credits, not expenses` : ""
+                } -- both are skipped on purpose.)`
+              : "";
+
           setMessage(
             `Synced ${totalInserted} new expense${totalInserted === 1 ? "" : "s"}` +
               (totalNeedsReview > 0
                 ? ` -- ${totalNeedsReview} need${totalNeedsReview === 1 ? "s" : ""} review on the Expenses page.`
-                : ".")
+                : ".") +
+              skippedNote
           );
         }
       }
