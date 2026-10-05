@@ -6,6 +6,8 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { EXPENSE_CATEGORIES } from "./constants";
 import AddExpenseForm from "./AddExpenseForm";
 import ExpenseRowItem, { inputClasses, type ExpenseRow } from "./ExpenseRowItem";
+import RecurringChargesSection from "./RecurringChargesSection";
+import { fetchRecurringCharges, checkRecurringCharges } from "@/lib/recurringCharges";
 import { toNumber, formatCurrencyPrecise as formatCurrency } from "@/lib/format";
 
 // Phase 1 of the native expense ledger (Ryan, 2026-10-04) -- plain
@@ -61,6 +63,29 @@ export default async function ExpensesPage({ searchParams }: ExpensesPageProps) 
     .from("expenses")
     .select("id", { count: "exact", head: true })
     .eq("status", "needs_review");
+
+  // Recurring Charges Check (migration 089) is always scoped to `month`,
+  // regardless of the Needs Review toggle above -- when that toggle is on,
+  // `expenses` is the cross-month needs_review list, not this month's, so
+  // this fetches its own month-scoped slice rather than reusing it.
+  const recurringCharges = await fetchRecurringCharges();
+  const monthExpensesForCheck = showingNeedsReview
+    ? ((
+        await supabaseServer
+          .from("expenses")
+          .select("vendor, description, category, amount, expense_date")
+          .gte("expense_date", start)
+          .lt("expense_date", end)
+      ).data ?? [])
+    : expenses;
+  const recurringChargeStatuses = checkRecurringCharges(
+    recurringCharges,
+    monthExpensesForCheck
+  );
+  const monthLabel = new Date(`${month}-01T00:00:00`).toLocaleDateString(
+    "en-US",
+    { month: "long", year: "numeric" }
+  );
 
   const totalsByCategory = new Map<string, number>();
   let monthTotal = 0;
@@ -124,16 +149,19 @@ export default async function ExpensesPage({ searchParams }: ExpensesPageProps) 
           <AddExpenseForm />
         </section>
 
+        <RecurringChargesSection
+          statuses={recurringChargeStatuses}
+          charges={recurringCharges}
+          monthLabel={monthLabel}
+        />
+
         <section className="mt-6 rounded-2xl bg-white p-5 shadow">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-bold">
               {showingNeedsReview ? (
                 <>Needs Review <span className="font-normal text-[#6b705c]">(every month)</span></>
               ) : (
-                new Date(`${month}-01T00:00:00`).toLocaleDateString("en-US", {
-                  month: "long",
-                  year: "numeric",
-                })
+                monthLabel
               )}
             </h2>
 

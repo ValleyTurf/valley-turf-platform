@@ -44,6 +44,20 @@ function cleanDate(value: FormDataEntryValue | null): string {
   return value;
 }
 
+function cleanDayOfMonth(value: FormDataEntryValue | null): number | null {
+  if (typeof value !== "string" || value.trim() === "") {
+    return null;
+  }
+
+  const parsed = Math.round(Number(value));
+
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 31) {
+    return null;
+  }
+
+  return parsed;
+}
+
 export async function addExpense(formData: FormData): Promise<void> {
   const actor = await getCurrentUser();
 
@@ -148,6 +162,132 @@ export async function deleteExpense(id: string): Promise<void> {
     entityType: "expense",
     entityId: id,
     entityLabel: before?.vendor ?? before?.description ?? null,
+    before,
+  });
+
+  revalidatePath("/expenses");
+}
+
+// ---------- Recurring Charges checklist (migration 089) ----------
+//
+// Ryan, 2026-10-05: after ending the double-counted recurring Overhead
+// Cost estimates (Jobber, Advertising) on 12/31/2025, the P&L runs
+// purely off actual logged/bank-fed expenses -- more accurate, but
+// nothing flags it if a known recurring charge just doesn't show up
+// some month. These three actions manage that checklist. Deliberately
+// NOT wired into any P&L total -- see lib/recurringCharges.ts.
+
+export async function addRecurringCharge(formData: FormData): Promise<void> {
+  const actor = await getCurrentUser();
+  const name = cleanText(formData.get("name"));
+
+  if (!name) {
+    throw new Error("Name is required.");
+  }
+
+  const row = {
+    name,
+    category: cleanCategory(formData.get("category")),
+    expected_amount: cleanAmount(formData.get("expected_amount")),
+    expected_day_of_month: cleanDayOfMonth(formData.get("expected_day_of_month")),
+    active: true,
+    notes: cleanText(formData.get("notes")),
+  };
+
+  const { data, error } = await supabaseServer
+    .from("recurring_charges")
+    .insert(row)
+    .select("id")
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to add recurring charge: ${error.message}`);
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "create",
+    entityType: "recurring_charge",
+    entityId: data?.id ?? null,
+    entityLabel: name,
+    after: row,
+  });
+
+  revalidatePath("/expenses");
+}
+
+export async function updateRecurringCharge(
+  id: string,
+  formData: FormData
+): Promise<void> {
+  const actor = await getCurrentUser();
+  const name = cleanText(formData.get("name"));
+
+  if (!name) {
+    throw new Error("Name is required.");
+  }
+
+  const { data: before } = await supabaseServer
+    .from("recurring_charges")
+    .select("name, category, expected_amount, expected_day_of_month, active, notes")
+    .eq("id", id)
+    .maybeSingle();
+
+  const row = {
+    name,
+    category: cleanCategory(formData.get("category")),
+    expected_amount: cleanAmount(formData.get("expected_amount")),
+    expected_day_of_month: cleanDayOfMonth(formData.get("expected_day_of_month")),
+    active: formData.get("active") === "on",
+    notes: cleanText(formData.get("notes")),
+  };
+
+  const { error } = await supabaseServer
+    .from("recurring_charges")
+    .update({ ...row, updated_at: new Date().toISOString() })
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(`Failed to update recurring charge: ${error.message}`);
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "recurring_charge",
+    entityId: id,
+    entityLabel: name,
+    before,
+    after: row,
+  });
+
+  revalidatePath("/expenses");
+}
+
+export async function deleteRecurringCharge(id: string): Promise<void> {
+  const actor = await getCurrentUser();
+
+  const { data: before } = await supabaseServer
+    .from("recurring_charges")
+    .select("name, category, expected_amount, expected_day_of_month, active, notes")
+    .eq("id", id)
+    .maybeSingle();
+
+  const { error } = await supabaseServer
+    .from("recurring_charges")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(`Failed to delete recurring charge: ${error.message}`);
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "delete",
+    entityType: "recurring_charge",
+    entityId: id,
+    entityLabel: before?.name ?? null,
     before,
   });
 
