@@ -245,16 +245,21 @@ type JobberQuote = {
   transitionedAt: string | null;
   jobberWebUri: string | null;
   // Ryan (2026-10-05): "is it possible to put the price of the quote on
-  // the pill so I don't have to click into it?" -- null for anything
-  // that isn't a native quote (the Jobber-sourced path below is dead,
-  // see getNativeQuotesForCustomer's header comment, so in practice
-  // this is always populated). tierPriceRange covers a 'tiered' quote
-  // that hasn't had a tier accepted yet, so there's no single
+  // the pill so I don't have to click into it?" -- only populated for a
+  // native quote (getNativeQuotesForCustomer below sets it from this
+  // app's own `quotes` table). A quote object built straight from
+  // Jobber's GraphQL response (`client.quotes.nodes`, merged in around
+  // line 2018) leaves these three fields off entirely -- that query was
+  // never asked for a price -- so they come back `undefined` there, not
+  // `null`. formatQuotePrice checks for both (2026-10-07 fix, see its
+  // own comment -- Addison Nokels' Jobber-sourced quote was showing a
+  // false "$0" before that). tierPriceRange covers a native 'tiered'
+  // quote that hasn't had a tier accepted yet, so there's no single
   // priceTotal -- same Good/Better/Best range shown on the quote detail
   // page (app/(platform)/quotes/[id]/page.tsx).
-  priceTotal: number | string | null;
-  pricingMode: "flat" | "tiered" | null;
-  tierPriceRange: { min: number; max: number } | null;
+  priceTotal?: number | string | null;
+  pricingMode?: "flat" | "tiered" | null;
+  tierPriceRange?: { min: number; max: number } | null;
 };
 
 type JobberInvoice = {
@@ -1724,8 +1729,24 @@ function statusClasses(status: string | null): string {
 // a flat quote always has a price_total; a tiered quote shows that same
 // single price once a tier's been accepted, and a Good/Better/Best
 // range from quote_tiers before that.
+//
+// Ryan (2026-10-07): "Addison Nokels shows $0" -- turned out not every
+// quote in this list is a native row. The `quotes` array this feeds
+// from is `[...client.quotes.nodes, ...nativeQuotesForCustomer]`
+// (see around line 2018) -- client.quotes.nodes comes straight back
+// from Jobber's own GraphQL API (getJobberClient's `quotes(first: 40)`
+// query above), which was only ever asked for id/quoteNumber/title/
+// quoteStatus/createdAt/transitionedAt/jobberWebUri, no price field.
+// So a Jobber-sourced quote has `priceTotal: undefined`, not `null` --
+// `undefined !== null` is true in JS, so this used to fall through to
+// formatCurrency(undefined), which toNumber() (lib/format.ts) coerces
+// to 0 -- a confident, wrong "$0" for a quote we genuinely have no
+// price data for via this path, rather than just showing nothing.
+// Checking for both null and undefined is what actually means "we
+// don't have a usable price," matching how the rest of this function
+// already treats missing data.
 function formatQuotePrice(quote: JobberQuote): string | null {
-  if (quote.priceTotal !== null) {
+  if (quote.priceTotal !== null && quote.priceTotal !== undefined) {
     return formatCurrency(quote.priceTotal);
   }
 
