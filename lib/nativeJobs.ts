@@ -1130,6 +1130,130 @@ export async function reopenNativeJob(
   return { ok: true, value: null };
 }
 
+// Ryan (2026-10-08): "When I complete a job such as Clark Stokes today,
+// if it is a one time job, can the job close out rather than staying as
+// an open job? If it is recurring of course I would want it to stay
+// open." Called from completeVisit (my-day/actions.ts) right after a
+// native visit is marked complete, and from the one-time cleanup route
+// (app/api/jobs/backfill-close-completed-one-off/route.ts) for jobs that
+// finished before this existed. Scoped to native jobs only (source =
+// "native") -- a Jobber-sourced one-off job used to auto-archive on
+// Jobber's own side the instant it was completed/invoiced (see
+// lib/dailyDigest.ts's isUnpaidInvoiceStatus comment), but that was
+// Jobber's behavior, not this app's, and every job created since the
+// Sept 2026 cutover is native -- so native is the gap that's actually
+// open today.
+//
+// Reuses job_status = "archived" (Ryan's choice, 2026-10-08) rather than
+// a new "completed" status -- every Open Jobs filter across the app
+// (jobs/page.tsx, customers/[id]/page.tsx, dashboard/page.tsx,
+// schedule/page.tsx, my-day/page.tsx, crew-status/page.tsx,
+// recurring-services/page.tsx) already excludes archived jobs, so
+// nothing else needs to change for a closed one-off job to disappear
+// from every one of those lists. Deliberately does NOT set
+// recurrence_cancelled_at the way cancelNativeJob does -- that column
+// means "this recurring service was cancelled" (lib/recurringRevenue.ts's
+// Lost MRR reads it), and a one-off job finishing on schedule is the
+// opposite of a cancellation, not a special case of it.
+//
+// Split into a read-only eligibility check plus the actual write so the
+// dry-run cleanup route can report what WOULD close without writing
+// anything, using the exact same logic the real-time trigger uses.
+export type OneOffJobCloseEligibility =
+  | { eligible: true }
+  | { eligible: false; reason: string };
+
+export async function checkOneOffJobCloseEligibility(
+  jobId: string
+): Promise<OneOffJobCloseEligibility> {
+  const { data: job, error: jobError } = await supabaseServer
+    .from("jobber_jobs")
+    .select("job_type, job_status")
+    .eq("jobber_job_id", jobId)
+    .eq("source", "native")
+    .maybeSingle();
+
+  if (jobError) {
+    return { eligible: false, reason: `Job lookup failed: ${jobError.message}` };
+  }
+
+  if (!job) {
+    return { eligible: false, reason: "Not a native job." };
+  }
+
+  if (job.job_type !== "ONE_OFF") {
+    return { eligible: false, reason: "Not a one-off job (recurring jobs stay open)." };
+  }
+
+  if ((job.job_status ?? "").toLowerCase() === "archived") {
+    return { eligible: false, reason: "Already archived." };
+  }
+
+  // A one-off native job only ever has exactly one visit (see
+  // createNativeJob above: `dates = isRecurring ? [...] : [startDate]`,
+  // one date in, one visit out, and nothing in this app currently lets
+  // you add a second visit to an already-created job) -- but this still
+  // checks for any other still-incomplete visit rather than assuming
+  // that invariant holds forever, since getting this wrong would
+  // silently archive a job with real work still outstanding.
+  const { count, error: countError } = await supabaseServer
+    .from("jobber_visits")
+    .select("jobber_visit_id", { count: "exact", head: true })
+    .eq("jobber_job_id", jobId)
+    .eq("source", "native")
+    .is("completed_at", null);
+
+  if (countError) {
+    return { eligible: false, reason: `Visit check failed: ${countError.message}` };
+  }
+
+  if ((count ?? 0) > 0) {
+    return { eligible: false, reason: "Still has an incomplete visit." };
+  }
+
+  return { eligible: true };
+}
+
+export async function closeOneOffJobIfComplete(
+  jobId: string
+): Promise<MutationOutcome<{ closed: boolean; reason?: string }>> {
+  const eligibility = await checkOneOffJobCloseEligibility(jobId);
+
+  if (!eligibility.eligible) {
+    return { ok: true, value: { closed: false, reason: eligibility.reason } };
+  }
+
+  const nowIso = new Date().toISOString();
+
+  const { error: closeError } = await supabaseServer
+    .from("jobber_jobs")
+    .update({ job_status: "archived", updated_at: nowIso })
+    .eq("jobber_job_id", jobId)
+    .eq("source", "native");
+
+  if (closeError) {
+    return { ok: false, error: closeError.message };
+  }
+
+  // Cascade onto the visit row too -- /schedule, /my-day, and
+  // /crew-status all read job_status directly off jobber_visits rather
+  // than joining jobber_jobs (see lib/jobberWebhookProcessor.ts's
+  // syncSingleJob, the only other place that cascades this, for why:
+  // without it those pages would keep showing a just-closed job's visit
+  // as open even though jobber_jobs itself now says archived).
+  const { error: cascadeError } = await supabaseServer
+    .from("jobber_visits")
+    .update({ job_status: "archived" })
+    .eq("jobber_job_id", jobId)
+    .eq("source", "native");
+
+  if (cascadeError) {
+    return { ok: false, error: `Job archived but visit cascade failed: ${cascadeError.message}` };
+  }
+
+  return { ok: true, value: { closed: true } };
+}
+
 // Visit-level reschedule/skip/complete deliberately do NOT touch
 // jobber_visits themselves -- unlike the job-level functions above, the
 // calling action files (schedule/actions.ts's rescheduleVisit/skipVisit,
