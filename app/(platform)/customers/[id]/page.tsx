@@ -1393,14 +1393,16 @@ type LocalNativeQuoteRow = {
 
 // Ryan (2026-09-22): the native `quotes` table (built for the on-site
 // quote-send/accept/decline feature) was never wired into this page's
-// Past Quotes list -- getJobberClient's `quotes` field only ever reads
-// Jobber's own (now-unused) quote object, and getLocalClientView below
-// hardcodes an empty `quotes.nodes` array outright. So no quote created
-// through this app's own Quotes tool has ever shown up here, for any
-// customer, Jobber-id or native-id alike. This fetches them directly
-// and maps them into the same JobberQuote shape the Past Quotes JSX
-// already renders, using an internal /quotes/[id] link in place of a
-// jobberWebUri (there isn't one -- these were never in Jobber).
+// Past Quotes list -- getLocalClientView below hardcodes an empty
+// `quotes.nodes` array outright, and getJobberClient's live `quotes`
+// field (correction, 2026-10-07: this one IS live, see the `quotes`
+// merge point further down) obviously never carries anything created
+// only in this app. So no quote created through this app's own Quotes
+// tool has ever shown up here, for any customer, Jobber-id or
+// native-id alike. This fetches them directly and maps them into the
+// same JobberQuote shape the Past Quotes JSX already renders, using an
+// internal /quotes/[id] link in place of a jobberWebUri (there isn't
+// one -- these were never in Jobber).
 async function getNativeQuotesForCustomer(
   jobberClientId: string
 ): Promise<JobberQuote[]> {
@@ -1479,6 +1481,41 @@ async function getNativeQuotesForCustomer(
       jobberWebUri: `/quotes/${quote.id}`,
     };
   });
+}
+
+// Ryan (2026-10-08): "I would like to have the pricing at some point in
+// case someone reaches out in the future and we don't have jobber
+// anymore." jobber_quote_price_archive (migration 091) is a permanent
+// copy of Jobber's own amounts.total for every quote, backfilled via
+// app/api/jobber/backfill-quote-prices/route.ts -- this looks up
+// whichever of this customer's Jobber-sourced quote ids (at most 40,
+// see client.quotes.nodes above) have an archived price. Empty input
+// short-circuits rather than sending `.in("jobber_quote_id", [])`,
+// which Supabase would otherwise happily run as a real (always-empty)
+// query.
+async function getArchivedJobberQuotePrices(
+  jobberQuoteIds: string[]
+): Promise<Map<string, number>> {
+  if (jobberQuoteIds.length === 0) {
+    return new Map();
+  }
+
+  const { data, error } = await supabaseServer
+    .from("jobber_quote_price_archive")
+    .select("jobber_quote_id, total")
+    .in("jobber_quote_id", jobberQuoteIds);
+
+  if (error) {
+    console.error("Jobber quote price archive lookup failed:", error.message);
+    return new Map();
+  }
+
+  return new Map(
+    (data ?? []).map((row) => [
+      row.jobber_quote_id as string,
+      Number(row.total),
+    ])
+  );
 }
 
 type CustomerProfile = {
@@ -2029,14 +2066,35 @@ export default async function CustomerDetailPage({
   const openJobs = jobs.filter(
     (job) => !(job.jobStatus ?? "").toUpperCase().includes("ARCHIVED")
   );
-  // Ryan (2026-09-22): client.quotes only ever reflects Jobber's own
-  // (now-unused) quote object -- getLocalClientView doesn't even query
-  // it, it just hardcodes an empty array. Native quotes (created via
-  // this app's own Quotes tool) are a wholly separate, never-overlapping
-  // data source, so this is a straight merge with no dedup needed
-  // (compare to combinedInvoices below, where a native invoice IS a
-  // Jobber invoice's mirror and has to be excluded from the Jobber list).
-  const quotes = [...(client.quotes?.nodes ?? []), ...nativeQuotesForCustomer].sort(
+  // Ryan (2026-09-22): for a native customer, getLocalClientView doesn't
+  // query Jobber at all, it just hardcodes an empty array here. For an
+  // ordinary Jobber-synced customer, client.quotes is live and real
+  // (getJobberClient's quotes(first: 40) query above) -- confirmed the
+  // hard way on 2026-10-07 when Addison Nokels' real Jobber quote showed
+  // a false "$0" because this array's objects never carried a price.
+  // Native quotes (created via this app's own Quotes tool) are a wholly
+  // separate, never-overlapping data source, so this is a straight merge
+  // with no dedup needed (compare to combinedInvoices below, where a
+  // native invoice IS a Jobber invoice's mirror and has to be excluded
+  // from the Jobber list).
+  //
+  // Ryan (2026-10-08): "I would like to have the pricing at some point
+  // in case someone reaches out in the future and we don't have jobber
+  // anymore." jobber_quote_price_archive (migration 091, backfilled via
+  // app/api/jobber/backfill-quote-prices/route.ts) is a permanent copy
+  // of Jobber's amounts.total for every quote -- this attaches it onto
+  // each Jobber-sourced quote object here so the price keeps showing on
+  // the pill even if Jobber access is ever lost later. Native quotes
+  // already carry their own real price_total and never need this.
+  const jobberSourcedQuotes = client.quotes?.nodes ?? [];
+  const archivedQuotePricesById = await getArchivedJobberQuotePrices(
+    jobberSourcedQuotes.map((quote) => quote.id)
+  );
+  const jobberQuotesWithArchivedPrice = jobberSourcedQuotes.map((quote) => ({
+    ...quote,
+    priceTotal: archivedQuotePricesById.get(quote.id) ?? quote.priceTotal ?? null,
+  }));
+  const quotes = [...jobberQuotesWithArchivedPrice, ...nativeQuotesForCustomer].sort(
     (a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "")
   );
   const invoices = client.invoices?.nodes ?? [];
