@@ -12,16 +12,21 @@
 // Read-only, admin-gated, manual-trigger only. Not meant to stay in
 // the app long-term -- delete once the backfill's query is confirmed
 // working against the real field name this turns up.
-import { NextResponse } from "next/server";
+//
+// 2026-10-08 follow-up: Quote.amounts turned out to be a non-null
+// QuoteAmounts object, not a scalar -- ?type=QuoteAmounts (or any other
+// type name) introspects that nested type instead, so the one deployed
+// route covers both lookups rather than needing a second deploy.
+import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/currentUser";
 import { jobberGraphQL } from "@/lib/jobber";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
-const INTROSPECT_QUOTE_TYPE = `
-  query IntrospectQuoteType {
-    __type(name: "Quote") {
+const INTROSPECT_TYPE = `
+  query IntrospectType($typeName: String!) {
+    __type(name: $typeName) {
       name
       fields {
         name
@@ -38,12 +43,14 @@ const INTROSPECT_QUOTE_TYPE = `
   }
 `;
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     await requireAdmin();
   } catch {
     return NextResponse.json({ error: "Admin access required." }, { status: 403 });
   }
+
+  const typeName = request.nextUrl.searchParams.get("type") || "Quote";
 
   const response = await jobberGraphQL<{
     __type: {
@@ -57,7 +64,7 @@ export async function GET() {
         };
       }>;
     } | null;
-  }>(INTROSPECT_QUOTE_TYPE);
+  }>(INTROSPECT_TYPE, { typeName });
 
   if (response.errors?.length) {
     return NextResponse.json(
@@ -73,7 +80,7 @@ export async function GET() {
     return NextResponse.json(
       {
         success: false,
-        error: "Jobber returned no 'Quote' type -- introspection may be disabled, or the type is named something else.",
+        error: `Jobber returned no '${typeName}' type -- introspection may be disabled, or the type is named something else.`,
       },
       { status: 404 }
     );
@@ -81,6 +88,7 @@ export async function GET() {
 
   return NextResponse.json({
     success: true,
-    quoteTypeFields: response.data.__type.fields,
+    typeName,
+    fields: response.data.__type.fields,
   });
 }
