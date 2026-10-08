@@ -1189,25 +1189,54 @@ export async function checkOneOffJobCloseEligibility(
     return { eligible: false, reason: "Already archived." };
   }
 
-  // A one-off native job only ever has exactly one visit (see
-  // createNativeJob above: `dates = isRecurring ? [...] : [startDate]`,
-  // one date in, one visit out, and nothing in this app currently lets
-  // you add a second visit to an already-created job) -- but this still
-  // checks for any other still-incomplete visit rather than assuming
-  // that invariant holds forever, since getting this wrong would
-  // silently archive a job with real work still outstanding.
-  const { count, error: countError } = await supabaseServer
+  // A one-off native job only ever has exactly one visit at creation
+  // time (see createNativeJob above: `dates = isRecurring ? [...] :
+  // [startDate]`, one date in, one visit out) -- but two real cases
+  // this session surfaced mean that invariant can't just be assumed:
+  //
+  // 1. Gavin Anderson's job (#1293) was created with no startDate, so
+  //    it got ZERO visits ever -- "zero incomplete visits" was
+  //    trivially true for it despite no work ever having happened.
+  //    Fixed by requiring at least one visit to exist at all, not just
+  //    zero incomplete ones.
+  //
+  // 2. Alexis Lytle's job (#1295) has a real future visit that this
+  //    check was missing entirely, because the old query filtered the
+  //    visit on `source = 'native'`. `jobber_visits.source` defaults to
+  //    'jobber' (migration 054) and syncSingleVisit's webhook upsert
+  //    (lib/jobberWebhookProcessor.ts) never sets `source` on an
+  //    INSERT -- so a brand-new visit synced in from Jobber for an
+  //    already-cutover (source='native') job lands with
+  //    source='jobber' by default, even though its parent job is
+  //    native. That silently excluded a real, still-incomplete visit
+  //    from the count below. Fixed by dropping the source filter on
+  //    this query entirely -- the job's own native-ness is already
+  //    established by the lookup above, and any visit under it, from
+  //    either source, represents real outstanding work.
+  const { count: totalVisitCount, error: totalCountError } = await supabaseServer
+    .from("jobber_visits")
+    .select("jobber_visit_id", { count: "exact", head: true })
+    .eq("jobber_job_id", jobId);
+
+  if (totalCountError) {
+    return { eligible: false, reason: `Visit check failed: ${totalCountError.message}` };
+  }
+
+  if ((totalVisitCount ?? 0) === 0) {
+    return { eligible: false, reason: "No visit has ever been scheduled for this job." };
+  }
+
+  const { count: incompleteCount, error: incompleteCountError } = await supabaseServer
     .from("jobber_visits")
     .select("jobber_visit_id", { count: "exact", head: true })
     .eq("jobber_job_id", jobId)
-    .eq("source", "native")
     .is("completed_at", null);
 
-  if (countError) {
-    return { eligible: false, reason: `Visit check failed: ${countError.message}` };
+  if (incompleteCountError) {
+    return { eligible: false, reason: `Visit check failed: ${incompleteCountError.message}` };
   }
 
-  if ((count ?? 0) > 0) {
+  if ((incompleteCount ?? 0) > 0) {
     return { eligible: false, reason: "Still has an incomplete visit." };
   }
 
