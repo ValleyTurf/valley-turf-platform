@@ -28,6 +28,7 @@ import {
   type MarkInvoicePaidManuallyResult,
 } from "../../invoices/actions";
 import { isReferralSource } from "@/lib/referralSource";
+import { isChurnReason } from "@/lib/deactivation";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
@@ -514,6 +515,86 @@ export async function toggleAutopay(
   });
 
   revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+}
+
+// Ryan (2026-10-11): "I want to find a way to mark as permanently
+// canceled so they don't show on customer map, or any list of
+// customers I pull." (Courtney Holzberger moved to Washington.)
+//
+// Deliberately a flag on `customers` itself (migration 092) rather than
+// another customer_intelligence_exclusions row -- that table is about
+// where someone sits in the Reactivation/Deactivation outreach
+// workflows, not whether they're a real customer any more. This is the
+// one place every "all customers" list (app/(platform)/customers,
+// app/(platform)/map) filters on, with no join needed.
+export async function setCustomerPermanentlyCanceled(
+  jobberClientId: string,
+  reason: string
+): Promise<void> {
+  if (!isChurnReason(reason)) {
+    throw new Error(`"${reason}" isn't a recognized cancellation reason.`);
+  }
+
+  const actor = await requireAdmin();
+  const nowIso = new Date().toISOString();
+
+  const { error } = await supabaseServer
+    .from("customers")
+    .update({
+      permanently_canceled_at: nowIso,
+      permanently_canceled_reason: reason,
+    })
+    .eq("jobber_client_id", jobberClientId);
+
+  if (error) {
+    throw new Error(`Failed to mark customer permanently canceled: ${error.message}`);
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "customer_permanently_canceled",
+    entityId: jobberClientId,
+    entityLabel: jobberClientId,
+    after: { permanently_canceled_at: nowIso, permanently_canceled_reason: reason },
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+  revalidatePath("/customers");
+  revalidatePath("/map");
+}
+
+// Undo -- for a mis-click, or a customer who comes back (moved away
+// and then moved back, decided not to cancel after all, etc.). Clears
+// both columns so the customer reappears on every list that filters on
+// permanently_canceled_at immediately.
+export async function restoreCustomer(jobberClientId: string): Promise<void> {
+  const actor = await requireAdmin();
+
+  const { error } = await supabaseServer
+    .from("customers")
+    .update({
+      permanently_canceled_at: null,
+      permanently_canceled_reason: null,
+    })
+    .eq("jobber_client_id", jobberClientId);
+
+  if (error) {
+    throw new Error(`Failed to restore customer: ${error.message}`);
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "customer_permanently_canceled",
+    entityId: jobberClientId,
+    entityLabel: jobberClientId,
+    after: { permanently_canceled_at: null, permanently_canceled_reason: null },
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+  revalidatePath("/customers");
+  revalidatePath("/map");
 }
 
 // Additional contacts (migration 060_add_customer_contacts.sql) --

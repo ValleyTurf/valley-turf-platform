@@ -29,6 +29,8 @@ type Customer = {
   state: string | null;
   postal_code: string | null;
   last_synced_at: string | null;
+  permanently_canceled_at: string | null;
+  permanently_canceled_reason: string | null;
 };
 
 type RecurringCustomer = {
@@ -86,9 +88,17 @@ const CATEGORY_FILTER_OPTIONS: {
   },
 ];
 
+// "canceled" isn't a peer of BASE_FILTER_OPTIONS/CATEGORY_FILTER_OPTIONS
+// (Ryan, 2026-10-11: permanently canceled customers shouldn't show on
+// "any list of customers I pull") -- it's a deliberately separate,
+// rarely-used view for finding someone to restore, kept out of the
+// main filter pill rows and reached only via the small link rendered
+// near them. Still needs to be in VALID_FILTER_KEYS so ?filter=canceled
+// isn't silently reset back to "all".
 const VALID_FILTER_KEYS = [
   ...BASE_FILTER_OPTIONS.map((option) => option.key),
   ...CATEGORY_FILTER_OPTIONS.map((option) => option.key),
+  "canceled",
 ];
 
 const PAGE_SIZE = 30;
@@ -261,7 +271,9 @@ export default async function CustomersPage({
         city,
         state,
         postal_code,
-        last_synced_at
+        last_synced_at,
+        permanently_canceled_at,
+        permanently_canceled_reason
       `,
       {
         count: "exact",
@@ -287,6 +299,15 @@ export default async function CustomersPage({
         `state.ilike.%${safeSearch}%`,
       ].join(",")
     );
+  }
+
+  // Permanently canceled customers (migration 092) are hidden from
+  // every ordinary view by default -- "canceled" is the one filter
+  // value that flips this around, for finding someone to restore.
+  if (filter === "canceled") {
+    query = query.not("permanently_canceled_at", "is", null);
+  } else {
+    query = query.is("permanently_canceled_at", null);
   }
 
   let noResultsForFilter = false;
@@ -483,6 +504,19 @@ export default async function CustomersPage({
               {option.label}
             </Link>
           ))}
+        </section>
+
+        <section className="mt-3">
+          <Link
+            href={buildCustomersUrl(1, search, "canceled")}
+            className={`text-xs font-semibold underline ${
+              filter === "canceled" ? "text-red-700" : "text-[#9c9684] hover:text-[#6b705c]"
+            }`}
+          >
+            {filter === "canceled"
+              ? "Viewing permanently canceled customers"
+              : "View permanently canceled customers"}
+          </Link>
         </section>
 
         <section className="mt-6">

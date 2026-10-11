@@ -60,7 +60,10 @@ export default async function CustomerMapPage() {
           "jobber_client_id, full_name, latitude, longitude, last_job_at, total_completed_jobs"
         )
         .not("latitude", "is", null)
-        .not("longitude", "is", null),
+        .not("longitude", "is", null)
+        // Ryan (2026-10-11): permanently canceled customers (migration
+        // 092) shouldn't show on the customer map.
+        .is("permanently_canceled_at", null),
       supabaseServer.from("recurring_customers").select("jobber_client_id"),
       supabaseServer.from("door_hanger_drops").select("*"),
     ]);

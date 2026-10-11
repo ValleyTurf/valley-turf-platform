@@ -18,6 +18,8 @@ import {
   deleteVisitNoteAction,
 } from "./actions";
 import { getPaymentMethodByClientId } from "@/lib/autopay";
+import { CHURN_REASONS } from "@/lib/deactivation";
+import { PermanentlyCanceledForm } from "./PermanentlyCanceledForm";
 import { saveVisitCosts } from "../../materials/actions";
 import { getVisitNotesForClient, type VisitNoteGroup } from "@/lib/visitNotes";
 import { getJobberJobNotesForClient, type JobberJobNote } from "@/lib/jobberJobNotes";
@@ -1077,6 +1079,29 @@ async function getLocalClientView(id: string): Promise<{
   return { client, error: null };
 }
 
+// Permanently-canceled status (migration 092) lives on `customers`
+// regardless of whether this customer is otherwise Jobber-sourced or
+// native -- fetched here as its own small query rather than threaded
+// through getJobberClient/getLocalClientView above, since those two
+// already branch on source and this flag doesn't need to.
+type CancellationStatus = {
+  permanentlyCanceledAt: string | null;
+  permanentlyCanceledReason: string | null;
+};
+
+async function getCancellationStatus(id: string): Promise<CancellationStatus> {
+  const { data } = await supabaseServer
+    .from("customers")
+    .select("permanently_canceled_at, permanently_canceled_reason")
+    .eq("jobber_client_id", id)
+    .maybeSingle();
+
+  return {
+    permanentlyCanceledAt: data?.permanently_canceled_at ?? null,
+    permanentlyCanceledReason: data?.permanently_canceled_reason ?? null,
+  };
+}
+
 type LocalNativeJobRow = {
   jobber_job_id: string;
   job_number: string | null;
@@ -1961,6 +1986,7 @@ export default async function CustomerDetailPage({
     referralPickerData,
     nativeJobsForCustomer,
     nativeQuotesForCustomer,
+    cancellationStatus,
   ] = await Promise.all([
     isNativeId(decodedId) ? getLocalClientView(decodedId) : getJobberClient(decodedId),
     getCustomerFinancials(decodedId),
@@ -1984,6 +2010,7 @@ export default async function CustomerDetailPage({
     getReferralPickerData(decodedId),
     getNativeJobsForCustomer(decodedId),
     getNativeQuotesForCustomer(decodedId),
+    getCancellationStatus(decodedId),
   ]);
 
   const referredByCustomer = profile?.referred_by_customer_id
@@ -2235,6 +2262,16 @@ export default async function CustomerDetailPage({
             <p className="mt-2 text-sm text-[#6b705c]">
               Customer Since {formatDate(client.createdAt)}
             </p>
+
+            <div className="mt-3">
+              <PermanentlyCanceledForm
+                jobberClientId={decodedId}
+                isCanceled={cancellationStatus.permanentlyCanceledAt !== null}
+                canceledAt={cancellationStatus.permanentlyCanceledAt}
+                canceledReason={cancellationStatus.permanentlyCanceledReason}
+                reasons={CHURN_REASONS}
+              />
+            </div>
           </div>
 
           <div className="w-full rounded-2xl bg-white p-4 shadow sm:p-5 lg:flex-1">
