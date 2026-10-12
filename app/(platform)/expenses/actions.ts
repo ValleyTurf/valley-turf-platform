@@ -8,6 +8,26 @@ import { EXPENSE_CATEGORIES, type ExpenseCategory } from "./constants";
 
 const VALID_CATEGORIES = new Set(EXPENSE_CATEGORIES.map((c) => c.value));
 
+// Ryan (2026-10-12): the job-costing toggle (migration 093) isn't offered
+// for these two categories -- cost_of_service is meant to tie to a
+// specific job directly once that linking UI exists, and payroll is
+// already reflected per-visit via Materials & Costs labor, so folding it
+// into Job Costing's overhead pool again here would double-count it.
+// Enforced here (not just hidden in the form) so a stale/tampered form
+// submission can't sneak a value through for either category.
+const JOB_COSTING_EXCLUDED_CATEGORIES = new Set<ExpenseCategory>([
+  "cost_of_service",
+  "payroll",
+]);
+
+type JobCostingTreatment = "one_time" | "amortized";
+
+function cleanJobCostingTreatment(
+  value: FormDataEntryValue | null
+): JobCostingTreatment | null {
+  return value === "one_time" || value === "amortized" ? value : null;
+}
+
 function cleanText(value: FormDataEntryValue | null): string | null {
   if (typeof value !== "string") {
     return null;
@@ -58,18 +78,48 @@ function cleanDayOfMonth(value: FormDataEntryValue | null): number | null {
   return parsed;
 }
 
+// Shared by addExpense and updateExpense so the cost_of_service/payroll
+// restriction and the amortized-requires-an-end-date rule can't drift
+// between the two entry points.
+function resolveJobCostingFields(
+  formData: FormData,
+  category: ExpenseCategory
+): { job_costing_treatment: JobCostingTreatment | null; amortization_end_date: string | null } {
+  if (JOB_COSTING_EXCLUDED_CATEGORIES.has(category)) {
+    return { job_costing_treatment: null, amortization_end_date: null };
+  }
+
+  const treatment = cleanJobCostingTreatment(formData.get("job_costing_treatment"));
+
+  if (treatment !== "amortized") {
+    return { job_costing_treatment: treatment, amortization_end_date: null };
+  }
+
+  const endDate = cleanText(formData.get("amortization_end_date"));
+
+  if (!endDate) {
+    throw new Error(
+      "Amortized job costs need an end date to spread the cost across."
+    );
+  }
+
+  return { job_costing_treatment: "amortized", amortization_end_date: endDate };
+}
+
 export async function addExpense(formData: FormData): Promise<void> {
   const actor = await getCurrentUser();
+  const category = cleanCategory(formData.get("category"));
 
   const row = {
     vendor: cleanText(formData.get("vendor")),
     description: cleanText(formData.get("description")),
-    category: cleanCategory(formData.get("category")),
+    category,
     amount: cleanAmount(formData.get("amount")),
     expense_date: cleanDate(formData.get("expense_date")),
     notes: cleanText(formData.get("notes")),
     created_by_user_id: actor?.id ?? null,
     created_by_name: actor?.name ?? null,
+    ...resolveJobCostingFields(formData, category),
   };
 
   const { data, error } = await supabaseServer
@@ -102,17 +152,22 @@ export async function updateExpense(
 
   const { data: before } = await supabaseServer
     .from("expenses")
-    .select("vendor, description, category, amount, expense_date, notes")
+    .select(
+      "vendor, description, category, amount, expense_date, notes, job_costing_treatment, amortization_end_date"
+    )
     .eq("id", id)
     .maybeSingle();
+
+  const category = cleanCategory(formData.get("category"));
 
   const row = {
     vendor: cleanText(formData.get("vendor")),
     description: cleanText(formData.get("description")),
-    category: cleanCategory(formData.get("category")),
+    category,
     amount: cleanAmount(formData.get("amount")),
     expense_date: cleanDate(formData.get("expense_date")),
     notes: cleanText(formData.get("notes")),
+    ...resolveJobCostingFields(formData, category),
   };
 
   // Saving this form is Ryan looking at the row and confirming/fixing its

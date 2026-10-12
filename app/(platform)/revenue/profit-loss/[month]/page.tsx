@@ -105,7 +105,7 @@ export default async function ProfitAndLossMonthPage({ params }: PageProps) {
     supabaseServer
       .from("expenses")
       .select(
-        "id, vendor, description, category, amount, expense_date, notes, created_by_name, status"
+        "id, vendor, description, category, amount, expense_date, notes, created_by_name, status, job_costing_treatment, amortization_end_date"
       )
       .gte("expense_date", start)
       .lte("expense_date", end)

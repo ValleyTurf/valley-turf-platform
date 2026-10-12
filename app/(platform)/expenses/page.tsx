@@ -45,7 +45,7 @@ export default async function ExpensesPage({ searchParams }: ExpensesPageProps) 
   const baseQuery = supabaseServer
     .from("expenses")
     .select(
-      "id, vendor, description, category, amount, expense_date, notes, created_by_name, status"
+      "id, vendor, description, category, amount, expense_date, notes, created_by_name, status, job_costing_treatment, amortization_end_date"
     );
 
   const { data, error } = showingNeedsReview

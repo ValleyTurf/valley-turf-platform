@@ -1,7 +1,7 @@
 "use client";
 
 import { addExpense } from "./actions";
-import { EXPENSE_CATEGORIES } from "./constants";
+import CategoryAndJobCostingFields from "./CategoryAndJobCostingFields";
 
 const inputClasses =
   "mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20";
@@ -30,23 +30,7 @@ export default function AddExpenseForm() {
         />
       </div>
 
-      <div>
-        <label htmlFor="category" className={labelClasses}>
-          Category
-        </label>
-        <select
-          id="category"
-          name="category"
-          defaultValue="other"
-          className={`${inputClasses} bg-white`}
-        >
-          {EXPENSE_CATEGORIES.map((c) => (
-            <option key={c.value} value={c.value}>
-              {c.label}
-            </option>
-          ))}
-        </select>
-      </div>
+      <CategoryAndJobCostingFields defaultCategory="other" />
 
       <div>
         <label htmlFor="amount" className={labelClasses}>

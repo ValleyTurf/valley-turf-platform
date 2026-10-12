@@ -8,7 +8,8 @@
 // (a category added to one list but not the other, a field one page
 // lets you edit and the other doesn't).
 import { updateExpense, deleteExpense } from "./actions";
-import { EXPENSE_CATEGORIES, expenseCategoryLabel } from "./constants";
+import { expenseCategoryLabel, type ExpenseCategory } from "./constants";
+import CategoryAndJobCostingFields from "./CategoryAndJobCostingFields";
 import ConfirmSubmitButton from "@/app/components/ConfirmSubmitButton";
 import {
   toNumber,
@@ -26,6 +27,8 @@ export type ExpenseRow = {
   notes: string | null;
   created_by_name: string | null;
   status: string;
+  job_costing_treatment: "one_time" | "amortized" | null;
+  amortization_end_date: string | null;
 };
 
 export const inputClasses =
@@ -74,22 +77,11 @@ export default function ExpenseRowItem({ expense }: { expense: ExpenseRow }) {
               />
             </div>
 
-            <div>
-              <label className="text-xs font-bold text-[#9c7a20]">
-                Category
-              </label>
-              <select
-                name="category"
-                defaultValue={expense.category}
-                className={`${inputClasses} bg-white`}
-              >
-                {EXPENSE_CATEGORIES.map((c) => (
-                  <option key={c.value} value={c.value}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <CategoryAndJobCostingFields
+              defaultCategory={expense.category as ExpenseCategory}
+              defaultTreatment={expense.job_costing_treatment}
+              defaultAmortizationEndDate={expense.amortization_end_date}
+            />
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
