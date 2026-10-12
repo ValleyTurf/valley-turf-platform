@@ -122,6 +122,12 @@ export default async function ExpensesPage({ searchParams }: ExpensesPageProps) 
               </Link>
             )}
             <Link
+              href="/expenses/totals"
+              className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#174734]/5"
+            >
+              Totals by Vendor/Category
+            </Link>
+            <Link
               href="/expenses/import"
               className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#174734]/5"
             >
