@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/currentUser";
 import { supabaseServer } from "@/lib/supabase-server";
 import { recordAuditLog } from "@/lib/auditLog";
+import { describePlaidError } from "@/lib/plaid";
 import { syncTransactions } from "@/lib/plaidTransactions";
 import { mapPlaidCategory } from "@/lib/plaidCategoryMap";
 import { expenseCategoryLabel } from "@/app/(platform)/expenses/constants";
@@ -145,8 +146,7 @@ export async function POST(request: NextRequest) {
         connection.cursor
       );
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Plaid sync request failed.";
+      const message = describePlaidError(error);
 
       if (apply) {
         await supabaseServer

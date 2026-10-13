@@ -5,7 +5,7 @@
 // account. Admin-gated.
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/currentUser";
-import { getPlaidClient } from "@/lib/plaid";
+import { getPlaidClient, describePlaidError } from "@/lib/plaid";
 import { supabaseServer } from "@/lib/supabase-server";
 import { recordAuditLog } from "@/lib/auditLog";
 
@@ -109,12 +109,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to connect the bank account.",
-      },
+      { error: describePlaidError(error) },
       { status: 500 }
     );
   }

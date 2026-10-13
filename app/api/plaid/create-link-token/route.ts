@@ -5,7 +5,7 @@
 // this app.
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/currentUser";
-import { getPlaidClient } from "@/lib/plaid";
+import { getPlaidClient, describePlaidError } from "@/lib/plaid";
 import { CountryCode, Products } from "plaid";
 
 export const dynamic = "force-dynamic";
@@ -33,12 +33,7 @@ export async function POST() {
     return NextResponse.json({ linkToken: response.data.link_token });
   } catch (error) {
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to create a Plaid Link token.",
-      },
+      { error: describePlaidError(error) },
       { status: 500 }
     );
   }

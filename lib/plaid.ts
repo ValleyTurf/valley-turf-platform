@@ -55,3 +55,37 @@ export function getPlaidClient(): PlaidApi {
 export function getPlaidEnv(): string {
   return process.env.PLAID_ENV ?? "sandbox";
 }
+
+// Plaid's Node client throws a plain Axios error on a non-2xx response,
+// and Axios's own Error#message is just "Request failed with status
+// code 400" -- it says nothing about *why*. Plaid's actual reason lives
+// in error.response.data (error_code/error_message/display_message --
+// https://plaid.com/docs/errors/). Shared by every route that calls the
+// Plaid client (create-link-token, exchange-token, sync) so the CRM and
+// bank_connections.last_error both show that real reason instead of
+// Axios's generic one.
+export function describePlaidError(error: unknown): string {
+  const data = (
+    error as {
+      response?: {
+        data?: {
+          error_code?: string;
+          error_message?: string;
+          display_message?: string | null;
+        };
+      };
+    }
+  )?.response?.data;
+
+  if (data?.display_message) {
+    return data.display_message;
+  }
+
+  if (data?.error_message) {
+    return data.error_code
+      ? `${data.error_message} (${data.error_code})`
+      : data.error_message;
+  }
+
+  return error instanceof Error ? error.message : "Plaid request failed.";
+}
