@@ -19,6 +19,7 @@ import {
   findInvoiceIdByCheckoutSessionId,
   findInvoiceIdByPaymentIntentId,
 } from "@/lib/payments";
+import { recordStripeProcessingFeeExpense } from "@/lib/paymentFeeExpenses";
 import { attachPaymentMethodFromSetupIntent } from "@/lib/autopay";
 import { getInvoiceById, getInvoiceLineItems } from "@/lib/invoices";
 import { generateInvoicePdf } from "@/lib/invoicePdf";
@@ -300,6 +301,18 @@ async function handlePaymentIntentSucceeded(
         error
       );
     }
+  }
+
+  // Ryan (2026-10-13): "no stripe processing fees show in here because
+  // they don't hit a bank account." Logs the fee just fetched above as
+  // its own pre-categorized expense row -- see
+  // lib/paymentFeeExpenses.ts for the idempotency/best-effort reasoning.
+  if (feeAmount !== undefined && chargeId) {
+    await recordStripeProcessingFeeExpense({
+      chargeId,
+      feeAmount,
+      expenseDate: paidAt.slice(0, 10),
+    });
   }
 
   const result = await upsertPaymentByIntentId({

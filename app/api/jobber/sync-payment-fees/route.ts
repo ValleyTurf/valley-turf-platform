@@ -19,6 +19,7 @@ import {
   fetchPageWithThrottleRetry,
   startSyncRun,
 } from "@/lib/jobberSyncTracking";
+import { recordJobberProcessingFeeExpense } from "@/lib/paymentFeeExpenses";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -209,6 +210,24 @@ async function syncPaymentFees() {
       }
 
       recordsSaved += rows.length;
+
+      // Ryan (2026-10-13): "Yes, let's do both" -- logs each non-zero
+      // fee from this page as its own pre-categorized expense row
+      // alongside the jobber_payment_fees upsert above. Idempotent on
+      // jobber_payment_record_id (see lib/paymentFeeExpenses.ts), so
+      // re-running this sync (daily, per vercel.json) never duplicates
+      // a row -- it just refreshes one if Jobber's fee figure changed.
+      for (const row of rows) {
+        const totalFee = row.fee_amount + row.surcharge_amount;
+        if (totalFee > 0) {
+          await recordJobberProcessingFeeExpense({
+            jobberPaymentRecordId: row.jobber_payment_record_id,
+            feeAmount: row.fee_amount,
+            surchargeAmount: row.surcharge_amount,
+            expenseDate: row.entry_date,
+          });
+        }
+      }
     }
 
     hasNextPage = pageInfo?.hasNextPage ?? false;
