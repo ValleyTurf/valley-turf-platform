@@ -5,7 +5,12 @@
 // form and the row editor -- same reasoning as constants.ts being the
 // one place the category list itself lives.
 import { useState } from "react";
-import { EXPENSE_CATEGORIES, type ExpenseCategory } from "./constants";
+import {
+  EXPENSE_CATEGORIES,
+  LEDGER_TYPES,
+  type ExpenseCategory,
+  type LedgerType,
+} from "./constants";
 
 // Job Costing isn't offered for these two categories -- cost_of_service
 // is meant to tie to a specific job directly once that linking UI
@@ -24,24 +29,58 @@ const inputClasses =
 const labelClasses = "text-xs font-bold text-[#9c7a20]";
 
 type Treatment = "" | "one_time" | "amortized";
+type LedgerSelect = "" | LedgerType;
 
 type Props = {
   defaultCategory: ExpenseCategory;
   defaultTreatment?: "one_time" | "amortized" | null;
   defaultAmortizationEndDate?: string | null;
+  defaultLedgerType?: LedgerType | null;
 };
 
 export default function CategoryAndJobCostingFields({
   defaultCategory,
   defaultTreatment = null,
   defaultAmortizationEndDate = null,
+  defaultLedgerType = null,
 }: Props) {
   const [category, setCategory] = useState<ExpenseCategory>(defaultCategory);
   const [treatment, setTreatment] = useState<Treatment>(defaultTreatment ?? "");
-  const jobCostingAllowed = !JOB_COSTING_EXCLUDED_CATEGORIES.has(category);
+  const [ledgerType, setLedgerType] = useState<LedgerSelect>(defaultLedgerType ?? "");
+  const jobCostingAllowed = !JOB_COSTING_EXCLUDED_CATEGORIES.has(category) && !ledgerType;
 
   return (
     <>
+      <div>
+        <label htmlFor="ledger_type" className={labelClasses}>
+          Entry Type
+        </label>
+        <select
+          id="ledger_type"
+          name="ledger_type"
+          value={ledgerType}
+          onChange={(e) => setLedgerType(e.target.value as LedgerSelect)}
+          className={`${inputClasses} bg-white`}
+        >
+          <option value="">Expense (counts toward P&amp;L)</option>
+          {LEDGER_TYPES.map((t) => (
+            <option key={t.value} value={t.value}>
+              {t.label} (money movement, not an expense)
+            </option>
+          ))}
+        </select>
+        {ledgerType && (
+          <p className="mt-1 text-[11px] text-[#9c9684]">
+            Kept as a record for tax purposes -- excluded from P&amp;L,
+            job costing, and vendor/category totals. See the{" "}
+            <a href="/expenses/journal" className="underline">
+              Journal
+            </a>{" "}
+            page.
+          </p>
+        )}
+      </div>
+
       <div>
         <label htmlFor="category" className={labelClasses}>
           Category

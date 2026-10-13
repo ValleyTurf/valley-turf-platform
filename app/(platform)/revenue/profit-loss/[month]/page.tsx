@@ -102,13 +102,16 @@ export default async function ProfitAndLossMonthPage({ params }: PageProps) {
   const [overheadCosts, invoices, expensesResult] = await Promise.all([
     fetchOverheadCosts(),
     fetchInvoicesForRange(start, end),
+    // .is("ledger_type", null) excludes journal entries (migration 096)
+    // from this statement -- same reasoning as the main P&L page.
     supabaseServer
       .from("expenses")
       .select(
-        "id, vendor, description, category, amount, expense_date, notes, created_by_name, status, job_costing_treatment, amortization_end_date"
+        "id, vendor, description, category, ledger_type, amount, expense_date, notes, created_by_name, status, job_costing_treatment, amortization_end_date"
       )
       .gte("expense_date", start)
       .lte("expense_date", end)
+      .is("ledger_type", null)
       .order("expense_date", { ascending: false }),
   ]);
 

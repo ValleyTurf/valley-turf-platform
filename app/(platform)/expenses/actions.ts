@@ -4,9 +4,15 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
-import { EXPENSE_CATEGORIES, type ExpenseCategory } from "./constants";
+import {
+  EXPENSE_CATEGORIES,
+  LEDGER_TYPES,
+  type ExpenseCategory,
+  type LedgerType,
+} from "./constants";
 
 const VALID_CATEGORIES = new Set(EXPENSE_CATEGORIES.map((c) => c.value));
+const VALID_LEDGER_TYPES = new Set(LEDGER_TYPES.map((t) => t.value));
 
 // Ryan (2026-10-12): the job-costing toggle (migration 093) isn't offered
 // for these two categories -- cost_of_service is meant to tie to a
@@ -56,6 +62,14 @@ function cleanCategory(value: FormDataEntryValue | null): ExpenseCategory {
   return "other";
 }
 
+// Journal entries (migration 096) -- an empty selection means "a real
+// expense," same null-means-default convention as job_costing_treatment.
+function cleanLedgerType(value: FormDataEntryValue | null): LedgerType | null {
+  return typeof value === "string" && VALID_LEDGER_TYPES.has(value as LedgerType)
+    ? (value as LedgerType)
+    : null;
+}
+
 function cleanDate(value: FormDataEntryValue | null): string {
   if (typeof value !== "string" || value.trim() === "") {
     return new Date().toISOString().slice(0, 10);
@@ -80,12 +94,16 @@ function cleanDayOfMonth(value: FormDataEntryValue | null): number | null {
 
 // Shared by addExpense and updateExpense so the cost_of_service/payroll
 // restriction and the amortized-requires-an-end-date rule can't drift
-// between the two entry points.
+// between the two entry points. A journal entry (ledger_type set) is
+// excluded the same way cost_of_service/payroll are -- it isn't a real
+// job cost, and migration 096's check constraint enforces this at the
+// DB level too.
 function resolveJobCostingFields(
   formData: FormData,
-  category: ExpenseCategory
+  category: ExpenseCategory,
+  ledgerType: LedgerType | null
 ): { job_costing_treatment: JobCostingTreatment | null; amortization_end_date: string | null } {
-  if (JOB_COSTING_EXCLUDED_CATEGORIES.has(category)) {
+  if (ledgerType || JOB_COSTING_EXCLUDED_CATEGORIES.has(category)) {
     return { job_costing_treatment: null, amortization_end_date: null };
   }
 
@@ -109,17 +127,19 @@ function resolveJobCostingFields(
 export async function addExpense(formData: FormData): Promise<void> {
   const actor = await getCurrentUser();
   const category = cleanCategory(formData.get("category"));
+  const ledgerType = cleanLedgerType(formData.get("ledger_type"));
 
   const row = {
     vendor: cleanText(formData.get("vendor")),
     description: cleanText(formData.get("description")),
     category,
+    ledger_type: ledgerType,
     amount: cleanAmount(formData.get("amount")),
     expense_date: cleanDate(formData.get("expense_date")),
     notes: cleanText(formData.get("notes")),
     created_by_user_id: actor?.id ?? null,
     created_by_name: actor?.name ?? null,
-    ...resolveJobCostingFields(formData, category),
+    ...resolveJobCostingFields(formData, category, ledgerType),
   };
 
   const { data, error } = await supabaseServer
@@ -153,21 +173,23 @@ export async function updateExpense(
   const { data: before } = await supabaseServer
     .from("expenses")
     .select(
-      "vendor, description, category, amount, expense_date, notes, job_costing_treatment, amortization_end_date"
+      "vendor, description, category, ledger_type, amount, expense_date, notes, job_costing_treatment, amortization_end_date"
     )
     .eq("id", id)
     .maybeSingle();
 
   const category = cleanCategory(formData.get("category"));
+  const ledgerType = cleanLedgerType(formData.get("ledger_type"));
 
   const row = {
     vendor: cleanText(formData.get("vendor")),
     description: cleanText(formData.get("description")),
     category,
+    ledger_type: ledgerType,
     amount: cleanAmount(formData.get("amount")),
     expense_date: cleanDate(formData.get("expense_date")),
     notes: cleanText(formData.get("notes")),
-    ...resolveJobCostingFields(formData, category),
+    ...resolveJobCostingFields(formData, category, ledgerType),
   };
 
   // Saving this form is Ryan looking at the row and confirming/fixing its

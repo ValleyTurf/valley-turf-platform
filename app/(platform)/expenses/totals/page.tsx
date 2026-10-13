@@ -78,13 +78,18 @@ export default async function ExpenseTotalsPage({
   const end = params.end || todayLocal();
   const groupBy: GroupKey = params.group === "category" ? "category" : "vendor";
 
+  // .is("ledger_type", null) excludes journal entries (migration 096) --
+  // a loan payment or owner draw isn't "paid to a vendor" in the sense
+  // this page means, and letting one in would also inflate a category's
+  // total with a row that was deliberately kept out of the P&L.
   const { data, error } = await supabaseServer
     .from("expenses")
     .select(
-      "id, vendor, description, category, amount, expense_date, notes, created_by_name, status, job_costing_treatment, amortization_end_date"
+      "id, vendor, description, category, ledger_type, amount, expense_date, notes, created_by_name, status, job_costing_treatment, amortization_end_date"
     )
     .gte("expense_date", start)
     .lte("expense_date", end)
+    .is("ledger_type", null)
     .order("expense_date", { ascending: false });
 
   const expenses = (data ?? []) as ExpenseRow[];
@@ -110,12 +115,20 @@ export default async function ExpenseTotalsPage({
               range you pick.
             </p>
           </div>
-          <Link
-            href="/expenses"
-            className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#174734]/5"
-          >
-            ← Back to Expenses
-          </Link>
+          <div className="flex flex-wrap gap-3">
+            <Link
+              href="/expenses/journal"
+              className="rounded-xl border border-[#1d4ed8] px-5 py-3 text-center text-sm font-bold text-[#1d4ed8] transition hover:bg-[#1d4ed8]/5"
+            >
+              Journal
+            </Link>
+            <Link
+              href="/expenses"
+              className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#174734]/5"
+            >
+              ← Back to Expenses
+            </Link>
+          </div>
         </header>
 
         <section className="mt-6 rounded-2xl bg-white p-5 shadow">

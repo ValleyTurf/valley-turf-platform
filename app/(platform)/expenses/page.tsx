@@ -42,11 +42,16 @@ export default async function ExpensesPage({ searchParams }: ExpensesPageProps) 
   // rather than making him click through nine months one at a time.
   const showingNeedsReview = params.status === "needs_review";
 
+  // .is("ledger_type", null) excludes journal entries (migration 096,
+  // owner draws/loan payments/transfers/contributions) -- those live on
+  // /expenses/journal instead, same reasoning as the status filter
+  // above but for a different kind of "not a real expense" row.
   const baseQuery = supabaseServer
     .from("expenses")
     .select(
-      "id, vendor, description, category, amount, expense_date, notes, created_by_name, status, job_costing_treatment, amortization_end_date"
-    );
+      "id, vendor, description, category, ledger_type, amount, expense_date, notes, created_by_name, status, job_costing_treatment, amortization_end_date"
+    )
+    .is("ledger_type", null);
 
   const { data, error } = showingNeedsReview
     ? await baseQuery
@@ -62,7 +67,8 @@ export default async function ExpensesPage({ searchParams }: ExpensesPageProps) 
   const { count: needsReviewCount } = await supabaseServer
     .from("expenses")
     .select("id", { count: "exact", head: true })
-    .eq("status", "needs_review");
+    .eq("status", "needs_review")
+    .is("ledger_type", null);
 
   // Recurring Charges Check (migration 089) is always scoped to `month`,
   // regardless of the Needs Review toggle above -- when that toggle is on,
@@ -76,6 +82,7 @@ export default async function ExpensesPage({ searchParams }: ExpensesPageProps) 
           .select("vendor, description, category, amount, expense_date")
           .gte("expense_date", start)
           .lt("expense_date", end)
+          .is("ledger_type", null)
       ).data ?? [])
     : expenses;
   const recurringChargeStatuses = checkRecurringCharges(
@@ -126,6 +133,12 @@ export default async function ExpensesPage({ searchParams }: ExpensesPageProps) 
               className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#174734]/5"
             >
               Totals by Vendor/Category
+            </Link>
+            <Link
+              href="/expenses/journal"
+              className="rounded-xl border border-[#1d4ed8] px-5 py-3 text-center text-sm font-bold text-[#1d4ed8] transition hover:bg-[#1d4ed8]/5"
+            >
+              Journal
             </Link>
             <Link
               href="/expenses/import"

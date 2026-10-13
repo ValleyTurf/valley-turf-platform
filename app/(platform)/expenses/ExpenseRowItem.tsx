@@ -8,7 +8,12 @@
 // (a category added to one list but not the other, a field one page
 // lets you edit and the other doesn't).
 import { updateExpense, deleteExpense } from "./actions";
-import { expenseCategoryLabel, type ExpenseCategory } from "./constants";
+import {
+  expenseCategoryLabel,
+  ledgerTypeLabel,
+  type ExpenseCategory,
+  type LedgerType,
+} from "./constants";
 import CategoryAndJobCostingFields from "./CategoryAndJobCostingFields";
 import ConfirmSubmitButton from "@/app/components/ConfirmSubmitButton";
 import {
@@ -29,6 +34,7 @@ export type ExpenseRow = {
   status: string;
   job_costing_treatment: "one_time" | "amortized" | null;
   amortization_end_date: string | null;
+  ledger_type: LedgerType | null;
 };
 
 export const inputClasses =
@@ -44,6 +50,11 @@ export default function ExpenseRowItem({ expense }: { expense: ExpenseRow }) {
             {expense.status === "needs_review" && (
               <span className="shrink-0 rounded-full bg-[#9c7a20]/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#9c7a20]">
                 Needs Review
+              </span>
+            )}
+            {expense.ledger_type && (
+              <span className="shrink-0 rounded-full bg-[#1d4ed8]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#1d4ed8]">
+                {ledgerTypeLabel(expense.ledger_type)}
               </span>
             )}
           </p>
@@ -81,6 +92,7 @@ export default function ExpenseRowItem({ expense }: { expense: ExpenseRow }) {
               defaultCategory={expense.category as ExpenseCategory}
               defaultTreatment={expense.job_costing_treatment}
               defaultAmortizationEndDate={expense.amortization_end_date}
+              defaultLedgerType={expense.ledger_type}
             />
           </div>
 

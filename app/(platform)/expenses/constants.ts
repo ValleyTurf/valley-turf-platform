@@ -74,3 +74,31 @@ const LABEL_BY_VALUE = new Map(
 export function expenseCategoryLabel(value: string): string {
   return LABEL_BY_VALUE.get(value as ExpenseCategory) ?? value;
 }
+
+// Journal entries (migration 096) -- Ryan, 2026-10-13: "should we keep
+// the money movements and have a pill that says paid to loan and
+// another that says owner draw, or something similar so we can keep
+// those records for tax purposes?" `ledger_type` is a second, optional
+// classification on top of `category` -- null (the default) means "a
+// real expense," any value here means "a money movement, kept for
+// S-corp basis/tax records, not counted anywhere a real expense is."
+export type LedgerType =
+  | "owner_draw"
+  | "loan_payment"
+  | "internal_transfer"
+  | "owner_contribution";
+
+export const LEDGER_TYPES: { value: LedgerType; label: string }[] = [
+  { value: "owner_draw", label: "Owner Draw" },
+  { value: "loan_payment", label: "Paid to Loan" },
+  { value: "internal_transfer", label: "Internal Transfer" },
+  { value: "owner_contribution", label: "Owner Contribution" },
+];
+
+const LEDGER_LABEL_BY_VALUE = new Map(
+  LEDGER_TYPES.map((t) => [t.value, t.label])
+);
+
+export function ledgerTypeLabel(value: string): string {
+  return LEDGER_LABEL_BY_VALUE.get(value as LedgerType) ?? value;
+}

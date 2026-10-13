@@ -132,11 +132,16 @@ async function fetchExpenseRows(
   startDate: string,
   endDate: string
 ): Promise<ExpenseRow[]> {
+  // .is("ledger_type", null) excludes journal entries (migration 096) --
+  // owner draws, loan payments, transfers, and owner contributions
+  // aren't real business expenses, so they can't be allowed to lower
+  // netProfit here just because they share this table.
   const { data, error } = await supabaseServer
     .from("expenses")
     .select("expense_date, amount, category")
     .gte("expense_date", startDate)
-    .lte("expense_date", endDate);
+    .lte("expense_date", endDate)
+    .is("ledger_type", null);
 
   if (error) throw error;
 
