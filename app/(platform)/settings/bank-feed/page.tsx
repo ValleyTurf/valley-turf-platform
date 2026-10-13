@@ -10,6 +10,7 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import ConnectBankButton from "./ConnectBankButton";
 import SyncButton from "./SyncButton";
+import { updateTrackedAccounts } from "./actions";
 
 type BankConnection = {
   id: string;
@@ -27,6 +28,7 @@ type BankAccount = {
   name: string | null;
   mask: string | null;
   subtype: string | null;
+  include_in_expense_sync: boolean;
 };
 
 type AuditLogRow = {
@@ -88,8 +90,9 @@ export default async function BankFeedSettingsPage() {
   const accountsResult = connectionIds.length
     ? await supabaseServer
         .from("bank_accounts")
-        .select("id, bank_connection_id, name, mask, subtype")
+        .select("id, bank_connection_id, name, mask, subtype, include_in_expense_sync")
         .in("bank_connection_id", connectionIds)
+        .order("name", { ascending: true })
     : { data: [] as BankAccount[] };
 
   const accounts = (accountsResult.data as BankAccount[] | null) ?? [];
@@ -248,6 +251,17 @@ export default async function BankFeedSettingsPage() {
                         {account.name ?? "Account"}
                         {account.mask ? ` ···${account.mask}` : ""}
                         {account.subtype ? ` · ${account.subtype}` : ""}
+                        {account.include_in_expense_sync ? (
+                          <span
+                            style={{
+                              marginLeft: "6px",
+                              color: "#166534",
+                              fontWeight: 700,
+                            }}
+                          >
+                            · tracked
+                          </span>
+                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -289,6 +303,79 @@ export default async function BankFeedSettingsPage() {
           </section>
         )}
 
+        {accounts.length > 0 ? (
+          <section
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e2e8f0",
+              borderRadius: "16px",
+              padding: "22px",
+              marginBottom: "32px",
+            }}
+          >
+            <h2 style={{ margin: "0 0 10px", color: "#0f172a", fontSize: "20px" }}>
+              Tracked Accounts
+            </h2>
+
+            <p style={{ margin: "0 0 18px", color: "#64748b", fontSize: "14px" }}>
+              Some institutions grant Plaid access to every account on
+              file with no way to pick just a few -- that doesn&apos;t mean
+              they all belong in the business ledger. Only accounts
+              checked here feed <code>/expenses</code> on the next sync;
+              everything else is ignored even though Plaid can see it.
+            </p>
+
+            <form action={updateTrackedAccounts}>
+              <div style={{ display: "grid", gap: "2px" }}>
+                {accounts.map((account) => (
+                  <label
+                    key={account.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      padding: "10px 8px",
+                      borderBottom: "1px solid #f1f5f9",
+                      fontSize: "14px",
+                      color: "#0f172a",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      name={`include_${account.id}`}
+                      defaultChecked={account.include_in_expense_sync}
+                    />
+                    <span>
+                      {account.name ?? "Account"}
+                      {account.mask ? ` ···${account.mask}` : ""}
+                      {account.subtype ? (
+                        <span style={{ color: "#64748b" }}> · {account.subtype}</span>
+                      ) : null}
+                    </span>
+                  </label>
+                ))}
+              </div>
+
+              <button
+                type="submit"
+                style={{
+                  marginTop: "18px",
+                  border: "1px solid #0f172a",
+                  background: "#0f172a",
+                  color: "#ffffff",
+                  padding: "10px 18px",
+                  borderRadius: "10px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Save Tracked Accounts
+              </button>
+            </form>
+          </section>
+        ) : null}
+
         <section
           style={{
             background: "#ffffff",
@@ -315,6 +402,7 @@ export default async function BankFeedSettingsPage() {
                     institutionName: string | null;
                     skippedDeposits?: number;
                     skippedBeforeCutoff?: number;
+                    skippedAccountNotTracked?: number;
                     error?: string;
                   }>;
                 };
@@ -326,6 +414,10 @@ export default async function BankFeedSettingsPage() {
                 );
                 const totalSkippedDeposits = connections.reduce(
                   (sum, c) => sum + (c.skippedDeposits ?? 0),
+                  0
+                );
+                const totalSkippedNotTracked = connections.reduce(
+                  (sum, c) => sum + (c.skippedAccountNotTracked ?? 0),
                   0
                 );
                 const connectionErrors = connections.filter((c) => c.error);
@@ -354,15 +446,21 @@ export default async function BankFeedSettingsPage() {
                         {formatDate(entry.created_at)}
                       </div>
 
-                      {totalSkippedCutoff > 0 || totalSkippedDeposits > 0 ? (
+                      {totalSkippedCutoff > 0 || totalSkippedDeposits > 0 || totalSkippedNotTracked > 0 ? (
                         <div style={{ color: "#64748b", fontSize: "12px", marginTop: "4px" }}>
-                          {totalSkippedCutoff > 0
-                            ? `${totalSkippedCutoff} dated before 10/1/2026`
-                            : ""}
-                          {totalSkippedCutoff > 0 && totalSkippedDeposits > 0 ? " · " : ""}
-                          {totalSkippedDeposits > 0
-                            ? `${totalSkippedDeposits} deposits/credits (not expenses)`
-                            : ""}
+                          {[
+                            totalSkippedCutoff > 0
+                              ? `${totalSkippedCutoff} dated before 10/1/2026`
+                              : null,
+                            totalSkippedDeposits > 0
+                              ? `${totalSkippedDeposits} deposits/credits (not expenses)`
+                              : null,
+                            totalSkippedNotTracked > 0
+                              ? `${totalSkippedNotTracked} from an untracked account`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
                           {" -- skipped on purpose."}
                         </div>
                       ) : null}

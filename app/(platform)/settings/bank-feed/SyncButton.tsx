@@ -13,6 +13,7 @@ type ConnectionSummary = {
   added: number;
   skippedDeposits: number;
   skippedBeforeCutoff: number;
+  skippedAccountNotTracked: number;
   needsReviewCount: number;
   error?: string;
 };
@@ -64,14 +65,22 @@ export default function SyncButton({ disabled }: { disabled?: boolean }) {
             (sum, c) => sum + (c.skippedDeposits ?? 0),
             0
           );
+          const totalSkippedNotTracked = connections.reduce(
+            (sum, c) => sum + (c.skippedAccountNotTracked ?? 0),
+            0
+          );
+
+          const skippedReasons = [
+            totalSkippedCutoff > 0 ? `${totalSkippedCutoff} were dated before 10/1/2026` : null,
+            totalSkippedDeposits > 0 ? `${totalSkippedDeposits} were deposits/credits, not expenses` : null,
+            totalSkippedNotTracked > 0 ? `${totalSkippedNotTracked} were from an untracked account` : null,
+          ].filter((reason): reason is string => reason !== null);
 
           const skippedNote =
-            totalInserted === 0 && (totalSkippedCutoff > 0 || totalSkippedDeposits > 0)
-              ? ` (Plaid returned transactions, but ${
-                  totalSkippedCutoff > 0 ? `${totalSkippedCutoff} were dated before 10/1/2026` : ""
-                }${totalSkippedCutoff > 0 && totalSkippedDeposits > 0 ? " and " : ""}${
-                  totalSkippedDeposits > 0 ? `${totalSkippedDeposits} were deposits/credits, not expenses` : ""
-                } -- both are skipped on purpose.)`
+            totalInserted === 0 && skippedReasons.length > 0
+              ? ` (Plaid returned transactions, but ${skippedReasons.join(
+                  "; "
+                )} -- all skipped on purpose.)`
               : "";
 
           setMessage(

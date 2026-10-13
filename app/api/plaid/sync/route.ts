@@ -113,6 +113,7 @@ export async function POST(request: NextRequest) {
       added: number;
       skippedDeposits: number;
       skippedBeforeCutoff: number;
+      skippedAccountNotTracked: number;
       modified: number;
       modifiedSkippedAlreadyReviewed: number;
       removed: number;
@@ -131,6 +132,7 @@ export async function POST(request: NextRequest) {
       added: 0,
       skippedDeposits: 0,
       skippedBeforeCutoff: 0,
+      skippedAccountNotTracked: 0,
       modified: 0,
       modifiedSkippedAlreadyReviewed: 0,
       removed: 0,
@@ -159,10 +161,18 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
+    // Mountain America (and plenty of other institutions) force "connect
+    // every account" at the Plaid Link consent screen, with no way to
+    // deselect individual ones -- so bank_accounts can hold far more
+    // than the accounts Ryan actually wants tracked (migration 095).
+    // Only an account explicitly marked include_in_expense_sync feeds
+    // this map, so a transaction from anything else is skipped below
+    // rather than silently imported just because Plaid had access to it.
     const { data: accounts } = await supabaseServer
       .from("bank_accounts")
       .select("id, plaid_account_id")
-      .eq("bank_connection_id", connection.id);
+      .eq("bank_connection_id", connection.id)
+      .eq("include_in_expense_sync", true);
 
     const bankAccountIdByPlaidId = new Map(
       (accounts ?? []).map((a) => [a.plaid_account_id as string, a.id as string])
@@ -172,6 +182,11 @@ export async function POST(request: NextRequest) {
     const rowsToInsert: ReturnType<typeof buildExpenseRow>[] = [];
 
     for (const transaction of syncResult.added) {
+      if (!bankAccountIdByPlaidId.has(transaction.account_id)) {
+        connectionSummary.skippedAccountNotTracked += 1;
+        continue;
+      }
+
       if (transaction.amount <= 0) {
         connectionSummary.skippedDeposits += 1;
         continue;
@@ -230,7 +245,9 @@ export async function POST(request: NextRequest) {
     for (const transaction of syncResult.modified) {
       const existing = existingByPlaidId.get(transaction.transaction_id);
 
-      if (!existing) continue;
+      // Already untracked (never imported, or its account was later
+      // turned off) -- nothing here for Plaid's update to apply to.
+      if (!existing || !bankAccountIdByPlaidId.has(transaction.account_id)) continue;
 
       if (existing.status !== "needs_review") {
         // Ryan already opened and confirmed/edited this row -- his
