@@ -43,19 +43,32 @@ export async function upsertPaymentByIntentId(
     {
       invoice_id: params.invoiceId,
       stripe_payment_intent_id: params.stripePaymentIntentId,
-      stripe_checkout_session_id: params.stripeCheckoutSessionId ?? null,
-      stripe_charge_id: params.stripeChargeId ?? null,
       amount: params.amount,
-      method: params.method ?? null,
       status: params.status,
       paid_at: params.paidAt ?? null,
       updated_at: new Date().toISOString(),
-      // Only included when the caller actually has fee data (Stage 6,
-      // currently just handlePaymentIntentSucceeded). Omitting the keys
-      // entirely -- rather than sending null -- means an upsert without
-      // fee data (checkout.session.completed, payment_intent.payment_failed)
-      // can't clobber a fee an earlier upsert already recorded for the
-      // same PaymentIntent. Stripe doesn't guarantee event delivery order.
+      // Found 2026-10-14 (Ryan backfilling processing fees -- 9 of 20
+      // succeeded payments had a real fee_amount but a null
+      // stripe_charge_id and null method): stripe_checkout_session_id,
+      // stripe_charge_id, and method were being written unconditionally
+      // (`?? null`), same as fee_amount/net_amount used to be before the
+      // comment just above this one was written -- so whichever handler
+      // ran LAST for a given PaymentIntent could silently blow away a
+      // value an earlier handler had already set correctly, just by not
+      // knowing about it. payment_intent.succeeded sets charge_id/method
+      // correctly; checkout.session.completed and
+      // payment_intent.payment_failed never pass either one, and Stripe
+      // doesn't guarantee which arrives last. All three (plus the fee
+      // pair, already fixed) now use the same omit-the-key-rather-than-
+      // null-it pattern, so a handler without a piece of data simply
+      // leaves whatever's already there alone.
+      ...(params.stripeCheckoutSessionId !== undefined
+        ? { stripe_checkout_session_id: params.stripeCheckoutSessionId }
+        : {}),
+      ...(params.stripeChargeId !== undefined
+        ? { stripe_charge_id: params.stripeChargeId }
+        : {}),
+      ...(params.method !== undefined ? { method: params.method } : {}),
       ...(params.feeAmount !== undefined ? { fee_amount: params.feeAmount } : {}),
       ...(params.netAmount !== undefined ? { net_amount: params.netAmount } : {}),
     },
