@@ -141,18 +141,6 @@ export default async function ExpensesPage({ searchParams }: ExpensesPageProps) 
               Journal
             </Link>
             <Link
-              href="/expenses/import"
-              className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#174734]/5"
-            >
-              Import from QuickBooks
-            </Link>
-            <Link
-              href="/expenses/backfill-fees"
-              className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-[#174734]/5"
-            >
-              Backfill Stripe Fees
-            </Link>
-            <Link
               href="/materials"
               className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
             >
