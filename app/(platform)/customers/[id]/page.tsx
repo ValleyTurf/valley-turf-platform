@@ -4,6 +4,10 @@ export const revalidate = 0;
 import Link from "next/link";
 import { jobberGraphQL } from "@/lib/jobber";
 import { isNativeId } from "@/lib/nativeJobs";
+import {
+  isLaborMaterialName,
+  parseLaborEmployeeName,
+} from "@/lib/laborMaterialName";
 import { supabaseServer } from "@/lib/supabase-server";
 import { normalizeEmail, normalizePhone } from "@/lib/matching";
 import { getCurrentUser } from "@/lib/currentUser";
@@ -335,6 +339,21 @@ type EquipmentOption = {
   name: string;
 };
 
+type VisitCostLine = {
+  label: string;
+  quantity: number;
+  unitLabel: string;
+  cost: number;
+};
+
+type VisitCostBreakdown = {
+  laborLines: VisitCostLine[];
+  materialLines: VisitCostLine[];
+  equipmentNames: string[];
+  laborTotal: number;
+  materialTotal: number;
+};
+
 type CustomerVisit = {
   jobber_visit_id: string;
   title: string | null;
@@ -552,6 +571,90 @@ async function getVisitUsageMaps(visitIds: string[]): Promise<{
   }
 
   return { usageMap, equipmentUsageSet, costMap };
+}
+
+type VisitUsageDetailRow = {
+  jobber_visit_id: string;
+  material_id: string;
+  quantity_used: number | string;
+  unit_cost_at_time: number | string;
+};
+
+// Read-only cost breakdown for Past Visits (Ryan, 2026-10-15): the
+// existing VisitCostForm above is an edit form -- raw inputs, no dollar
+// figures, no labor/materials split -- so there was nowhere to actually
+// see what a visit's logged cost was made of. Reuses the same
+// visit_material_usage rows, priced at unit_cost_at_time (the
+// point-in-time rate -- same source lib/jobCostingSummary.ts's
+// fetchCostBreakdownForInvoices reads for the invoice-level numbers), so
+// this always foots to the same total already shown next to each visit
+// (visitCostMap, from the visit_material_cost view) instead of
+// introducing a second, possibly-drifting way to add it up.
+async function getVisitCostBreakdowns(
+  visitIds: string[],
+  materialsList: MaterialOption[],
+  equipmentList: EquipmentOption[],
+  visitEquipmentUsageSet: Set<string>
+): Promise<Map<string, VisitCostBreakdown>> {
+  const breakdowns = new Map<string, VisitCostBreakdown>();
+
+  if (visitIds.length === 0) {
+    return breakdowns;
+  }
+
+  for (const visitId of visitIds) {
+    breakdowns.set(visitId, {
+      laborLines: [],
+      materialLines: [],
+      equipmentNames: equipmentList
+        .filter((item) => visitEquipmentUsageSet.has(`${visitId}:${item.id}`))
+        .map((item) => item.name),
+      laborTotal: 0,
+      materialTotal: 0,
+    });
+  }
+
+  const { data, error } = await supabaseServer
+    .from("visit_material_usage")
+    .select("jobber_visit_id, material_id, quantity_used, unit_cost_at_time")
+    .in("jobber_visit_id", visitIds);
+
+  if (error) {
+    console.error("Visit cost breakdown query failed:", error.message);
+    return breakdowns;
+  }
+
+  const materialById = new Map(materialsList.map((m) => [m.id, m]));
+
+  for (const row of (data ?? []) as VisitUsageDetailRow[]) {
+    const breakdown = breakdowns.get(row.jobber_visit_id);
+    const material = materialById.get(row.material_id);
+    if (!breakdown || !material) continue;
+
+    const quantity = Number(row.quantity_used ?? 0);
+    const unitCost = Number(row.unit_cost_at_time ?? 0);
+    const cost = quantity * unitCost;
+    const isLabor = isLaborMaterialName(material.name);
+
+    const line: VisitCostLine = {
+      label: isLabor
+        ? parseLaborEmployeeName(material.name) ?? material.name
+        : material.name,
+      quantity,
+      unitLabel: material.unit_label,
+      cost,
+    };
+
+    if (isLabor) {
+      breakdown.laborLines.push(line);
+      breakdown.laborTotal += cost;
+    } else {
+      breakdown.materialLines.push(line);
+      breakdown.materialTotal += cost;
+    }
+  }
+
+  return breakdowns;
 }
 
 type JobberPayment = {
@@ -1920,6 +2023,101 @@ function VisitCostForm({
   );
 }
 
+function VisitCostBreakdownSection({
+  breakdown,
+}: {
+  breakdown: VisitCostBreakdown | undefined;
+}) {
+  const hasAnything =
+    !!breakdown &&
+    (breakdown.laborLines.length > 0 ||
+      breakdown.materialLines.length > 0 ||
+      breakdown.equipmentNames.length > 0);
+
+  if (!breakdown || !hasAnything) {
+    return (
+      <p className="text-xs text-[#6b705c]">
+        No costs logged for this visit yet.
+      </p>
+    );
+  }
+
+  const total = breakdown.laborTotal + breakdown.materialTotal;
+
+  return (
+    <div className="space-y-3 text-sm">
+      {breakdown.laborLines.length > 0 && (
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-[#9c7a20]">
+            Labor
+          </p>
+          <div className="mt-1 space-y-1">
+            {breakdown.laborLines.map((line, index) => (
+              <div
+                key={`${line.label}-${index}`}
+                className="flex items-center justify-between gap-3"
+              >
+                <span className="text-[#6b705c]">
+                  {line.label}
+                  {" — "}
+                  {line.unitLabel.toLowerCase() === "hour"
+                    ? formatDurationMinutes(line.quantity * 60) ??
+                      `${line.quantity} ${line.unitLabel}`
+                    : `${line.quantity} ${line.unitLabel}`}
+                </span>
+                <span className="shrink-0 font-semibold">
+                  {formatCurrencyPrecise(line.cost)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {breakdown.materialLines.length > 0 && (
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-[#9c7a20]">
+            Materials
+          </p>
+          <div className="mt-1 space-y-1">
+            {breakdown.materialLines.map((line, index) => (
+              <div
+                key={`${line.label}-${index}`}
+                className="flex items-center justify-between gap-3"
+              >
+                <span className="text-[#6b705c]">
+                  {line.label} — {line.quantity} {line.unitLabel}
+                </span>
+                <span className="shrink-0 font-semibold">
+                  {formatCurrencyPrecise(line.cost)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {breakdown.equipmentNames.length > 0 && (
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-[#9c7a20]">
+            Equipment Used
+          </p>
+          <p className="mt-1 text-[#6b705c]">
+            {breakdown.equipmentNames.join(", ")}
+          </p>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between gap-3 border-t border-[#f0eee6] pt-2">
+        <span className="text-xs font-bold text-[#174734]">Visit Total</span>
+        <span className="text-sm font-bold text-[#174734]">
+          {formatCurrencyPrecise(total)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default async function CustomerDetailPage({
   params,
   searchParams,
@@ -2185,6 +2383,13 @@ export default async function CustomerDetailPage({
     equipmentUsageSet: visitEquipmentUsageSet,
     costMap: visitCostMap,
   } = await getVisitUsageMaps(allVisitIds);
+
+  const visitCostBreakdownMap = await getVisitCostBreakdowns(
+    allVisitIds,
+    materialsList,
+    equipmentList,
+    visitEquipmentUsageSet
+  );
 
   const visitDurationMap = await getVisitDurationMinutes(allVisitIds);
   const visitLaborMap = await getVisitLaborMinutes(allVisitIds);
@@ -3046,6 +3251,14 @@ export default async function CustomerDetailPage({
                           </p>
                         </div>
                       </summary>
+
+                      <div className="mt-4 border-t border-[#f0eee6] pt-4">
+                        <VisitCostBreakdownSection
+                          breakdown={visitCostBreakdownMap.get(
+                            visit.jobber_visit_id
+                          )}
+                        />
+                      </div>
 
                       <div className="mt-4 border-t border-[#f0eee6] pt-4">
                         <VisitCostForm
