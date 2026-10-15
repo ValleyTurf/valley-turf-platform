@@ -11,6 +11,7 @@ import { updateExpense, deleteExpense } from "./actions";
 import {
   expenseCategoryLabel,
   ledgerTypeLabel,
+  jobCostingTreatmentLabel,
   type ExpenseCategory,
   type LedgerType,
 } from "./constants";
@@ -55,6 +56,11 @@ export default function ExpenseRowItem({ expense }: { expense: ExpenseRow }) {
             {expense.ledger_type && (
               <span className="shrink-0 rounded-full bg-[#1d4ed8]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#1d4ed8]">
                 {ledgerTypeLabel(expense.ledger_type)}
+              </span>
+            )}
+            {expense.job_costing_treatment && (
+              <span className="shrink-0 rounded-full bg-[#174734]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#174734]">
+                {jobCostingTreatmentLabel(expense.job_costing_treatment)}
               </span>
             )}
           </p>

@@ -102,3 +102,20 @@ const LEDGER_LABEL_BY_VALUE = new Map(
 export function ledgerTypeLabel(value: string): string {
   return LEDGER_LABEL_BY_VALUE.get(value as LedgerType) ?? value;
 }
+
+// Job Costing treatment (migration 093) -- Ryan, 2026-10-15: these rows
+// had no visible marker anywhere on /expenses, so there was no way to
+// tell at a glance which ones were feeding the Job Costing Analytics
+// overhead pool. Short pill labels (vs. the full "One-time job cost" /
+// "Amortized over a date range" option text in CategoryAndJobCostingFields)
+// since this renders inline next to the vendor name. See
+// /expenses/job-costing for the full breakdown these rows feed.
+export type JobCostingTreatment = "one_time" | "amortized";
+
+export function jobCostingTreatmentLabel(
+  value: string | null | undefined
+): string {
+  if (value === "one_time") return "Job Costing: One-Time";
+  if (value === "amortized") return "Job Costing: Amortized";
+  return "";
+}
