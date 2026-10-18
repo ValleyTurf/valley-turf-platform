@@ -286,6 +286,19 @@ export default async function JobCostsPage({
   // affected by a job-costs-page-only concern. Same
   // null-or-not-archived logic as those other pages -- a visit not yet
   // backfilled/synced with a job_status at all still shows.
+  //
+  // completedVisitIds below is the exception this page was missing
+  // (Ryan, 2026-10-18): a one-off job ("Sol Fink - Initial Full
+  // Cleaning", "Arterburn - Full Cleaning") gets archived in Jobber
+  // within a day of being completed and invoiced -- normal for a
+  // one-time job, unlike a recurring monthly one. Job Costing
+  // Analytics has no archived-job filter at all, so it kept flagging
+  // these as "estimated, not yet logged," while this page silently
+  // dropped them the moment Jobber archived the job -- there was no
+  // way to ever log them. customers/[id]/page.tsx's
+  // ACTIVE_JOB_VISIT_FILTER already carries the same
+  // completed_at-overrides-archived exception for exactly this reason;
+  // this page just never got it.
   const rawVisitIds = rawVisits.map((visit) => visit.jobber_visit_id);
   const { data: statusRows } =
     rawVisitIds.length > 0
@@ -301,8 +314,16 @@ export default async function JobCostsPage({
       .map((row) => row.jobber_visit_id)
   );
 
+  const completedVisitIds = new Set(
+    rawVisits
+      .filter((visit) => visit.completed_at !== null)
+      .map((visit) => visit.jobber_visit_id)
+  );
+
   const allVisits = rawVisits.filter(
-    (visit) => !archivedVisitIds.has(visit.jobber_visit_id)
+    (visit) =>
+      !archivedVisitIds.has(visit.jobber_visit_id) ||
+      completedVisitIds.has(visit.jobber_visit_id)
   );
   const allVisitIds = allVisits.map((visit) => visit.jobber_visit_id);
 
