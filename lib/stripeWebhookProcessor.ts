@@ -390,6 +390,18 @@ async function handlePaymentIntentFailed(
 // status (no "refunded" state in the invoices.status check constraint --
 // the invoice stays "paid," the refund lives on the payment record) --
 // revisit if/when refund handling needs to be more than a status flag.
+//
+// Fixed 2026-10-19 (Ryan -- Elise Ludeman double ACH charge): this used
+// to ONLY flip the native `payments` row. Revenue, Transactions, and Job
+// Costing Analytics never read that table at all (see the file-level
+// comment on lib/payments.ts) -- they read jobber_payments/jobber_invoices,
+// which this never touched, so a refunded native payment kept counting
+// as revenue forever in every report with no way to tell. Jobber's own
+// refunds show up as a second PaymentRecord with a negative amount and
+// adjustmentType "refund" rather than mutating the original row (sum the
+// raw amount, no separate sign-flip logic -- see
+// lib/transactions.ts/lib/transactionFormatting.ts), so this mirrors a
+// native refund the same way.
 async function handleChargeRefunded(charge: Stripe.Charge): Promise<void> {
   const paymentIntentId =
     typeof charge.payment_intent === "string"
@@ -401,13 +413,65 @@ async function handleChargeRefunded(charge: Stripe.Charge): Promise<void> {
     return;
   }
 
-  const { error } = await supabaseServer
+  const { data: paymentRow, error } = await supabaseServer
     .from("payments")
     .update({ status: "refunded", updated_at: new Date().toISOString() })
-    .eq("stripe_payment_intent_id", paymentIntentId);
+    .eq("stripe_payment_intent_id", paymentIntentId)
+    .select("invoice_id")
+    .maybeSingle();
 
   if (error) {
     throw new Error(`Failed to mark payment refunded: ${error.message}`);
+  }
+
+  const invoiceId = paymentRow?.invoice_id ?? null;
+
+  // charge.amount_refunded is the CUMULATIVE total refunded on this
+  // charge so far, not just this event's slice -- so upserting on a key
+  // derived from the PaymentIntent id (one refund mirror row per
+  // PaymentIntent, not per Stripe refund id) and always writing the
+  // current cumulative total is naturally idempotent: a redelivered
+  // event, or a second/third partial refund on the same charge, just
+  // re-upserts this one row to the right running total instead of
+  // double- or under-subtracting.
+  if (invoiceId && charge.amount_refunded) {
+    const mirrorInvoiceId = `native-${invoiceId}`;
+    const refundAmount = charge.amount_refunded / 100;
+
+    const { data: mirrorInvoiceRow } = await supabaseServer
+      .from("jobber_invoices")
+      .select("jobber_client_id")
+      .eq("jobber_invoice_id", mirrorInvoiceId)
+      .maybeSingle();
+
+    const { error: refundMirrorError } = await supabaseServer
+      .from("jobber_payments")
+      .upsert(
+        {
+          jobber_payment_id: `native-refund-${paymentIntentId}`,
+          jobber_invoice_id: mirrorInvoiceId,
+          jobber_client_id: mirrorInvoiceRow?.jobber_client_id ?? null,
+          amount: -refundAmount,
+          payment_date: new Date().toISOString().slice(0, 10),
+          payment_method: "Stripe",
+          adjustment_type: "refund",
+          transaction_status: "refunded",
+          tip_amount: 0,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "jobber_payment_id" }
+      );
+
+    if (refundMirrorError) {
+      console.error(
+        `Failed to mirror refund for payment intent ${paymentIntentId}:`,
+        refundMirrorError.message
+      );
+    }
+  } else if (!invoiceId) {
+    console.error(
+      `charge.refunded for payment intent ${paymentIntentId} has no resolvable invoice -- payment marked refunded but Revenue/Transactions still count the original amount.`
+    );
   }
 }
 
