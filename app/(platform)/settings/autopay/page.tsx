@@ -230,8 +230,8 @@ export default async function AutopaySettingsPage() {
 
           <p style={{ margin: 0, color: "#64748b", fontSize: "16px" }}>
             Every customer who has started, finished, or turned off native
-            autopay enrollment through this app. Doesn't include anything
-            set up on the Jobber side.
+            autopay enrollment through this app. Doesn&apos;t include
+            anything set up on the Jobber side.
           </p>
         </div>
 
