@@ -139,6 +139,11 @@ export async function addExpense(formData: FormData): Promise<void> {
     notes: cleanText(formData.get("notes")),
     created_by_user_id: actor?.id ?? null,
     created_by_name: actor?.name ?? null,
+    // Migration 098 -- a hand-entered row is definitionally reviewed;
+    // there's no Plaid-fed version of it that a later sync could ever
+    // correct, but setting this keeps every manually-created row
+    // consistent with updateExpense below.
+    staff_reviewed: true,
     ...resolveJobCostingFields(formData, category, ledgerType),
   };
 
@@ -196,9 +201,22 @@ export async function updateExpense(
   // category -- the exact thing "needs_review" (set by the QuickBooks
   // import for anything it wasn't confident mapping) is waiting for. So
   // any manual save clears it, same as if he'd entered the row by hand.
+  //
+  // staff_reviewed (migration 098) is the real "a person actually looked
+  // at this" signal -- unlike status, which also flips to "categorized"
+  // the instant the Plaid category mapper is confident, with zero human
+  // involvement. app/api/plaid/sync/route.ts's modified/removed handling
+  // keys off this flag so a later Plaid correction (e.g. a pending
+  // placeholder amount settling to its real posted amount) isn't
+  // mistaken for overwriting Ryan's own edit.
   const { error } = await supabaseServer
     .from("expenses")
-    .update({ ...row, status: "categorized", updated_at: new Date().toISOString() })
+    .update({
+      ...row,
+      status: "categorized",
+      staff_reviewed: true,
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", id);
 
   if (error) {

@@ -1,0 +1,25 @@
+-- Ryan (2026-10-19): a $1.00 Plaid pending-authorization placeholder on
+-- 10/12 auto-categorized cleanly on the first sync (status
+-- "categorized"), then Plaid's own pending -> posted correction (the
+-- real amount/date, on 10/13) arrived as a `modified` event --
+-- app/api/plaid/sync/route.ts's guard against overwriting a
+-- staff-reviewed row checked `status !== "needs_review"`, which is also
+-- true the instant a transaction auto-categorizes with no human ever
+-- touching it. The correction got silently dropped, exactly as if Ryan
+-- had actually reviewed and confirmed the wrong $1 version.
+--
+-- "categorized" has always meant two different things: "the category
+-- mapper was confident" (an import-time guess) and "a person opened
+-- this row and saved it" (app/(platform)/expenses/actions.ts's
+-- updateExpense/addExpense). This splits them apart. Only those two
+-- actions set this true going forward; the sync route's modified/removed
+-- handling keys off this instead of `status`, so Plaid's own corrections
+-- always apply unless a person has actually looked at the row.
+--
+-- Defaults false (and stays false) for every existing row -- there's no
+-- way to know in hindsight which ones Ryan actually reviewed versus
+-- which just auto-categorized, and false is the safer assumption either
+-- way: it only widens which rows a future Plaid correction is allowed
+-- to touch, never narrows it.
+alter table expenses
+  add column if not exists staff_reviewed boolean not null default false;

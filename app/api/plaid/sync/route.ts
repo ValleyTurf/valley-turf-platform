@@ -47,6 +47,7 @@ type ExistingExpenseRow = {
   id: string;
   plaid_transaction_id: string;
   status: string;
+  staff_reviewed: boolean;
 };
 
 function buildExpenseRow(
@@ -58,26 +59,48 @@ function buildExpenseRow(
     transaction.personal_finance_category?.detailed ?? null
   );
 
+  // Ryan (2026-10-19): a Nellis Auction refund never showed up at all --
+  // by design, every negative-amount (money-in) transaction used to be
+  // discarded as "a deposit," with no distinction between real income
+  // (a paycheck, a transfer between accounts) and a refund of money
+  // already spent through this same feed. Plaid's taxonomy doesn't have
+  // its own "refund" category -- a refund keeps the ORIGINAL purchase's
+  // category (e.g. GENERAL_MERCHANDISE for Nellis Auction) with a
+  // negative amount, while a true deposit's primary category is
+  // TRANSFER_IN or INCOME (see isTrueDeposit below). A refund that
+  // passes through here keeps its negative amount, landing as a
+  // credit/negative line in its original category rather than a
+  // separate "expense."
+  const isRefund = transaction.amount < 0;
+
   return {
     vendor: transaction.merchant_name ?? transaction.name ?? null,
     description: transaction.name ?? null,
     category,
-    // Plaid's documented sign convention: positive = money leaving the
-    // account (an expense), negative = money moving in (a deposit,
-    // refund, or transfer) -- only positive amounts reach this
-    // function, see the filter below.
     amount: transaction.amount,
     expense_date: transaction.date,
     source: "bank_feed" as const,
     status: needsReview ? ("needs_review" as const) : ("categorized" as const),
     plaid_transaction_id: transaction.transaction_id,
     bank_account_id: bankAccountIdByPlaidId.get(transaction.account_id) ?? null,
-    notes: `Bank feed (Plaid). Category: "${
+    notes: `Bank feed (Plaid)${isRefund ? " -- refund" : ""}. Category: "${
       transaction.personal_finance_category?.detailed ??
       transaction.personal_finance_category?.primary ??
       "unknown"
     }".`,
   };
+}
+
+// True deposits/income/transfers -- never imported, same as before.
+// Everything else with a negative (money-in) amount is treated as a
+// refund of a prior purchase and DOES get imported (see buildExpenseRow
+// above): Plaid has no dedicated "refund" category, a refund just keeps
+// the original purchase's category with the sign flipped.
+function isTrueDeposit(
+  transaction: Transaction
+): boolean {
+  const primary = transaction.personal_finance_category?.primary ?? null;
+  return !primary || primary === "TRANSFER_IN" || primary === "INCOME";
 }
 
 export async function POST(request: NextRequest) {
@@ -187,7 +210,12 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      if (transaction.amount <= 0) {
+      if (transaction.amount === 0) {
+        connectionSummary.skippedDeposits += 1;
+        continue;
+      }
+
+      if (transaction.amount < 0 && isTrueDeposit(transaction)) {
         connectionSummary.skippedDeposits += 1;
         continue;
       }
@@ -231,7 +259,7 @@ export async function POST(request: NextRequest) {
     if (lookupIds.length > 0) {
       const { data: existingRows } = await supabaseServer
         .from("expenses")
-        .select("id, plaid_transaction_id, status")
+        .select("id, plaid_transaction_id, status, staff_reviewed")
         .in("plaid_transaction_id", lookupIds);
 
       for (const row of existingRows ?? []) {
@@ -249,10 +277,14 @@ export async function POST(request: NextRequest) {
       // turned off) -- nothing here for Plaid's update to apply to.
       if (!existing || !bankAccountIdByPlaidId.has(transaction.account_id)) continue;
 
-      if (existing.status !== "needs_review") {
+      if (existing.staff_reviewed) {
         // Ryan already opened and confirmed/edited this row -- his
         // correction wins, Plaid's update is skipped rather than
-        // silently overwriting it.
+        // silently overwriting it. (Migration 098: this used to check
+        // `status !== "needs_review"`, which also fires the instant a
+        // transaction auto-categorizes with no human involved at all --
+        // that's exactly what ate the real 10/13 correction to a $1.00
+        // pending placeholder.)
         connectionSummary.modifiedSkippedAlreadyReviewed += 1;
         continue;
       }
@@ -270,7 +302,7 @@ export async function POST(request: NextRequest) {
 
       if (!existing) continue;
 
-      if (existing.status !== "needs_review") {
+      if (existing.staff_reviewed) {
         connectionSummary.removedSkippedAlreadyReviewed += 1;
         continue;
       }
