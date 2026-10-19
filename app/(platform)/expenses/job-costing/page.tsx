@@ -4,10 +4,7 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import ExpenseRowItem, { inputClasses, type ExpenseRow } from "../ExpenseRowItem";
-import {
-  toNumber,
-  formatCurrencyPrecise as formatCurrency,
-} from "@/lib/format";
+import { formatCurrencyPrecise as formatCurrency } from "@/lib/format";
 
 // Ryan (2026-10-15): asked where the Job Costing Analytics "overhead"
 // figure actually comes from -- there was nowhere to see it. That
