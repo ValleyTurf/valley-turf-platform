@@ -111,7 +111,9 @@ export default function ExpenseRowItem({ expense }: { expense: ExpenseRow }) {
                 name="amount"
                 type="number"
                 step="0.01"
-                min="0"
+                // No min -- see AddExpenseForm.tsx's matching comment
+                // (2026-10-19): a refund/credit is a legitimate negative
+                // amount, not a typo to block.
                 defaultValue={toNumber(expense.amount)}
                 required
                 className={inputClasses}

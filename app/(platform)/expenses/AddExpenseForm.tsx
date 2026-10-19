@@ -41,7 +41,11 @@ export default function AddExpenseForm() {
           name="amount"
           type="number"
           step="0.01"
-          min="0"
+          // No min -- a refund/credit (a Nellis Auction return, say) is a
+          // legitimate negative amount here (2026-10-19), not a typo to
+          // block. lib/.../actions.ts's cleanAmount never enforced a
+          // sign either; this was just a leftover from before the app
+          // handled credits at all.
           required
           placeholder="0.00"
           className={inputClasses}
