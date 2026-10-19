@@ -53,6 +53,14 @@ const settingsSections: SettingsSection[] = [
     status: "Connect",
   },
   {
+    title: "Autopay",
+    description:
+      "See every customer who's turned on native autopay, saved a card but left it off, or started enrollment without finishing.",
+    href: "/settings/autopay",
+    icon: "💳",
+    status: "View",
+  },
+  {
     title: "Notifications",
     description:
       "Configure automated pre-visit text/email reminders and (once ready) review request messages.",
