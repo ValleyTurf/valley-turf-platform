@@ -571,33 +571,64 @@ export default function CustomerContactsSection({
               );
             })}
 
-            {addresses.map((address) => (
-              <div
-                key={address.id}
-                className="flex items-start justify-between gap-3 rounded-xl bg-[#f7f6f1] px-3 py-2"
-              >
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold">
-                    {formatCustomAddress(address)}
-                  </p>
-                  {address.label && (
-                    <span className="mt-1 inline-block rounded-full bg-[#f0f0ec] px-2 py-0.5 text-[10px] font-bold text-[#6b705c]">
-                      {address.label}
-                    </span>
-                  )}
-                </div>
+            {addresses.map((address) => {
+              // Ryan (2026-10-22, Audra Hill): a manually-added address
+              // never got the Google Maps link the properties block above
+              // has had all along -- just plain text. Same guard as
+              // formatPropertyAddress's mapsUrl: only linked when there's
+              // a real street address, not the "Address unavailable"
+              // fallback.
+              const mapsUrl = address.addressLine1.trim()
+                ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                    formatCustomAddress(address)
+                  )}`
+                : null;
 
-                <button
-                  type="button"
-                  disabled={isPending}
-                  onClick={() => handleDeleteAddress(address.id)}
-                  aria-label="Remove address"
-                  className="shrink-0 rounded-lg px-2 text-lg font-bold text-[#9c7a20] hover:bg-[#f7f6f1] disabled:opacity-60"
+              const content = (
+                <p className="text-sm font-semibold">
+                  {formatCustomAddress(address)}
+                </p>
+              );
+
+              const addressBlock = mapsUrl ? (
+                <a
+                  href={mapsUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block min-w-0 hover:underline"
                 >
-                  ×
-                </button>
-              </div>
-            ))}
+                  {content}
+                </a>
+              ) : (
+                <div className="min-w-0">{content}</div>
+              );
+
+              return (
+                <div
+                  key={address.id}
+                  className="flex items-start justify-between gap-3 rounded-xl bg-[#f7f6f1] px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    {addressBlock}
+                    {address.label && (
+                      <span className="mt-1 inline-block rounded-full bg-[#f0f0ec] px-2 py-0.5 text-[10px] font-bold text-[#6b705c]">
+                        {address.label}
+                      </span>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={isPending}
+                    onClick={() => handleDeleteAddress(address.id)}
+                    aria-label="Remove address"
+                    className="shrink-0 rounded-lg px-2 text-lg font-bold text-[#9c7a20] hover:bg-[#f7f6f1] disabled:opacity-60"
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
           </>
         )}
 
