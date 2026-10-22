@@ -26,6 +26,7 @@ import {
   toggleCustomerContactNotifications,
   addCustomerAddress,
   deleteCustomerAddress,
+  updateCustomerPrimaryAddress,
   setCurrentProperty,
 } from "./actions";
 import { formatCurrency } from "@/lib/format";
@@ -153,6 +154,25 @@ export default function CustomerContactsSection({
   const [addressState, setAddressState] = useState("");
   const [addressPostalCode, setAddressPostalCode] = useState("");
 
+  // Editor for the PRIMARY address (customers.address_line_1/etc, the
+  // fields that drive My Day navigation/distance and the Properties list
+  // above) -- distinct from the "+ Add Address" reference-only entries.
+  // Only offered when there's zero or one property on file: with
+  // multiple Jobber properties there's no single "the" address to edit
+  // here (see the "Set current" logic below instead). Fields are
+  // (re)filled from primaryProperty right when the editor opens (see
+  // the button below), not via useState's initial value, so they stay
+  // correct across a revalidated re-render rather than freezing at
+  // whatever this component first mounted with.
+  const primaryProperty = properties[0] ?? null;
+  const [editingPrimaryAddress, setEditingPrimaryAddress] = useState(false);
+  const [primaryAddressError, setPrimaryAddressError] = useState<string | null>(null);
+  const [primaryAddressLine1, setPrimaryAddressLine1] = useState("");
+  const [primaryAddressLine2, setPrimaryAddressLine2] = useState("");
+  const [primaryAddressCity, setPrimaryAddressCity] = useState("");
+  const [primaryAddressState, setPrimaryAddressState] = useState("");
+  const [primaryAddressPostalCode, setPrimaryAddressPostalCode] = useState("");
+
   function resetContactForm() {
     setLabel("");
     setContactName("");
@@ -268,6 +288,42 @@ export default function CustomerContactsSection({
     });
   }
 
+  function openPrimaryAddressEditor() {
+    setPrimaryAddressError(null);
+    setPrimaryAddressLine1(primaryProperty?.address?.street1 ?? "");
+    setPrimaryAddressLine2(primaryProperty?.address?.street2 ?? "");
+    setPrimaryAddressCity(primaryProperty?.address?.city ?? "");
+    setPrimaryAddressState(primaryProperty?.address?.province ?? "");
+    setPrimaryAddressPostalCode(primaryProperty?.address?.postalCode ?? "");
+    setEditingPrimaryAddress(true);
+  }
+
+  function handleSavePrimaryAddress() {
+    setPrimaryAddressError(null);
+
+    if (!primaryAddressLine1.trim()) {
+      setPrimaryAddressError("Enter a street address.");
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await updateCustomerPrimaryAddress(jobberClientId, {
+        addressLine1: primaryAddressLine1.trim(),
+        addressLine2: primaryAddressLine2.trim() || null,
+        city: primaryAddressCity.trim() || null,
+        state: primaryAddressState.trim() || null,
+        postalCode: primaryAddressPostalCode.trim() || null,
+      });
+
+      if (result.error) {
+        setPrimaryAddressError(result.error);
+        return;
+      }
+
+      setEditingPrimaryAddress(false);
+    });
+  }
+
   return (
     <section className="rounded-2xl bg-white p-5 shadow">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -290,6 +346,15 @@ export default function CustomerContactsSection({
               className="rounded-xl border border-[#174734] px-3 py-1.5 text-xs font-bold transition hover:bg-[#f7f6f1]"
             >
               + Add Address
+            </button>
+          )}
+          {properties.length <= 1 && !editingPrimaryAddress && (
+            <button
+              type="button"
+              onClick={openPrimaryAddressEditor}
+              className="rounded-xl border border-[#174734] px-3 py-1.5 text-xs font-bold transition hover:bg-[#f7f6f1]"
+            >
+              {primaryProperty ? "Edit Primary Address" : "+ Set Primary Address"}
             </button>
           )}
         </div>
@@ -475,6 +540,79 @@ export default function CustomerContactsSection({
             <button
               type="button"
               onClick={resetAddressForm}
+              className="rounded-xl border border-[#d9d4c6] px-4 py-2 text-sm font-bold transition hover:bg-[#f7f6f1]"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {editingPrimaryAddress && (
+        <div className="mt-4 space-y-2 rounded-xl border border-[#e7e2d5] p-3">
+          <p className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
+            {primaryProperty ? "Edit Primary Address" : "Set Primary Address"}
+          </p>
+          <p className="text-xs text-[#6b705c]">
+            This is the address used for driving directions, My Day
+            distance/duration, and the Properties list above -- separate
+            from any additional addresses on file below.
+          </p>
+
+          <input
+            type="text"
+            value={primaryAddressLine1}
+            onChange={(e) => setPrimaryAddressLine1(e.target.value)}
+            placeholder="Street address"
+            className="w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+          />
+          <input
+            type="text"
+            value={primaryAddressLine2}
+            onChange={(e) => setPrimaryAddressLine2(e.target.value)}
+            placeholder="Apt / Suite (optional)"
+            className="w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+          />
+          <div className="grid gap-2 sm:grid-cols-3">
+            <input
+              type="text"
+              value={primaryAddressCity}
+              onChange={(e) => setPrimaryAddressCity(e.target.value)}
+              placeholder="City"
+              className="rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+            />
+            <input
+              type="text"
+              value={primaryAddressState}
+              onChange={(e) => setPrimaryAddressState(e.target.value)}
+              placeholder="State"
+              className="rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+            />
+            <input
+              type="text"
+              value={primaryAddressPostalCode}
+              onChange={(e) => setPrimaryAddressPostalCode(e.target.value)}
+              placeholder="ZIP"
+              className="rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
+            />
+          </div>
+
+          {primaryAddressError && (
+            <p className="text-xs font-semibold text-red-600">{primaryAddressError}</p>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={handleSavePrimaryAddress}
+              className="flex-1 rounded-xl bg-[#174734] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#226246] disabled:opacity-60"
+            >
+              {isPending ? "Saving…" : "Save Address"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditingPrimaryAddress(false)}
               className="rounded-xl border border-[#d9d4c6] px-4 py-2 text-sm font-bold transition hover:bg-[#f7f6f1]"
             >
               Cancel

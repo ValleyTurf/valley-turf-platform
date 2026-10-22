@@ -17,7 +17,11 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { fetchJobDetails } from "@/lib/jobberJob";
 import { haversineMiles } from "@/lib/geoDistance";
-import { computeRouteLegs, HOME_BASE_ADDRESS } from "@/lib/googleRoutes";
+import {
+  computeRouteLegs,
+  HOME_BASE_ADDRESS,
+  type RouteWaypoint,
+} from "@/lib/googleRoutes";
 import { getRolePermissions, isPathAllowedForRole } from "@/lib/permissions";
 import { completeVisit } from "./actions";
 import VisitTimer from "./VisitTimer";
@@ -561,22 +565,44 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
   // estimate (lib/geoDistance.ts) per contiguous run of stops where the
   // real routing call isn't available (no key) or fails (network error,
   // Google API error) — grouped into "runs" of consecutive stops that
-  // all have coordinates, since a real route can only be computed across
-  // an unbroken chain, and one stop missing an address shouldn't take
-  // out the estimate for the stops around it.
-  const visitCoords: (LatLng | null)[] = visits.map((visit) => {
+  // all have a waypoint (coordinates OR, when lat/lng aren't on file,
+  // a plain address string -- computeRouteLegs geocodes that server-side,
+  // same as it already does for HOME_BASE_ADDRESS below), since a real
+  // route can only be computed across an unbroken chain, and one stop
+  // missing both coordinates and an address shouldn't take out the
+  // estimate for the stops around it. Ryan (2026-10-22, Audra Hill): a
+  // customer can have real coordinates once Google Address Validation
+  // runs (see updateCustomerPrimaryAddress in customers/[id]/actions.ts)
+  // but won't if GOOGLE_ADDRESS_VALIDATION_API_KEY isn't configured --
+  // the address-string fallback here means a stop still gets routed
+  // correctly either way, rather than silently dropping out of the chain
+  // the way a coordinates-only stop would.
+  const visitWaypoints: (RouteWaypoint | null)[] = visits.map((visit) => {
     const contact = visit.jobber_client_id
       ? contactMap.get(visit.jobber_client_id) ?? null
       : null;
 
-    return contactLatLng(contact);
+    const coords = contactLatLng(contact);
+    if (coords) return coords;
+
+    const address = contact
+      ? [contact.address_line_1, contact.city, contact.state]
+          .filter(Boolean)
+          .join(", ")
+      : "";
+
+    return address ? { address } : null;
   });
+
+  function isLatLng(waypoint: RouteWaypoint): waypoint is LatLng {
+    return "lat" in waypoint;
+  }
 
   let runStart: number | null = null;
   const coordRuns: { start: number; end: number }[] = [];
 
-  for (let i = 0; i < visitCoords.length; i++) {
-    if (visitCoords[i]) {
+  for (let i = 0; i < visitWaypoints.length; i++) {
+    if (visitWaypoints[i]) {
       if (runStart === null) runStart = i;
     } else if (runStart !== null) {
       coordRuns.push({ start: runStart, end: i - 1 });
@@ -584,16 +610,18 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
     }
   }
   if (runStart !== null) {
-    coordRuns.push({ start: runStart, end: visitCoords.length - 1 });
+    coordRuns.push({ start: runStart, end: visitWaypoints.length - 1 });
   }
 
-  // First/last stop that actually has coordinates — the crew's
+  // First/last stop that actually has a waypoint — the crew's
   // real starting and ending point for the day's drive time, whatever
   // position they happen to be at in the (possibly gapped) list.
-  const firstCoordIndex = visitCoords.findIndex((coord) => coord !== null);
+  const firstCoordIndex = visitWaypoints.findIndex(
+    (waypoint) => waypoint !== null
+  );
   let lastCoordIndex = -1;
-  for (let i = visitCoords.length - 1; i >= 0; i--) {
-    if (visitCoords[i]) {
+  for (let i = visitWaypoints.length - 1; i >= 0; i--) {
+    if (visitWaypoints[i]) {
       lastCoordIndex = i;
       break;
     }
@@ -604,13 +632,13 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
       coordRuns
         .filter((run) => run.end > run.start)
         .map(async (run) => {
-          const runCoords = visitCoords
+          const runWaypoints = visitWaypoints
             .slice(run.start, run.end + 1)
-            .map((coord) => coord as LatLng);
+            .map((waypoint) => waypoint as RouteWaypoint);
 
-          const legs = await computeRouteLegs(runCoords);
+          const legs = await computeRouteLegs(runWaypoints);
 
-          return { run, runCoords, legs };
+          return { run, runWaypoints, legs };
         })
     ),
     // Home -> first stop. No straight-line fallback here (unlike the
@@ -620,13 +648,13 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
     firstCoordIndex !== -1
       ? computeRouteLegs([
           { address: HOME_BASE_ADDRESS },
-          visitCoords[firstCoordIndex] as LatLng,
+          visitWaypoints[firstCoordIndex] as RouteWaypoint,
         ])
       : Promise.resolve(null),
     // Last stop -> home.
     lastCoordIndex !== -1
       ? computeRouteLegs([
-          visitCoords[lastCoordIndex] as LatLng,
+          visitWaypoints[lastCoordIndex] as RouteWaypoint,
           { address: HOME_BASE_ADDRESS },
         ])
       : Promise.resolve(null),
@@ -646,7 +674,7 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
     null
   );
 
-  for (const { run, runCoords, legs } of runResults) {
+  for (const { run, runWaypoints, legs } of runResults) {
     for (let i = run.start; i < run.end; i++) {
       const localIndex = i - run.start;
 
@@ -654,14 +682,22 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
         distanceToNext[i] = legs[localIndex].distanceMiles;
         durationToNext[i] = legs[localIndex].durationMinutes;
       } else {
-        const from = runCoords[localIndex];
-        const to = runCoords[localIndex + 1];
+        // No real route available for this run -- fall back to the
+        // straight-line estimate, but only between two stops that both
+        // have real coordinates (haversineMiles needs numbers, not an
+        // address string to geocode).
+        const from = runWaypoints[localIndex];
+        const to = runWaypoints[localIndex + 1];
 
-        distanceToNext[i] = haversineMiles(from.lat, from.lng, to.lat, to.lng);
+        distanceToNext[i] =
+          isLatLng(from) && isLatLng(to)
+            ? haversineMiles(from.lat, from.lng, to.lat, to.lng)
+            : null;
         durationToNext[i] = null;
       }
     }
   }
+
 
   let totalMiles = distanceToNext.reduce(
     (sum: number, miles) => sum + (miles ?? 0),

@@ -21,6 +21,7 @@ import {
   updateContact,
 } from "@/lib/customerContacts";
 import { addAddress, deleteAddress } from "@/lib/customerAddresses";
+import { validateAddress } from "@/lib/addressValidation";
 import {
   resendInvoice,
   type ResendInvoiceResult,
@@ -751,6 +752,87 @@ export async function deleteCustomerAddress(
   });
 
   revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+
+  return { error: null };
+}
+
+// Edits customers.address_line_1/address_line_2/city/state/postal_code/
+// latitude/longitude directly -- the PRIMARY address, as opposed to the
+// reference-only entries above from lib/customerAddresses.ts. This is the
+// address My Day's navigation links and driving-distance/duration
+// calculation actually read (see app/(platform)/my-day/page.tsx), and
+// what feeds the "Properties" card on this page (page.tsx builds
+// clientProperties straight from these columns). There was previously no
+// staff-facing way to set this after a customer already existed -- Ryan
+// (2026-10-22) hit this with Audra Hill, whose address he'd only added via
+// the "Additional Addresses" feature above, which deliberately never
+// touches these columns. Before the 2026-09 Jobber cutover, editing these
+// directly would have been unsafe (a background CLIENT_UPDATE sync could
+// silently overwrite them); now that lib/jobberWebhookProcessor.ts treats
+// CLIENT_UPDATE as a no-op ("Jobber no longer writes customers/jobs/visits
+// into this app"), that risk is gone. Geocodes via lib/addressValidation.ts,
+// same pattern as lib/nativeCustomers.ts uses at customer-creation time --
+// fails soft to null lat/lng if GOOGLE_ADDRESS_VALIDATION_API_KEY isn't
+// set, which is fine since My Day's distance calc also falls back to
+// routing by the address string itself when coordinates are missing.
+export async function updateCustomerPrimaryAddress(
+  jobberClientId: string,
+  params: {
+    addressLine1: string;
+    addressLine2: string | null;
+    city: string | null;
+    state: string | null;
+    postalCode: string | null;
+  }
+): Promise<{ error: string | null }> {
+  if (!params.addressLine1.trim()) {
+    return { error: "Enter a street address." };
+  }
+
+  const actor = await getCurrentUser();
+
+  const validation = await validateAddress({
+    addressLine: params.addressLine1,
+    city: params.city,
+    state: params.state,
+    zip: params.postalCode,
+  });
+
+  const latitude = validation?.latitude ?? null;
+  const longitude = validation?.longitude ?? null;
+  const geoStatus =
+    latitude !== null && longitude !== null ? "native_validated" : null;
+
+  const { error } = await supabaseServer
+    .from("customers")
+    .update({
+      address_line_1: params.addressLine1,
+      address_line_2: params.addressLine2,
+      city: params.city,
+      state: params.state,
+      postal_code: params.postalCode,
+      country: "US",
+      latitude,
+      longitude,
+      geo_status: geoStatus,
+    })
+    .eq("jobber_client_id", jobberClientId);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "customer",
+    entityId: jobberClientId,
+    entityLabel: params.addressLine1,
+    after: params,
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+  revalidatePath("/my-day");
 
   return { error: null };
 }
