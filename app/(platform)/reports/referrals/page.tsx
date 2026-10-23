@@ -5,14 +5,18 @@ export const revalidate = 0;
 // no customer-facing leaderboard). Reads the customers.referral_source /
 // referred_by_customer_id columns added by migration
 // 070_add_customer_referral_source.sql -- see lib/referralSource.ts for
-// the fixed option list and app/components/ReferralSourceField.tsx for
-// where these values actually get set (New Customer form + each
-// customer's Property Profile). Gated via the marketing_analytics
-// section (lib/permissionRules.ts) since it's the same shape of report
-// as /analytics -- attribution counts, no dollar figures.
+// where the option list now lives (referral_sources table, managed from
+// /settings/referral-sources as of migration 099) and
+// app/components/ReferralSourceField.tsx for where these values actually
+// get set (New Customer form + each customer's Property Profile). Shows
+// EVERY source, including a deactivated one, via listAllReferralSources
+// -- a source Ryan turns off shouldn't make its historical count
+// disappear from this report. Gated via the marketing_analytics section
+// (lib/permissionRules.ts) since it's the same shape of report as
+// /analytics -- attribution counts, no dollar figures.
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
-import { REFERRAL_SOURCE_OPTIONS } from "@/lib/referralSource";
+import { listAllReferralSources } from "@/lib/referralSource";
 
 type CustomerRow = {
   jobber_client_id: string;
@@ -46,12 +50,15 @@ type Referrer = {
 };
 
 export default async function ReferralSourcesReportPage() {
-  const { data, error } = await supabaseServer
-    .from("customers")
-    .select(
-      "jobber_client_id, full_name, first_name, last_name, company_name, referral_source, referred_by_customer_id"
-    )
-    .limit(5000);
+  const [{ data, error }, referralSourceOptions] = await Promise.all([
+    supabaseServer
+      .from("customers")
+      .select(
+        "jobber_client_id, full_name, first_name, last_name, company_name, referral_source, referred_by_customer_id"
+      )
+      .limit(5000),
+    listAllReferralSources(),
+  ]);
 
   const customers = (data ?? []) as CustomerRow[];
   const byId = new Map(customers.map((c) => [c.jobber_client_id, c]));
@@ -139,7 +146,7 @@ export default async function ReferralSourcesReportPage() {
           <h2 className="text-lg font-bold">By Source</h2>
 
           <div className="mt-4 divide-y divide-[#eee9dc]">
-            {REFERRAL_SOURCE_OPTIONS.map((option) => (
+            {referralSourceOptions.map((option) => (
               <div
                 key={option.value}
                 className="flex items-center justify-between py-2 text-sm"

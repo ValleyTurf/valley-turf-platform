@@ -70,7 +70,7 @@ export async function updateCustomerProfile(
   // referral_campaign_id from a previous save must be explicitly cleared
   // here rather than left in place when the source changes.
   const referralSourceRaw = cleanText(formData.get("referral_source"));
-  const referralSource = isReferralSource(referralSourceRaw)
+  const referralSource = (await isReferralSource(referralSourceRaw))
     ? referralSourceRaw
     : null;
   const referredByCustomerId =

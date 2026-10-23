@@ -46,7 +46,7 @@ export async function createCustomer(
   const zip = cleanText(formData.get("zip"));
 
   const referralSourceRaw = cleanText(formData.get("referral_source"));
-  const referralSource = isReferralSource(referralSourceRaw)
+  const referralSource = (await isReferralSource(referralSourceRaw))
     ? referralSourceRaw
     : null;
   // Defense in depth -- ReferralSourceField only renders the matching

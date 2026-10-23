@@ -4,6 +4,7 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import NewCustomerForm from "./NewCustomerForm";
+import { listActiveReferralSources } from "@/lib/referralSource";
 import type {
   ReferralPickerCustomer,
   ReferralQrCampaign,
@@ -36,18 +37,20 @@ export default async function NewCustomerPage() {
   // Same "who could this be?" picker list jobs/new/page.tsx already
   // builds for NewJobForm -- reused here for the Referral Source field's
   // "referred by" picker (see app/components/ReferralSourceField.tsx).
-  const [{ data: customersData }, { data: campaignsData }] = await Promise.all([
-    supabaseServer
-      .from("customers")
-      .select("jobber_client_id, full_name, first_name, last_name, company_name")
-      .order("full_name", { ascending: true })
-      .limit(2000),
-    supabaseServer
-      .from("campaigns")
-      .select("id, name, alias")
-      .eq("channel", "qr")
-      .order("name", { ascending: true }),
-  ]);
+  const [{ data: customersData }, { data: campaignsData }, referralSourceOptions] =
+    await Promise.all([
+      supabaseServer
+        .from("customers")
+        .select("jobber_client_id, full_name, first_name, last_name, company_name")
+        .order("full_name", { ascending: true })
+        .limit(2000),
+      supabaseServer
+        .from("campaigns")
+        .select("id, name, alias")
+        .eq("channel", "qr")
+        .order("name", { ascending: true }),
+      listActiveReferralSources(),
+    ]);
 
   const customers: ReferralPickerCustomer[] = ((customersData ?? []) as CustomerRow[]).map(
     (row) => ({
@@ -89,7 +92,11 @@ export default async function NewCustomerPage() {
         </header>
 
         <section className="mt-6 rounded-2xl bg-white p-5 shadow sm:p-8">
-          <NewCustomerForm customers={customers} campaigns={campaigns} />
+          <NewCustomerForm
+            customers={customers}
+            campaigns={campaigns}
+            referralSourceOptions={referralSourceOptions}
+          />
         </section>
       </div>
     </main>

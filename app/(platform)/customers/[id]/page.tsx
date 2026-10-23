@@ -35,7 +35,9 @@ import TurfSizeField from "./TurfSizeField";
 import ReferralSourceField, {
   type ReferralPickerCustomer,
   type ReferralQrCampaign,
+  type ReferralSourceOption,
 } from "@/app/components/ReferralSourceField";
+import { listActiveReferralSources } from "@/lib/referralSource";
 import AddVisitNoteForm from "./AddVisitNoteForm";
 import VisitNoteItem from "./VisitNoteItem";
 import PhotoGrid from "@/app/components/PhotoGrid";
@@ -1723,8 +1725,9 @@ function referralCustomerDisplayName(row: ReferralCustomerRow): string {
 async function getReferralPickerData(excludeJobberClientId: string): Promise<{
   customers: ReferralPickerCustomer[];
   campaigns: ReferralQrCampaign[];
+  options: ReferralSourceOption[];
 }> {
-  const [{ data: customersData }, { data: campaignsData }] = await Promise.all([
+  const [{ data: customersData }, { data: campaignsData }, options] = await Promise.all([
     supabaseServer
       .from("customers")
       .select("jobber_client_id, full_name, first_name, last_name, company_name")
@@ -1736,6 +1739,7 @@ async function getReferralPickerData(excludeJobberClientId: string): Promise<{
       .select("id, name, alias")
       .eq("channel", "qr")
       .order("name", { ascending: true }),
+    listActiveReferralSources(),
   ]);
 
   const customers: ReferralPickerCustomer[] = (
@@ -1752,7 +1756,7 @@ async function getReferralPickerData(excludeJobberClientId: string): Promise<{
     label: row.alias ?? row.name,
   }));
 
-  return { customers, campaigns };
+  return { customers, campaigns, options };
 }
 
 function decimalHoursToHMM(decimalHours: number): string {
@@ -2913,6 +2917,7 @@ export default async function CustomerDetailPage({
                       initialCampaignId={profile?.referral_campaign_id ?? null}
                       customers={referralPickerData.customers}
                       campaigns={referralPickerData.campaigns}
+                      options={referralPickerData.options}
                     />
 
                     <div className="flex items-start gap-2 rounded-lg border border-[#e7e2d5] bg-[#f7f6f1] p-3">

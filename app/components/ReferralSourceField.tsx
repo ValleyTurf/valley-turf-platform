@@ -1,10 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import {
-  REFERRAL_SOURCE_OPTIONS,
-  type ReferralSource,
-} from "@/lib/referralSource";
 
 export type ReferralPickerCustomer = {
   id: string;
@@ -13,6 +9,19 @@ export type ReferralPickerCustomer = {
 
 export type ReferralQrCampaign = {
   id: string;
+  label: string;
+};
+
+// Plain {value, label} pairs -- same shape as
+// lib/referralSource.ts's ReferralSourceOption, declared separately
+// here so this client component has no server-only import (same
+// reasoning as the two types above). Fetched server-side from the
+// referral_sources table (migration 099) by whichever page renders this
+// field, and passed down as a prop instead of a static imported list --
+// that table is what makes the options Ryan-editable from
+// /settings/referral-sources without a code change.
+export type ReferralSourceOption = {
+  value: string;
   label: string;
 };
 
@@ -34,12 +43,14 @@ export default function ReferralSourceField({
   initialCampaignId,
   customers,
   campaigns,
+  options,
 }: {
   initialSource?: string | null;
   initialReferredBy?: ReferralPickerCustomer | null;
   initialCampaignId?: string | null;
   customers: ReferralPickerCustomer[];
   campaigns: ReferralQrCampaign[];
+  options: ReferralSourceOption[];
 }) {
   const [source, setSource] = useState<string>(initialSource ?? "");
   const [search, setSearch] = useState("");
@@ -69,7 +80,7 @@ export default function ReferralSourceField({
           className={`${inputClasses} bg-white`}
         >
           <option value="">Not set</option>
-          {REFERRAL_SOURCE_OPTIONS.map((option) => (
+          {options.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
@@ -77,7 +88,7 @@ export default function ReferralSourceField({
         </select>
       </div>
 
-      {(source as ReferralSource) === "referral" && (
+      {source === "referral" && (
         <div>
           <label className="text-xs font-bold text-[#9c7a20]">
             Referred by
@@ -139,7 +150,7 @@ export default function ReferralSourceField({
         </div>
       )}
 
-      {(source as ReferralSource) === "qr_code" && (
+      {source === "qr_code" && (
         <div>
           <label
             htmlFor="referral_campaign_id"

@@ -61,6 +61,14 @@ const settingsSections: SettingsSection[] = [
     status: "View",
   },
   {
+    title: "Referral Sources",
+    description:
+      "Manage the \"How did you hear about us?\" options on the New Customer form and each customer's Property Profile -- add a new one any time, no code change needed.",
+    href: "/settings/referral-sources",
+    icon: "📣",
+    status: "Manage",
+  },
+  {
     title: "Notifications",
     description:
       "Configure automated pre-visit text/email reminders and (once ready) review request messages.",
