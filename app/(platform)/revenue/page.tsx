@@ -15,6 +15,7 @@ import {
 } from "@/lib/overhead";
 
 type MarketInvoice = {
+  jobber_invoice_id: string;
   jobber_client_id: string | null;
   issue_date: string | null;
   invoice_total: number | string;
@@ -405,6 +406,59 @@ function makeMarketHref(
   return `/revenue?${params.toString()}`;
 }
 
+// Gabrielle Tobeck (Ryan, 2026-10-24): her voided native invoice
+// (duplicate of a Jobber invoice she paid directly -- see
+// app/api/invoices/void-duplicate-invoice/route.ts) was still showing
+// as outstanding on this page, and double-counting into her zip code's
+// revenue alongside Shaina Bohns' job in the same zip. The outstanding
+// list below reads invoice_financials/outstanding_invoices' own
+// `status` column and just hadn't been taught to exclude "void" (only
+// "paid"/"draft" -- dashboard/page.tsx's fetchOutstandingInvoices fixed
+// this exact gap for Gabrielle on 2026-10-05, but this page has its own
+// separate outstanding filter that never got the same fix). The
+// market/service-category revenue totals below are a second, different
+// gap: invoice_financials doesn't expose `status` in the columns this
+// page was already selecting, so a voided invoice's total was never
+// excluded there at all, in range or out. Rather than guess at
+// invoice_financials' exact column list, this cross-checks the
+// jobber_invoice_ids it already returns (confirmed present --
+// fetchServiceCategoryRevenue below already selects it successfully)
+// against jobber_invoices.status directly, same source of truth
+// dashboard/page.tsx's fix already trusts.
+async function fetchVoidJobberInvoiceIds(
+  invoiceIds: string[],
+): Promise<Set<string>> {
+  if (invoiceIds.length === 0) {
+    return new Set();
+  }
+
+  const uniqueIds = Array.from(new Set(invoiceIds));
+  const idBatchSize = 500;
+  const voidIds = new Set<string>();
+
+  for (let i = 0; i < uniqueIds.length; i += idBatchSize) {
+    const idBatch = uniqueIds.slice(i, i + idBatchSize);
+
+    const { data, error } = await supabaseServer
+      .from("jobber_invoices")
+      .select("jobber_invoice_id, status")
+      .in("jobber_invoice_id", idBatch);
+
+    if (error) throw error;
+
+    for (const row of (data ?? []) as {
+      jobber_invoice_id: string;
+      status: string | null;
+    }[]) {
+      if (row.status === "void") {
+        voidIds.add(row.jobber_invoice_id);
+      }
+    }
+  }
+
+  return voidIds;
+}
+
 async function fetchMarketInvoices(
   startDate: string,
   endDate: string,
@@ -415,7 +469,9 @@ async function fetchMarketInvoices(
   for (let from = 0; ; from += pageSize) {
     const { data, error } = await supabaseServer
       .from("invoice_financials")
-      .select("jobber_client_id, issue_date, invoice_total, outstanding_balance")
+      .select(
+        "jobber_invoice_id, jobber_client_id, issue_date, invoice_total, outstanding_balance",
+      )
       .gte("issue_date", startDate)
       .lte("issue_date", endDate)
       .not("jobber_client_id", "is", null)
@@ -429,7 +485,11 @@ async function fetchMarketInvoices(
     if (batch.length < pageSize) break;
   }
 
-  return rows;
+  const voidIds = await fetchVoidJobberInvoiceIds(
+    rows.map((row) => row.jobber_invoice_id),
+  );
+
+  return rows.filter((row) => !voidIds.has(row.jobber_invoice_id));
 }
 
 
@@ -477,7 +537,18 @@ async function fetchServiceCategoryRevenue(
     return [];
   }
 
-  const invoiceIds = invoiceRows.map((row) => row.jobber_invoice_id);
+  // See fetchVoidJobberInvoiceIds' comment above fetchMarketInvoices --
+  // same gap, same view, same fix: invoice_financials doesn't carry a
+  // status this page can filter on directly, so a voided invoice's
+  // total landed in a service category's revenue same as any real one.
+  const voidIds = await fetchVoidJobberInvoiceIds(
+    invoiceRows.map((row) => row.jobber_invoice_id),
+  );
+  const liveInvoiceRows = invoiceRows.filter(
+    (row) => !voidIds.has(row.jobber_invoice_id),
+  );
+
+  const invoiceIds = liveInvoiceRows.map((row) => row.jobber_invoice_id);
   const categoryRows: {
     jobber_invoice_id: string;
     service_category: string | null;
@@ -515,7 +586,7 @@ async function fetchServiceCategoryRevenue(
     { revenue: number; invoiceCount: number; customerIds: Set<string> }
   >();
 
-  for (const row of invoiceRows) {
+  for (const row of liveInvoiceRows) {
     const category =
       categoryMap.get(row.jobber_invoice_id) ?? "Uncategorized";
     const existing = totals.get(category) ?? {
@@ -811,9 +882,21 @@ export default async function RevenuePage({ searchParams }: RevenuePageProps) {
   // filter at all, so it had both gaps. Same exclusion as the dashboard:
   // a paid invoice isn't outstanding, and a draft was never sent, so it
   // was never actually owed either.
+  //
+  // Gabrielle Tobeck (Ryan, 2026-10-24): "void" was missing from this
+  // list too -- dashboard/page.tsx's fetchOutstandingInvoices picked up
+  // the exact same exclusion back on 2026-10-05 for her, but this page
+  // has its own separate filter that never got the matching fix, so her
+  // voided duplicate invoice kept showing up here even after the
+  // dashboard stopped showing it.
   const outstandingInvoices = (
     (outstandingResult.data ?? []) as OutstandingInvoice[]
-  ).filter((invoice) => invoice.status !== "paid" && invoice.status !== "draft");
+  ).filter(
+    (invoice) =>
+      invoice.status !== "paid" &&
+      invoice.status !== "draft" &&
+      invoice.status !== "void",
+  );
   const forecastMonths = (forecastResult.data ?? []) as ForecastMonth[];
 
   // Each invoice represents a completed service visit, so invoice count
