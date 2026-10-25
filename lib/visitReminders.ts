@@ -37,6 +37,7 @@ type ReminderCustomer = {
   jobber_client_id: string;
   phone: string | null;
   email: string | null;
+  notifications_opted_out: boolean;
 };
 
 export type SendRemindersResult = {
@@ -167,7 +168,7 @@ export async function sendDueVisitReminders(): Promise<SendRemindersResult> {
 
     const { data: customersData, error: customersError } = await supabaseServer
       .from("customers")
-      .select("jobber_client_id, phone, email")
+      .select("jobber_client_id, phone, email, notifications_opted_out")
       .in("jobber_client_id", clientIds);
 
     if (customersError) {
@@ -188,6 +189,18 @@ export async function sendDueVisitReminders(): Promise<SendRemindersResult> {
       const customer = visit.jobber_client_id
         ? customersById.get(visit.jobber_client_id)
         : null;
+
+      // Mirror lib/notifications.ts's isOptedOutOfNotifications gate up
+      // here too, rather than relying only on the check inside
+      // sendVisitReminderSms/Email -- skipping before we even attempt a
+      // send means an opted-out customer doesn't get logged as a false
+      // "delivery failed" error every single day. Ryan, 2026-10-25: Lehi
+      // Cove (opted out since 2026-09-24) was still showing up in the
+      // daily digest preview as "getting" a reminder -- see the matching
+      // fix in previewPendingVisitReminders below.
+      if (customer?.notifications_opted_out) {
+        continue;
+      }
 
       const phone = customer?.phone?.trim() || null;
       const email = customer?.email?.trim() || null;
@@ -331,7 +344,37 @@ export async function previewPendingVisitReminders(): Promise<PendingRemindersPr
     const alreadySent = new Set(
       (alreadySentData ?? []).map((row) => row.jobber_visit_id as string)
     );
-    const pending = visits.filter((v) => !alreadySent.has(v.jobber_visit_id));
+    const notYetSent = visits.filter((v) => !alreadySent.has(v.jobber_visit_id));
+
+    // Mirrors the real send's opt-out gate too (lib/notifications.ts's
+    // isOptedOutOfNotifications, checked inside sendVisitReminderSms/
+    // Email, and now also filtered a step earlier in sendDueVisitReminders
+    // above) -- otherwise this preview told Ryan a reminder was going out
+    // today for a customer who'd opted out of all automated messages, when
+    // the actual send silently skipped them. Ryan, 2026-10-25: Lehi Cove
+    // (opted out since 2026-09-24) kept showing up here as "getting" a
+    // 4-day reminder.
+    const previewClientIds = Array.from(
+      new Set(notYetSent.map((v) => v.jobber_client_id).filter(Boolean))
+    ) as string[];
+
+    const optedOutClientIds = new Set<string>();
+    if (previewClientIds.length > 0) {
+      const { data: previewCustomersData } = await supabaseServer
+        .from("customers")
+        .select("jobber_client_id, notifications_opted_out")
+        .in("jobber_client_id", previewClientIds);
+
+      for (const c of previewCustomersData ?? []) {
+        if (c.notifications_opted_out) {
+          optedOutClientIds.add(c.jobber_client_id as string);
+        }
+      }
+    }
+
+    const pending = notYetSent.filter(
+      (v) => !v.jobber_client_id || !optedOutClientIds.has(v.jobber_client_id)
+    );
 
     count += pending.length;
 
