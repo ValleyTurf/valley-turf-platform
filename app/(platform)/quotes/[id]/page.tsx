@@ -347,21 +347,60 @@ export default async function QuoteDetailPage({
             {quote.recipient_email || quote.recipient_phone ? (
               <>
                 <p className="mt-1 text-sm text-[#6b705c]">
-                  Emails{quote.recipient_email && quote.recipient_phone ? " and texts" : ""} the
-                  quote link to{" "}
-                  {[quote.recipient_email, quote.recipient_phone]
-                    .filter(Boolean)
-                    .join(" and ")}
-                  .
+                  {quote.recipient_email && quote.recipient_phone
+                    ? "Choose how to send the quote link."
+                    : `Sends the quote link to ${quote.recipient_email || quote.recipient_phone}.`}
                 </p>
-                <form action={sendQuote.bind(null, quote.id)} className="mt-3">
-                  <button
-                    type="submit"
-                    className="rounded-xl bg-[#174734] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#226246]"
+                {/* Both on file -- Ryan (2026-10-25) wanted a choice
+                    instead of this always firing off every channel at
+                    once, so this is the only case with more than one
+                    button. Email/Text only on file skips straight to a
+                    single button bound to the one channel that's
+                    possible, same one-click flow as before. */}
+                {quote.recipient_email && quote.recipient_phone ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <form action={sendQuote.bind(null, quote.id, "email")}>
+                      <button
+                        type="submit"
+                        className="rounded-xl bg-[#174734] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#226246]"
+                      >
+                        Send by Email
+                      </button>
+                    </form>
+                    <form action={sendQuote.bind(null, quote.id, "text")}>
+                      <button
+                        type="submit"
+                        className="rounded-xl bg-[#174734] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#226246]"
+                      >
+                        Send by Text
+                      </button>
+                    </form>
+                    <form action={sendQuote.bind(null, quote.id, "both")}>
+                      <button
+                        type="submit"
+                        className="rounded-xl border border-[#174734] px-5 py-3 text-sm font-bold text-[#174734] transition hover:bg-[#174734] hover:text-white"
+                      >
+                        Send Both
+                      </button>
+                    </form>
+                  </div>
+                ) : (
+                  <form
+                    action={sendQuote.bind(
+                      null,
+                      quote.id,
+                      quote.recipient_email ? "email" : "text",
+                    )}
+                    className="mt-3"
                   >
-                    Send Quote
-                  </button>
-                </form>
+                    <button
+                      type="submit"
+                      className="rounded-xl bg-[#174734] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#226246]"
+                    >
+                      Send Quote
+                    </button>
+                  </form>
+                )}
               </>
             ) : (
               <p className="mt-1 text-sm text-[#6b705c]">

@@ -292,15 +292,24 @@ export async function deleteDraftQuote(id: string): Promise<void> {
   redirect("/quotes");
 }
 
+// Ryan (2026-10-25): "set up so I can pick how I send the quote,
+// either by email or by text" -- this used to fire off every channel
+// the quote had contact info for automatically, no choice. Still the
+// default when a quote only has one of the two on file (nothing to
+// pick between), but with both on file the UI below now offers three
+// buttons -- Email, Text, or Both -- bound to this same action with a
+// different channel each.
+export type QuoteSendChannel = "email" | "text" | "both";
+
 // The actual "Send" action (Sept 2026) — distinct from markQuoteStatus's
 // "Mark Sent" button below, which only flips the status for a quote
 // staff already handed over some other way (in person, printed). This
 // is the real send: emails and/or texts the customer the public
-// /q/[token] link (whichever of recipient_email/recipient_phone this
-// quote has on file), using the fixed templates in lib/notifications.ts,
-// then moves the quote to "sent" -- only once at least one channel
-// actually went out, so a total send failure leaves the quote in
-// "draft" rather than silently marking it sent with nothing delivered.
+// /q/[token] link per the chosen channel, using the fixed templates in
+// lib/notifications.ts, then moves the quote to "sent" -- only once at
+// least one channel actually went out, so a total send failure leaves
+// the quote in "draft" rather than silently marking it sent with
+// nothing delivered.
 //
 // quote.customer_id is already customers.jobber_client_id (see
 // QuoteRecipientPicker's PickerCustomer type) — passed straight through
@@ -308,7 +317,7 @@ export async function deleteDraftQuote(id: string): Promise<void> {
 // logging, no extra lookup needed. A lead-based quote has no customer_id
 // at all, so that logging is just skipped for it, same as every other
 // lead-sourced send in this app.
-export async function sendQuote(id: string): Promise<void> {
+export async function sendQuote(id: string, channel: QuoteSendChannel): Promise<void> {
   const actor = await getCurrentUser();
 
   if (!actor) {
@@ -335,11 +344,22 @@ export async function sendQuote(id: string): Promise<void> {
     throw new Error("This quote has no email or phone on file to send to.");
   }
 
+  const wantsEmail = channel === "email" || channel === "both";
+  const wantsText = channel === "text" || channel === "both";
+
+  if (wantsEmail && !quote.recipient_email) {
+    throw new Error("This quote has no email on file to send to.");
+  }
+
+  if (wantsText && !quote.recipient_phone) {
+    throw new Error("This quote has no phone number on file to send to.");
+  }
+
   const quoteUrl = `https://go.valleyturfrevival.com/q/${quote.public_token}`;
   const jobberClientId = quote.customer_id;
 
   const [emailResult, smsResult] = await Promise.allSettled([
-    quote.recipient_email
+    wantsEmail && quote.recipient_email
       ? sendQuoteEmail({
           toEmail: quote.recipient_email,
           recipientName: quote.recipient_name,
@@ -347,7 +367,7 @@ export async function sendQuote(id: string): Promise<void> {
           jobberClientId,
         })
       : Promise.resolve(false),
-    quote.recipient_phone
+    wantsText && quote.recipient_phone
       ? sendQuoteSms(quote.recipient_phone, quote.recipient_name, quoteUrl, jobberClientId)
       : Promise.resolve(false),
   ]);
@@ -357,7 +377,7 @@ export async function sendQuote(id: string): Promise<void> {
 
   if (!emailSent && !smsSent) {
     throw new Error(
-      "Couldn't send the quote by email or text. Check that Resend/Twilio are configured correctly, or try again."
+      `Couldn't send the quote by ${channel === "both" ? "email or text" : channel}. Check that Resend/Twilio are configured correctly, or try again.`
     );
   }
 
