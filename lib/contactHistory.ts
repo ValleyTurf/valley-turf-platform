@@ -15,8 +15,16 @@
 //      messages live in their own table already shaped exactly right
 //      (sender, body, created_at) -- no reason to copy them into
 //      contact_history too, just merge at read time.
+//
+// logContactHistory also fires the home-screen push badge (lib/webPush.ts)
+// for an inbound text/email reply -- Ryan + Brittanie, 2026-10-25: "would
+// like our mobile app show on my home screen with a red dot like you see
+// when there are other apps with new messages." See notifyInboundMessage
+// below; app/portal/messages/actions.ts does the equivalent for a portal
+// chat message, since those never pass through this function.
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
+import { sendPushToAllSubscribers } from "@/lib/webPush";
 
 export type ContactChannel = "email" | "sms" | "call";
 export type ContactDirection = "outbound" | "inbound";
@@ -68,6 +76,39 @@ export async function logContactHistory(
     // this only logs to the console rather than throwing back into
     // whatever notification function called it.
     console.error("logContactHistory failed:", error.message, params);
+    return;
+  }
+
+  // Buzz the home-screen badge for every inbound customer reply (SMS or
+  // email) -- excludes channel "call" since those are logged by staff
+  // after the fact (the Log Phone Call button), not something that just
+  // arrived while a phone was in someone's pocket, so pushing one would
+  // just be notifying someone about their own note. Fire-and-forget: a
+  // push hiccup should never be able to take down the contact-history
+  // logging it rides along with.
+  if (params.direction === "inbound" && params.channel !== "call") {
+    void notifyInboundMessage(params);
+  }
+}
+
+async function notifyInboundMessage(
+  params: LogContactHistoryParams
+): Promise<void> {
+  try {
+    const unreadCount = await getUnreadMessageCount();
+    const channelLabel = params.channel === "sms" ? "text" : "email";
+
+    await sendPushToAllSubscribers({
+      title: "New customer message",
+      body:
+        params.summary?.trim() || params.subject || `New ${channelLabel} reply`,
+      url: params.jobberClientId
+        ? `/messages/${encodeURIComponent(params.jobberClientId)}`
+        : "/messages",
+      badgeCount: unreadCount,
+    });
+  } catch (err) {
+    console.error("notifyInboundMessage failed:", err);
   }
 }
 

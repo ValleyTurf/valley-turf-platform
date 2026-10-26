@@ -43,7 +43,7 @@ export default async function PlatformLayout({
 
   return (
     <div className="flex min-h-screen flex-col bg-[#f5f4ef] md:flex-row">
-      <ServiceWorkerRegister />
+      <ServiceWorkerRegister unreadMessageCount={unreadMessageCount} />
       <InstallPrompt />
 
       <Sidebar

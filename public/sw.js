@@ -107,3 +107,80 @@ self.addEventListener("fetch", (event) => {
   // means the browser handles it exactly as if there were no service
   // worker at all.
 });
+
+// Push notifications -- see lib/webPush.ts (server-side send, triggered
+// by an inbound customer text/email/portal message) and
+// app/(platform)/account/NotificationsSection.tsx (client subscribe
+// flow). Ryan + Brittanie, 2026-10-25: want a red dot on the home-screen
+// icon the same way any other messaging app shows one.
+//
+// Every push both shows a visible notification AND tries to set the
+// badge, unconditionally -- iOS/iPadOS requires the notification no
+// matter what (a push that only touched the badge is silently dropped),
+// and Android ignores setAppBadge entirely, auto-badging instead off of
+// whatever's left in the notification tray. Desktop Chrome/Edge honors
+// setAppBadge directly. Doing both means every platform just takes
+// whichever half it actually supports.
+self.addEventListener("push", (event) => {
+  let payload = {
+    title: "Valley Turf Revival",
+    body: "You have a new update.",
+    url: "/messages",
+    badgeCount: 0,
+  };
+
+  try {
+    if (event.data) {
+      payload = { ...payload, ...event.data.json() };
+    }
+  } catch (error) {
+    console.error("Failed to parse push payload:", error);
+  }
+
+  const notify = self.registration.showNotification(payload.title, {
+    body: payload.body,
+    icon: "/icons/icon-192.png",
+    badge: "/icons/icon-192.png",
+    data: { url: payload.url },
+  });
+
+  const badge =
+    "setAppBadge" in navigator
+      ? payload.badgeCount > 0
+        ? navigator.setAppBadge(payload.badgeCount)
+        : navigator.clearAppBadge()
+      : Promise.resolve();
+
+  event.waitUntil(Promise.all([notify, badge]));
+});
+
+// Tapping the notification focuses an existing tab on the right page if
+// one's already open, rather than piling up a new one every time.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+
+  const targetUrl =
+    (event.notification.data && event.notification.data.url) || "/messages";
+
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clientList) => {
+        for (const client of clientList) {
+          const clientUrl = new URL(client.url);
+
+          if (
+            clientUrl.origin === self.location.origin &&
+            "focus" in client
+          ) {
+            if ("navigate" in client) {
+              client.navigate(targetUrl);
+            }
+            return client.focus();
+          }
+        }
+
+        return self.clients.openWindow(targetUrl);
+      })
+  );
+});

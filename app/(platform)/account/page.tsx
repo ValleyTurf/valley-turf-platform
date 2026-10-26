@@ -3,6 +3,7 @@ export const revalidate = 0;
 
 import { getCurrentUser } from "@/lib/currentUser";
 import ChangePasswordForm from "./ChangePasswordForm";
+import NotificationsSection from "./NotificationsSection";
 
 export default async function AccountPage() {
   const user = await getCurrentUser();
@@ -39,6 +40,8 @@ export default async function AccountPage() {
 
           <ChangePasswordForm />
         </section>
+
+        <NotificationsSection />
       </div>
     </main>
   );

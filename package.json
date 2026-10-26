@@ -23,7 +23,8 @@
     "react-plaid-link": "^5.0.0",
     "server-only": "^0.0.1",
     "sharp": "^0.35.4",
-    "stripe": "^22.5.0"
+    "stripe": "^22.5.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
