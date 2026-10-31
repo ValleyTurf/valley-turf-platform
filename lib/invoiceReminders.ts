@@ -26,6 +26,15 @@
 // app's own /pay/[publicToken] page; a real Jobber invoice gets its
 // jobber_web_uri (Jobber's own hosted invoice page) since we have no
 // payment page of our own for those.
+//
+// Two manual per-invoice exceptions, both in migrations rather than any
+// UI (Ryan just asks in chat when he needs one): invoice_reminder_overrides
+// (migration 081) forces an invoice INTO the daily tail early;
+// invoice_reminder_snoozes (migration 101, Ryan 2026-10-31 -- "pause
+// Katie Ray receiving invoice reminders for one week") forces one OUT of
+// every reminder, fixed-day or daily tail, until a given date, then lets
+// it resume on its own. Both are checked once, centrally, in
+// processReminderBatch below, so neither phase can forget about them.
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
@@ -137,11 +146,35 @@ async function processReminderBatch(
   pending: PendingReminder[],
   baseUrl: string,
   result: SendInvoiceRemindersResult,
-  describeRule: (daysAfter: number) => string
+  describeRule: (daysAfter: number) => string,
+  todayPhoenix: string
 ): Promise<void> {
   if (pending.length === 0) return;
 
-  const invoiceIds = Array.from(new Set(pending.map((p) => p.invoice.jobber_invoice_id)));
+  // invoice_reminder_snoozes (migration 101): an invoice paused here is
+  // skipped entirely -- not counted as "sent" (so it isn't silently
+  // marked done and forgotten), just left alone until snoozed_until. A
+  // snooze whose date has already passed is effectively expired and
+  // excluded from this query, so it stops affecting anything on its own
+  // with no row to clean up.
+  const { data: snoozeRows, error: snoozeError } = await supabaseServer
+    .from("invoice_reminder_snoozes")
+    .select("jobber_invoice_id")
+    .gt("snoozed_until", todayPhoenix);
+
+  if (snoozeError) {
+    result.errors.push(`Couldn't load invoice reminder snoozes: ${snoozeError.message}`);
+  }
+
+  const snoozedIds = new Set(
+    (snoozeRows ?? []).map((row) => row.jobber_invoice_id as string)
+  );
+
+  const unsnoozed = pending.filter((p) => !snoozedIds.has(p.invoice.jobber_invoice_id));
+
+  if (unsnoozed.length === 0) return;
+
+  const invoiceIds = Array.from(new Set(unsnoozed.map((p) => p.invoice.jobber_invoice_id)));
 
   const { data: alreadySentData, error: alreadySentError } = await supabaseServer
     .from("invoice_reminders_sent")
@@ -157,7 +190,7 @@ async function processReminderBatch(
     (alreadySentData ?? []).map((row) => `${row.jobber_invoice_id}:${row.days_after}`)
   );
 
-  const pendingToSend = pending.filter(
+  const pendingToSend = unsnoozed.filter(
     (p) => !alreadySent.has(`${p.invoice.jobber_invoice_id}:${p.daysAfter}`)
   );
 
@@ -343,7 +376,8 @@ export async function sendDueInvoiceReminders(): Promise<SendInvoiceRemindersRes
       invoices.map((invoice) => ({ invoice, daysAfter: rule.days_after })),
       baseUrl,
       result,
-      (daysAfter) => `${daysAfter}-day-overdue rule`
+      (daysAfter) => `${daysAfter}-day-overdue rule`,
+      todayPhoenix
     );
   }
 
@@ -450,7 +484,8 @@ export async function sendDueInvoiceReminders(): Promise<SendInvoiceRemindersRes
       pendingTail,
       baseUrl,
       result,
-      (daysAfter) => `${daysAfter}-day daily overdue tail`
+      (daysAfter) => `${daysAfter}-day daily overdue tail`,
+      todayPhoenix
     );
   }
 
