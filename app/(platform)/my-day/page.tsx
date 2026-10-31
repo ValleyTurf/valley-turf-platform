@@ -562,21 +562,30 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
   // Real driving distance/time between each consecutive stop, via
   // Google's Routes API (lib/googleRoutes.ts) when GOOGLE_ROUTES_API_KEY
   // is configured. Falls back to the straight-line haversineMiles()
-  // estimate (lib/geoDistance.ts) per contiguous run of stops where the
-  // real routing call isn't available (no key) or fails (network error,
-  // Google API error) — grouped into "runs" of consecutive stops that
-  // all have a waypoint (coordinates OR, when lat/lng aren't on file,
-  // a plain address string -- computeRouteLegs geocodes that server-side,
-  // same as it already does for HOME_BASE_ADDRESS below), since a real
-  // route can only be computed across an unbroken chain, and one stop
-  // missing both coordinates and an address shouldn't take out the
-  // estimate for the stops around it. Ryan (2026-10-22, Audra Hill): a
-  // customer can have real coordinates once Google Address Validation
-  // runs (see updateCustomerPrimaryAddress in customers/[id]/actions.ts)
-  // but won't if GOOGLE_ADDRESS_VALIDATION_API_KEY isn't configured --
-  // the address-string fallback here means a stop still gets routed
-  // correctly either way, rather than silently dropping out of the chain
-  // the way a coordinates-only stop would.
+  // estimate (lib/geoDistance.ts) only when a real routing call isn't
+  // available (no key) or fails (network error, Google API error).
+  //
+  // Ryan (2026-10-22, Audra Hill): a customer can have real coordinates
+  // once Google Address Validation runs (see updateCustomerPrimaryAddress
+  // in customers/[id]/actions.ts) but won't if
+  // GOOGLE_ADDRESS_VALIDATION_API_KEY isn't configured -- so a stop with
+  // no lat/lng on file still gets routed via a plain address-string
+  // waypoint (computeRouteLegs geocodes that server-side, same as it
+  // already does for HOME_BASE_ADDRESS below) rather than silently
+  // dropping out of the day's route entirely.
+  //
+  // Ryan (2026-11-02): that address fallback originally joined the SAME
+  // batched run (and the same single Google request) as any coordinate
+  // stops next to it -- cheaper (one request covers many stops), but it
+  // meant one ungeocodable/ambiguous address anywhere in the chain could
+  // fail the whole combined request and silently straight-line the
+  // ENTIRE day, including legs between two stops that both had perfectly
+  // good coordinates. coordRuns below now only ever groups consecutive
+  // REAL-COORDINATE stops (restoring the original, pre-Audra-Hill
+  // grouping) so that failure mode can't happen; every leg touching an
+  // address-only waypoint is instead computed with its own isolated
+  // 2-stop request further down (individualLegIndexes), so a bad address
+  // can only ever cost its own one or two adjacent legs.
   const visitWaypoints: (RouteWaypoint | null)[] = visits.map((visit) => {
     const contact = visit.jobber_client_id
       ? contactMap.get(visit.jobber_client_id) ?? null
@@ -602,7 +611,9 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
   const coordRuns: { start: number; end: number }[] = [];
 
   for (let i = 0; i < visitWaypoints.length; i++) {
-    if (visitWaypoints[i]) {
+    const waypoint = visitWaypoints[i];
+
+    if (waypoint && isLatLng(waypoint)) {
       if (runStart === null) runStart = i;
     } else if (runStart !== null) {
       coordRuns.push({ start: runStart, end: i - 1 });
@@ -611,6 +622,26 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
   }
   if (runStart !== null) {
     coordRuns.push({ start: runStart, end: visitWaypoints.length - 1 });
+  }
+
+  // Every leg the batched coordRuns above DON'T cover but that still has
+  // a waypoint on both ends (i.e. at least one side is an address-only
+  // stop) -- each gets its own isolated 2-stop Google call below, same
+  // "no straight-line fallback, just leave it blank on failure" pattern
+  // as the home-base commute legs, since haversineMiles needs two real
+  // coordinates and an address string doesn't give it one.
+  const coveredByRun = new Set<number>();
+  for (const run of coordRuns) {
+    for (let i = run.start; i < run.end; i++) {
+      coveredByRun.add(i);
+    }
+  }
+
+  const individualLegIndexes: number[] = [];
+  for (let i = 0; i < visitWaypoints.length - 1; i++) {
+    if (visitWaypoints[i] && visitWaypoints[i + 1] && !coveredByRun.has(i)) {
+      individualLegIndexes.push(i);
+    }
   }
 
   // First/last stop that actually has a waypoint — the crew's
@@ -627,38 +658,52 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
     }
   }
 
-  const [runResults, startingLeg, endingLeg] = await Promise.all([
-    Promise.all(
-      coordRuns
-        .filter((run) => run.end > run.start)
-        .map(async (run) => {
-          const runWaypoints = visitWaypoints
-            .slice(run.start, run.end + 1)
-            .map((waypoint) => waypoint as RouteWaypoint);
+  const [runResults, startingLeg, endingLeg, individualLegResults] =
+    await Promise.all([
+      Promise.all(
+        coordRuns
+          .filter((run) => run.end > run.start)
+          .map(async (run) => {
+            const runWaypoints = visitWaypoints
+              .slice(run.start, run.end + 1)
+              .map((waypoint) => waypoint as RouteWaypoint);
 
-          const legs = await computeRouteLegs(runWaypoints);
+            const legs = await computeRouteLegs(runWaypoints);
 
-          return { run, runWaypoints, legs };
+            return { run, runWaypoints, legs };
+          })
+      ),
+      // Home -> first stop. No straight-line fallback here (unlike the
+      // inter-stop legs above) since the home base is only ever given as
+      // an address string, not coordinates — if Google's call fails, this
+      // leg just isn't shown rather than guessing at a distance.
+      firstCoordIndex !== -1
+        ? computeRouteLegs([
+            { address: HOME_BASE_ADDRESS },
+            visitWaypoints[firstCoordIndex] as RouteWaypoint,
+          ])
+        : Promise.resolve(null),
+      // Last stop -> home.
+      lastCoordIndex !== -1
+        ? computeRouteLegs([
+            visitWaypoints[lastCoordIndex] as RouteWaypoint,
+            { address: HOME_BASE_ADDRESS },
+          ])
+        : Promise.resolve(null),
+      // Legs touching an address-only stop (individualLegIndexes above)
+      // -- one isolated 2-stop request each, so a single bad address
+      // can't take the rest of the day's distances down with it.
+      Promise.all(
+        individualLegIndexes.map(async (i) => {
+          const legs = await computeRouteLegs([
+            visitWaypoints[i] as RouteWaypoint,
+            visitWaypoints[i + 1] as RouteWaypoint,
+          ]);
+
+          return { index: i, leg: legs ? legs[0] : null };
         })
-    ),
-    // Home -> first stop. No straight-line fallback here (unlike the
-    // inter-stop legs above) since the home base is only ever given as
-    // an address string, not coordinates — if Google's call fails, this
-    // leg just isn't shown rather than guessing at a distance.
-    firstCoordIndex !== -1
-      ? computeRouteLegs([
-          { address: HOME_BASE_ADDRESS },
-          visitWaypoints[firstCoordIndex] as RouteWaypoint,
-        ])
-      : Promise.resolve(null),
-    // Last stop -> home.
-    lastCoordIndex !== -1
-      ? computeRouteLegs([
-          visitWaypoints[lastCoordIndex] as RouteWaypoint,
-          { address: HOME_BASE_ADDRESS },
-        ])
-      : Promise.resolve(null),
-  ]);
+      ),
+    ]);
 
   const startingDriveMiles = startingLeg ? startingLeg[0].distanceMiles : null;
   const startingDriveMinutes = startingLeg
@@ -683,18 +728,26 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
         durationToNext[i] = legs[localIndex].durationMinutes;
       } else {
         // No real route available for this run -- fall back to the
-        // straight-line estimate, but only between two stops that both
-        // have real coordinates (haversineMiles needs numbers, not an
-        // address string to geocode).
-        const from = runWaypoints[localIndex];
-        const to = runWaypoints[localIndex + 1];
+        // straight-line estimate. Both ends are guaranteed real
+        // coordinates here (coordRuns above only ever groups LatLng
+        // waypoints), so this is always safe.
+        const from = runWaypoints[localIndex] as LatLng;
+        const to = runWaypoints[localIndex + 1] as LatLng;
 
-        distanceToNext[i] =
-          isLatLng(from) && isLatLng(to)
-            ? haversineMiles(from.lat, from.lng, to.lat, to.lng)
-            : null;
+        distanceToNext[i] = haversineMiles(from.lat, from.lng, to.lat, to.lng);
         durationToNext[i] = null;
       }
+    }
+  }
+
+  // Legs touching an address-only stop -- no straight-line fallback
+  // possible (that needs two numeric coordinates), so a failed call
+  // just leaves this one leg blank rather than guessing, same as the
+  // home commute legs.
+  for (const { index, leg } of individualLegResults) {
+    if (leg) {
+      distanceToNext[index] = leg.distanceMiles;
+      durationToNext[index] = leg.durationMinutes;
     }
   }
 
