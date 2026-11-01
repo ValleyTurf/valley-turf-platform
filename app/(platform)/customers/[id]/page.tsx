@@ -74,6 +74,7 @@ import { isQuoteStatus, computeDisplayStatus } from "@/lib/quotes";
 // began.
 type ProfitTimeframe =
   | "since-tracking"
+  | "last-month"
   | "this-month"
   | "last-90-days"
   | "ytd"
@@ -101,6 +102,7 @@ function isMarginTargetOption(value: string | undefined): boolean {
 
 const PROFIT_TIMEFRAME_OPTIONS: { value: ProfitTimeframe; label: string }[] = [
   { value: "since-tracking", label: "Since Aug 2026" },
+  { value: "last-month", label: "Last Month" },
   { value: "this-month", label: "This Month" },
   { value: "last-90-days", label: "Last 90 Days" },
   { value: "ytd", label: "YTD" },
@@ -122,6 +124,19 @@ function getProfitDateRange(timeframe: ProfitTimeframe): {
 
   if (timeframe === "since-tracking") {
     return { startDate: PROFIT_TRACKING_START_DATE, endDate: todayStr };
+  }
+
+  if (timeframe === "last-month") {
+    const lastMonthStart = new Date(
+      Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1)
+    );
+    const lastMonthEnd = new Date(
+      Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0)
+    );
+    return {
+      startDate: lastMonthStart.toISOString().slice(0, 10),
+      endDate: lastMonthEnd.toISOString().slice(0, 10),
+    };
   }
 
   if (timeframe === "this-month") {
