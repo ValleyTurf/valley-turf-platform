@@ -6,7 +6,7 @@
 // each server action re-renders the parent server component with fresh
 // data, which flows back down as a new `tasks` prop automatically.
 import { useState, useTransition, type FormEvent } from "react";
-import { addTask, toggleTask, deleteTask } from "./actions";
+import { addTask, toggleTask, editTask, deleteTask } from "./actions";
 
 export type TaskRow = {
   id: string;
@@ -20,6 +20,8 @@ export default function TaskList({ tasks }: { tasks: TaskRow[] }) {
   const [newTask, setNewTask] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
 
   const openTasks = tasks.filter((task) => !task.is_done);
   const doneTasks = tasks.filter((task) => task.is_done);
@@ -61,6 +63,39 @@ export default function TaskList({ tasks }: { tasks: TaskRow[] }) {
 
       if (result.error) {
         setError(result.error);
+      }
+    });
+  }
+
+  function startEdit(task: TaskRow) {
+    setError(null);
+    setEditingId(task.id);
+    setEditValue(task.description);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditValue("");
+  }
+
+  function handleEditSubmit(event: FormEvent, id: string) {
+    event.preventDefault();
+
+    const description = editValue.trim();
+
+    if (!description) {
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await editTask(id, description);
+
+      if (result.error) {
+        setError(result.error);
+      } else {
+        setError(null);
+        setEditingId(null);
+        setEditValue("");
       }
     });
   }
@@ -109,30 +144,71 @@ export default function TaskList({ tasks }: { tasks: TaskRow[] }) {
                   type="checkbox"
                   checked={false}
                   onChange={() => handleToggle(task.id, true)}
-                  disabled={isPending}
+                  disabled={isPending || editingId === task.id}
                   className="mt-1 h-4 w-4 accent-[#174734]"
                 />
 
-                <div className="flex-1">
-                  <p className="text-sm font-semibold text-[#174734]">
-                    {task.description}
-                  </p>
+                {editingId === task.id ? (
+                  <form
+                    onSubmit={(event) => handleEditSubmit(event, task.id)}
+                    className="flex flex-1 items-center gap-2"
+                  >
+                    <input
+                      type="text"
+                      value={editValue}
+                      onChange={(event) => setEditValue(event.target.value)}
+                      autoFocus
+                      className="flex-1 rounded-lg border border-[#d9d4c6] px-2 py-1 text-sm"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isPending || !editValue.trim()}
+                      className="text-xs font-bold text-[#174734] hover:underline disabled:opacity-50"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelEdit}
+                      disabled={isPending}
+                      className="text-xs font-bold text-[#6b705c] hover:underline"
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                ) : (
+                  <>
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-[#174734]">
+                        {task.description}
+                      </p>
 
-                  {task.created_by_name && (
-                    <p className="text-xs text-[#9c9990]">
-                      Added by {task.created_by_name}
-                    </p>
-                  )}
-                </div>
+                      {task.created_by_name && (
+                        <p className="text-xs text-[#9c9990]">
+                          Added by {task.created_by_name}
+                        </p>
+                      )}
+                    </div>
 
-                <button
-                  type="button"
-                  onClick={() => handleDelete(task.id)}
-                  disabled={isPending}
-                  className="text-xs font-bold text-red-500 hover:text-red-700"
-                >
-                  Delete
-                </button>
+                    <button
+                      type="button"
+                      onClick={() => startEdit(task)}
+                      disabled={isPending}
+                      className="text-xs font-bold text-[#174734] hover:underline"
+                    >
+                      Edit
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(task.id)}
+                      disabled={isPending}
+                      className="text-xs font-bold text-red-500 hover:text-red-700"
+                    >
+                      Delete
+                    </button>
+                  </>
+                )}
               </li>
             ))}
           </ul>
@@ -149,36 +225,79 @@ export default function TaskList({ tasks }: { tasks: TaskRow[] }) {
             {doneTasks.map((task) => (
               <li
                 key={task.id}
-                className="flex items-start gap-3 rounded-xl border border-[#e6e2d8] px-3 py-2 opacity-60"
+                className={`flex items-start gap-3 rounded-xl border border-[#e6e2d8] px-3 py-2 ${
+                  editingId === task.id ? "" : "opacity-60"
+                }`}
               >
                 <input
                   type="checkbox"
                   checked
                   onChange={() => handleToggle(task.id, false)}
-                  disabled={isPending}
+                  disabled={isPending || editingId === task.id}
                   className="mt-1 h-4 w-4 accent-[#174734]"
                 />
 
-                <div className="flex-1">
-                  <p className="text-sm font-semibold text-[#174734] line-through">
-                    {task.description}
-                  </p>
+                {editingId === task.id ? (
+                  <form
+                    onSubmit={(event) => handleEditSubmit(event, task.id)}
+                    className="flex flex-1 items-center gap-2"
+                  >
+                    <input
+                      type="text"
+                      value={editValue}
+                      onChange={(event) => setEditValue(event.target.value)}
+                      autoFocus
+                      className="flex-1 rounded-lg border border-[#d9d4c6] px-2 py-1 text-sm"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isPending || !editValue.trim()}
+                      className="text-xs font-bold text-[#174734] hover:underline disabled:opacity-50"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelEdit}
+                      disabled={isPending}
+                      className="text-xs font-bold text-[#6b705c] hover:underline"
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                ) : (
+                  <>
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-[#174734] line-through">
+                        {task.description}
+                      </p>
 
-                  {task.created_by_name && (
-                    <p className="text-xs text-[#9c9990]">
-                      Added by {task.created_by_name}
-                    </p>
-                  )}
-                </div>
+                      {task.created_by_name && (
+                        <p className="text-xs text-[#9c9990]">
+                          Added by {task.created_by_name}
+                        </p>
+                      )}
+                    </div>
 
-                <button
-                  type="button"
-                  onClick={() => handleDelete(task.id)}
-                  disabled={isPending}
-                  className="text-xs font-bold text-red-500 hover:text-red-700"
-                >
-                  Delete
-                </button>
+                    <button
+                      type="button"
+                      onClick={() => startEdit(task)}
+                      disabled={isPending}
+                      className="text-xs font-bold text-[#174734] hover:underline"
+                    >
+                      Edit
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(task.id)}
+                      disabled={isPending}
+                      className="text-xs font-bold text-red-500 hover:text-red-700"
+                    >
+                      Delete
+                    </button>
+                  </>
+                )}
               </li>
             ))}
           </ul>

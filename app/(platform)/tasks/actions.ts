@@ -66,6 +66,39 @@ export async function toggleTask(
   return { error: null };
 }
 
+export async function editTask(
+  id: string,
+  description: string
+): Promise<{ error: string | null }> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    return { error: "You must be signed in." };
+  }
+
+  const trimmed = description.trim();
+
+  if (!trimmed) {
+    return { error: "Enter a task." };
+  }
+
+  const { error } = await supabaseServer
+    .from("tasks")
+    .update({
+      description: trimmed,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  revalidatePath("/tasks");
+
+  return { error: null };
+}
+
 export async function deleteTask(
   id: string
 ): Promise<{ error: string | null }> {
