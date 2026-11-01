@@ -340,6 +340,7 @@ type MaterialOption = {
 type EquipmentOption = {
   id: string;
   name: string;
+  nextUseCost: number | string;
 };
 
 type VisitCostLine = {
@@ -352,9 +353,10 @@ type VisitCostLine = {
 type VisitCostBreakdown = {
   laborLines: VisitCostLine[];
   materialLines: VisitCostLine[];
-  equipmentNames: string[];
+  equipmentLines: VisitCostLine[];
   laborTotal: number;
   materialTotal: number;
+  equipmentTotal: number;
 };
 
 type CustomerVisit = {
@@ -413,9 +415,16 @@ async function getMaterialsList(): Promise<MaterialOption[]> {
 async function getEquipmentList(): Promise<EquipmentOption[]> {
   const today = new Date().toISOString().slice(0, 10);
 
+  // equipment_usage_summary (the same view /materials reads for its
+  // "next use" column) rather than the bare equipment table -- that's
+  // where next_use_cost actually lives, the flat per-use billing rate
+  // (Ryan wants it kept at $1 regardless of the equipment's real
+  // purchase-price-amortized cost, same view /materials' EquipmentRow
+  // already labels "next use"). id:equipment_id aliases it back to the
+  // plain `id` every other EquipmentOption caller in this file expects.
   const { data, error } = await supabaseServer
-    .from("equipment")
-    .select("id, name")
+    .from("equipment_usage_summary")
+    .select("id:equipment_id, name, next_use_cost")
     .or(`retired_date.is.null,retired_date.gt.${today}`)
     .order("name", { ascending: true });
 
@@ -424,7 +433,9 @@ async function getEquipmentList(): Promise<EquipmentOption[]> {
     return [];
   }
 
-  return (data ?? []) as EquipmentOption[];
+  return ((data ?? []) as { id: string; name: string; next_use_cost: number | string }[]).map(
+    (row) => ({ id: row.id, name: row.name, nextUseCost: row.next_use_cost })
+  );
 }
 
 // Job canceled directly in Jobber's own UI (not through this app) only
@@ -606,14 +617,22 @@ async function getVisitCostBreakdowns(
   }
 
   for (const visitId of visitIds) {
+    const equipmentLines: VisitCostLine[] = equipmentList
+      .filter((item) => visitEquipmentUsageSet.has(`${visitId}:${item.id}`))
+      .map((item) => ({
+        label: item.name,
+        quantity: 1,
+        unitLabel: "use",
+        cost: Number(item.nextUseCost ?? 0),
+      }));
+
     breakdowns.set(visitId, {
       laborLines: [],
       materialLines: [],
-      equipmentNames: equipmentList
-        .filter((item) => visitEquipmentUsageSet.has(`${visitId}:${item.id}`))
-        .map((item) => item.name),
+      equipmentLines,
       laborTotal: 0,
       materialTotal: 0,
+      equipmentTotal: equipmentLines.reduce((sum, line) => sum + line.cost, 0),
     });
   }
 
@@ -2037,7 +2056,7 @@ function VisitCostBreakdownSection({
     !!breakdown &&
     (breakdown.laborLines.length > 0 ||
       breakdown.materialLines.length > 0 ||
-      breakdown.equipmentNames.length > 0);
+      breakdown.equipmentLines.length > 0);
 
   if (!breakdown || !hasAnything) {
     return (
@@ -2047,7 +2066,8 @@ function VisitCostBreakdownSection({
     );
   }
 
-  const total = breakdown.laborTotal + breakdown.materialTotal;
+  const total =
+    breakdown.laborTotal + breakdown.materialTotal + breakdown.equipmentTotal;
 
   return (
     <div className="space-y-3 text-sm">
@@ -2102,14 +2122,24 @@ function VisitCostBreakdownSection({
         </div>
       )}
 
-      {breakdown.equipmentNames.length > 0 && (
+      {breakdown.equipmentLines.length > 0 && (
         <div>
           <p className="text-[10px] font-bold uppercase tracking-wide text-[#9c7a20]">
             Equipment Used
           </p>
-          <p className="mt-1 text-[#6b705c]">
-            {breakdown.equipmentNames.join(", ")}
-          </p>
+          <div className="mt-1 space-y-1">
+            {breakdown.equipmentLines.map((line, index) => (
+              <div
+                key={`${line.label}-${index}`}
+                className="flex items-center justify-between gap-3"
+              >
+                <span className="text-[#6b705c]">{line.label}</span>
+                <span className="shrink-0 font-semibold">
+                  {formatCurrencyPrecise(line.cost)}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
