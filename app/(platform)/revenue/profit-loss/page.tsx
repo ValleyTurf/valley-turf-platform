@@ -132,20 +132,41 @@ async function fetchExpenseRows(
   startDate: string,
   endDate: string
 ): Promise<ExpenseRow[]> {
+  // Paginated the same way fetchInvoiceRevenue above is, and for the
+  // same reason: this is queried once for the whole year-to-date range,
+  // and Postgrest caps a single response at 1000 rows regardless of how
+  // many actually match. A one-shot query here silently truncated the
+  // year (confirmed 2026-11-02: 1599 real rows, only 1000 returned),
+  // which meant whichever rows landed past that cut -- Ryan saw it as
+  // October's Logged Expenses reading $1,812 on this page's table
+  // against the real $3,237 on October's own drill-down, which queries
+  // that one month directly and was never affected.
+  //
   // .is("ledger_type", null) excludes journal entries (migration 096) --
   // owner draws, loan payments, transfers, and owner contributions
   // aren't real business expenses, so they can't be allowed to lower
   // netProfit here just because they share this table.
-  const { data, error } = await supabaseServer
-    .from("expenses")
-    .select("expense_date, amount, category")
-    .gte("expense_date", startDate)
-    .lte("expense_date", endDate)
-    .is("ledger_type", null);
+  const pageSize = 1000;
+  const rows: ExpenseRow[] = [];
 
-  if (error) throw error;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseServer
+      .from("expenses")
+      .select("expense_date, amount, category")
+      .gte("expense_date", startDate)
+      .lte("expense_date", endDate)
+      .is("ledger_type", null)
+      .range(from, from + pageSize - 1);
 
-  return (data ?? []) as ExpenseRow[];
+    if (error) throw error;
+
+    const batch = (data ?? []) as ExpenseRow[];
+    rows.push(...batch);
+
+    if (batch.length < pageSize) break;
+  }
+
+  return rows;
 }
 
 // Typed as plain string -> group rather than ExpenseCategory -> group so
