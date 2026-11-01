@@ -2659,7 +2659,14 @@ export default async function CustomerDetailPage({
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">
-              <h2 className="text-lg font-bold">Open Jobs</h2>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-lg font-bold">Open Jobs</h2>
+                <AddJobModal
+                  presetCustomer={{ id: decodedId, name: client.name || "Unnamed Customer" }}
+                  triggerLabel="+ Add Job"
+                  triggerClassName="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246]"
+                />
+              </div>
 
               <div className="mt-3 space-y-2">
                 {openJobs.length > 0 ? (
@@ -3297,14 +3304,7 @@ export default async function CustomerDetailPage({
             </section>
 
             <section className="rounded-2xl bg-white p-5 shadow">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-lg font-bold">Upcoming Visits</h2>
-                <AddJobModal
-                  presetCustomer={{ id: decodedId, name: client.name || "Unnamed Customer" }}
-                  triggerLabel="+ Add Job"
-                  triggerClassName="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246]"
-                />
-              </div>
+              <h2 className="text-lg font-bold">Upcoming Visits</h2>
 
               <div className="mt-3 space-y-2">
                 {upcomingVisitsPagination.pageItems.length > 0 ? (
