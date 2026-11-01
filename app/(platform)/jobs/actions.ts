@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
 import { createNativeJob, type RecurrenceFrequency } from "@/lib/nativeJobs";
+import { createNativeCustomer } from "@/lib/nativeCustomers";
 import type { ActionState } from "./actionState";
 
 function cleanText(value: FormDataEntryValue | null): string | null {
@@ -86,8 +87,58 @@ export async function createJob(
     return { error: "You must be signed in to create a job." };
   }
 
-  const clientId = cleanText(formData.get("customer_id"));
-  const customerName = cleanText(formData.get("customer_name"));
+  // AddJobModal.tsx (Schedule and Customer pages' "Add Job" popup) can
+  // submit a brand-new customer inline instead of picking an existing
+  // one -- customer_mode is absent/"existing" for every other caller
+  // (this form's own NewJobForm.tsx included), so that path is
+  // completely unchanged below this block.
+  const customerMode = cleanText(formData.get("customer_mode"));
+  let clientId = cleanText(formData.get("customer_id"));
+  let customerName = cleanText(formData.get("customer_name"));
+
+  if (customerMode === "new") {
+    const newFullName = cleanText(formData.get("new_full_name"));
+
+    if (!newFullName) {
+      return { error: "Enter the new customer's name." };
+    }
+
+    const customerResult = await createNativeCustomer({
+      fullName: newFullName,
+      email: cleanText(formData.get("new_email")),
+      phone: cleanText(formData.get("new_phone")),
+      street: cleanText(formData.get("new_street")),
+      city: cleanText(formData.get("new_city")),
+      state: cleanText(formData.get("new_state")),
+      zip: cleanText(formData.get("new_zip")),
+    });
+
+    if (!customerResult.ok) {
+      return { error: `Couldn't create the customer: ${customerResult.error}` };
+    }
+
+    clientId = customerResult.value.clientId;
+    customerName = newFullName;
+
+    await recordAuditLog({
+      actor,
+      action: "create",
+      entityType: "customer",
+      entityId: clientId,
+      entityLabel: newFullName,
+      after: {
+        jobber_client_id: clientId,
+        full_name: newFullName,
+        email: cleanText(formData.get("new_email")),
+        phone: cleanText(formData.get("new_phone")),
+        address_line_1: cleanText(formData.get("new_street")),
+        city: cleanText(formData.get("new_city")),
+        state: cleanText(formData.get("new_state")),
+        postal_code: cleanText(formData.get("new_zip")),
+      },
+    });
+  }
+
   const title = cleanText(formData.get("title"));
   const instructions = cleanText(formData.get("instructions"));
   const price = cleanPrice(formData.get("price"));

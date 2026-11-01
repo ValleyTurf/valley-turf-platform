@@ -48,10 +48,9 @@ export default async function NewJobPage() {
               Create Job
             </h1>
             <p className="mt-2 max-w-2xl text-[#6b705c]">
-              Pick an existing customer and give the job a title — it&apos;s
-              created directly in Jobber against their first property.
-              Pricing, scheduling, and scope of work still get filled in
-              over in Jobber afterward.
+              Pick an existing customer and give the job a title — this
+              creates the job (and its first visit, if you set a start
+              date) directly here, no trip to Jobber needed.
             </p>
           </div>
 

@@ -10,6 +10,7 @@ import {
   sumOneTimeCharges,
 } from "@/lib/visitCharges";
 import ScheduleInteractive from "./ScheduleInteractive";
+import AddJobModal from "@/app/components/AddJobModal";
 import type { AssignableUser, GridDate, SchedulePin, ScheduleVisit } from "./types";
 
 type ViewMode = "day" | "week" | "month";
@@ -970,6 +971,13 @@ export default async function SchedulePage({
               <p className="text-xs text-[#9c7a20]">
                 Total Price ({viewLabel[view]})
               </p>
+              <div className="mt-2">
+                <AddJobModal
+                  presetStartDate={dateStr}
+                  triggerLabel="+ Add Job"
+                  triggerClassName="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246]"
+                />
+              </div>
             </div>
           </section>
 

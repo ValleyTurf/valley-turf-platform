@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { formatCurrency } from "@/lib/format";
+import AddJobModal from "@/app/components/AddJobModal";
 import type { GridDate, ScheduleVisit } from "./types";
 
 // Native HTML5 drag-and-drop data-transfer key for a dragged visit's id —
@@ -123,7 +124,14 @@ export default function ScheduleGrids({
                 )}
               </div>
 
-              <DailyTotalPill total={dailyTotals[day.dateStr] ?? 0} />
+              <div className="mt-1.5 flex items-center gap-2">
+                <DailyTotalPill total={dailyTotals[day.dateStr] ?? 0} />
+                <AddJobModal
+                  presetStartDate={day.dateStr}
+                  triggerLabel="+"
+                  triggerClassName="rounded-full bg-[#f7f6f1] px-2 py-0.5 text-xs font-bold text-[#174734] transition hover:bg-[#eee9dc]"
+                />
+              </div>
             </div>
           );
         })}
@@ -238,7 +246,14 @@ export default function ScheduleGrids({
                   </div>
 
                   {day.inMonth && (
-                    <DailyTotalPill total={dailyTotals[day.dateStr] ?? 0} />
+                    <div className="mt-1 flex items-center gap-1">
+                      <DailyTotalPill total={dailyTotals[day.dateStr] ?? 0} />
+                      <AddJobModal
+                        presetStartDate={day.dateStr}
+                        triggerLabel="+"
+                        triggerClassName="rounded-full bg-[#f7f6f1] px-1.5 py-0 text-xs font-bold leading-4 text-[#174734] transition hover:bg-[#eee9dc]"
+                      />
+                    </div>
                   )}
                 </div>
               );
