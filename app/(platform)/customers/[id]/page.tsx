@@ -369,9 +369,21 @@ type VisitCostBreakdown = {
   laborLines: VisitCostLine[];
   materialLines: VisitCostLine[];
   equipmentLines: VisitCostLine[];
+  overheadLines: VisitCostLine[];
   laborTotal: number;
   materialTotal: number;
   equipmentTotal: number;
+  overheadTotal: number;
+};
+
+// Per-item amount, already divided down to a single invoice's share --
+// what getOverheadSharePerInvoiceByMonth produces, reshaped into the
+// same {label, quantity, unitLabel, cost} shape VisitCostBreakdownSection
+// already knows how to render (quantity/unitLabel unused here, same as
+// the Equipment Used lines above).
+type OverheadLine = {
+  label: string;
+  amount: number;
 };
 
 type CustomerVisit = {
@@ -645,9 +657,11 @@ async function getVisitCostBreakdowns(
       laborLines: [],
       materialLines: [],
       equipmentLines,
+      overheadLines: [],
       laborTotal: 0,
       materialTotal: 0,
       equipmentTotal: equipmentLines.reduce((sum, line) => sum + line.cost, 0),
+      overheadTotal: 0,
     });
   }
 
@@ -692,6 +706,171 @@ async function getVisitCostBreakdowns(
   }
 
   return breakdowns;
+}
+
+// Per-invoice share of the Job Costing overhead pool for a given month,
+// itemized by what actually makes it up -- the lump
+// invoice_cost_breakdown.overhead_allocated figure already shown on Past
+// Invoices below (and on Job Costing Analytics sitewide), broken down
+// into its named sources. Ryan (2026-11-01): "can we break down what
+// those amortized costs are per job?" after discussing insurance -- the
+// view behind that lump figure (overhead_by_month, supabase/migrations/
+// 033 + 094) only exposes four bucket TOTALS, not which named cost made
+// up each one, and /expenses/job-costing (the only other place the pool
+// is visible) shows the month's raw tagged expenses, not each one's
+// prorated dollar contribution or its per-job share -- so this mirrors
+// that view's SQL in JS against the same three source tables
+// (overhead_costs, expenses, monthly_financials) rather than querying
+// the view itself.
+//
+// Visits are matched to a month by their own start_at, not by chasing
+// down which invoice actually covers them -- this mirrors the
+// convention lib/jobCostingSummary.ts's fetchCostBreakdownForInvoices
+// already established sitewide ("an invoice for client X issued in
+// month M is matched against ALL of X's visits whose start_at also
+// falls in month M"), so a visit's breakdown here always agrees with
+// what the Past Invoices "+ $Y overhead" figure already shows for the
+// same job, without a second visit-to-invoice lookup.
+async function getOverheadSharePerInvoiceByMonth(
+  months: string[]
+): Promise<Map<string, OverheadLine[]>> {
+  const result = new Map<string, OverheadLine[]>();
+  const uniqueMonths = Array.from(new Set(months)).filter(Boolean);
+  if (uniqueMonths.length === 0) return result;
+
+  const todayStr =
+    toPhoenixDateString(new Date().toISOString()) ?? uniqueMonths[0];
+  const currentMonthKey = todayStr.slice(0, 7);
+  const monthStartDates = uniqueMonths.map((m) => `${m}-01`);
+
+  const [overheadCostsResult, expensesResult, financialsResult] =
+    await Promise.all([
+      supabaseServer
+        .from("overhead_costs")
+        .select("name, cost_type, amount, start_date, end_date"),
+      supabaseServer
+        .from("expenses")
+        .select(
+          "vendor, description, amount, expense_date, job_costing_treatment, amortization_end_date"
+        )
+        .not("job_costing_treatment", "is", null),
+      supabaseServer
+        .from("monthly_financials")
+        .select("month, invoice_count")
+        .in("month", monthStartDates),
+    ]);
+
+  const invoiceCountByMonth = new Map<string, number>();
+  for (const row of (financialsResult.data ?? []) as {
+    month: string;
+    invoice_count: number | string;
+  }[]) {
+    invoiceCountByMonth.set(row.month.slice(0, 7), toNumber(row.invoice_count));
+  }
+
+  const prorationFactor = (monthKey: string): number => {
+    if (monthKey !== currentMonthKey) return 1;
+    const [year, month] = monthKey.split("-").map(Number);
+    const dayOfMonth = Number(todayStr.slice(8, 10));
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return dayOfMonth / daysInMonth;
+  };
+
+  const monthSpan = (startMonthKey: string, endMonthKey: string): number => {
+    const [sy, sm] = startMonthKey.split("-").map(Number);
+    const [ey, em] = endMonthKey.split("-").map(Number);
+    return Math.max(1, (ey - sy) * 12 + (em - sm) + 1);
+  };
+
+  const overheadCostsRows = (overheadCostsResult.data ?? []) as {
+    name: string | null;
+    cost_type: string | null;
+    amount: number | string;
+    start_date: string;
+    end_date: string | null;
+  }[];
+  const expenseRows = (expensesResult.data ?? []) as {
+    vendor: string | null;
+    description: string | null;
+    amount: number | string;
+    expense_date: string;
+    job_costing_treatment: string | null;
+    amortization_end_date: string | null;
+  }[];
+
+  for (const monthKey of uniqueMonths) {
+    const invoiceCount = invoiceCountByMonth.get(monthKey) ?? 0;
+    if (invoiceCount <= 0) {
+      result.set(monthKey, []);
+      continue;
+    }
+
+    const monthStart = `${monthKey}-01`;
+    const [y, m] = monthKey.split("-").map(Number);
+    const monthEnd = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+    const factor = prorationFactor(monthKey);
+    const lines: OverheadLine[] = [];
+
+    for (const row of overheadCostsRows) {
+      const amount = toNumber(row.amount);
+      if (amount === 0) continue;
+
+      if (
+        row.cost_type === "recurring" &&
+        row.start_date <= monthEnd &&
+        (!row.end_date || row.end_date >= monthStart)
+      ) {
+        const share = (amount * factor) / invoiceCount;
+        if (share > 0) {
+          lines.push({ label: row.name || "Recurring cost", amount: share });
+        }
+      } else if (
+        row.cost_type === "amortized" &&
+        row.end_date &&
+        row.start_date <= monthEnd &&
+        row.end_date >= monthStart
+      ) {
+        const span = monthSpan(row.start_date.slice(0, 7), row.end_date.slice(0, 7));
+        const share = ((amount / span) * factor) / invoiceCount;
+        if (share > 0) {
+          lines.push({ label: row.name || "Amortized cost", amount: share });
+        }
+      }
+    }
+
+    for (const row of expenseRows) {
+      const amount = toNumber(row.amount);
+      if (amount === 0) continue;
+      const label = row.vendor || row.description || "Expense";
+
+      if (
+        row.job_costing_treatment === "one_time" &&
+        row.expense_date.slice(0, 7) === monthKey
+      ) {
+        const share = amount / invoiceCount;
+        if (share > 0) lines.push({ label, amount: share });
+      } else if (
+        row.job_costing_treatment === "amortized" &&
+        row.amortization_end_date &&
+        row.expense_date <= monthEnd &&
+        row.amortization_end_date >= monthStart
+      ) {
+        const span = monthSpan(
+          row.expense_date.slice(0, 7),
+          row.amortization_end_date.slice(0, 7)
+        );
+        const share = ((amount / span) * factor) / invoiceCount;
+        if (share > 0) lines.push({ label, amount: share });
+      }
+    }
+
+    result.set(
+      monthKey,
+      lines.sort((a, b) => b.amount - a.amount)
+    );
+  }
+
+  return result;
 }
 
 type JobberPayment = {
@@ -2071,7 +2250,8 @@ function VisitCostBreakdownSection({
     !!breakdown &&
     (breakdown.laborLines.length > 0 ||
       breakdown.materialLines.length > 0 ||
-      breakdown.equipmentLines.length > 0);
+      breakdown.equipmentLines.length > 0 ||
+      breakdown.overheadLines.length > 0);
 
   if (!breakdown || !hasAnything) {
     return (
@@ -2082,7 +2262,10 @@ function VisitCostBreakdownSection({
   }
 
   const total =
-    breakdown.laborTotal + breakdown.materialTotal + breakdown.equipmentTotal;
+    breakdown.laborTotal +
+    breakdown.materialTotal +
+    breakdown.equipmentTotal +
+    breakdown.overheadTotal;
 
   return (
     <div className="space-y-3 text-sm">
@@ -2144,6 +2327,32 @@ function VisitCostBreakdownSection({
           </p>
           <div className="mt-1 space-y-1">
             {breakdown.equipmentLines.map((line, index) => (
+              <div
+                key={`${line.label}-${index}`}
+                className="flex items-center justify-between gap-3"
+              >
+                <span className="text-[#6b705c]">{line.label}</span>
+                <span className="shrink-0 font-semibold">
+                  {formatCurrencyPrecise(line.cost)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {breakdown.overheadLines.length > 0 && (
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-[#9c7a20]">
+            Overhead
+          </p>
+          <p className="mt-0.5 text-[11px] text-[#9c9684]">
+            This job&apos;s share of recurring/amortized costs (insurance,
+            software, etc.) for the month -- see Job Costing Overhead Pool
+            for the full monthly figures.
+          </p>
+          <div className="mt-1 space-y-1">
+            {breakdown.overheadLines.map((line, index) => (
               <div
                 key={`${line.label}-${index}`}
                 className="flex items-center justify-between gap-3"
@@ -2423,10 +2632,11 @@ export default async function CustomerDetailPage({
   const jobsPagination = paginateList(jobs, jobsPage);
   const quotesPagination = paginateList(quotes, quotesPage);
 
-  const allVisitIds = [
-    ...pastVisits.map((visit) => visit.jobber_visit_id),
-    ...(nextVisit ? [nextVisit.jobber_visit_id] : []),
+  const visitsForCostBreakdown = [
+    ...pastVisits,
+    ...(nextVisit ? [nextVisit] : []),
   ];
+  const allVisitIds = visitsForCostBreakdown.map((visit) => visit.jobber_visit_id);
 
   const {
     usageMap: visitUsageMap,
@@ -2440,6 +2650,32 @@ export default async function CustomerDetailPage({
     equipmentList,
     visitEquipmentUsageSet
   );
+
+  // Overhead share per job (Ryan, 2026-11-01) -- computed per distinct
+  // month present among this customer's own visits, then attached onto
+  // each visit's breakdown below. See getOverheadSharePerInvoiceByMonth's
+  // own header comment for why month-of-visit is the right key.
+  const overheadMonths = visitsForCostBreakdown
+    .map((visit) => visit.start_at?.slice(0, 7))
+    .filter((month): month is string => Boolean(month));
+  const overheadByMonth = await getOverheadSharePerInvoiceByMonth(overheadMonths);
+
+  for (const visit of visitsForCostBreakdown) {
+    const month = visit.start_at?.slice(0, 7);
+    const breakdown = visitCostBreakdownMap.get(visit.jobber_visit_id);
+    if (!breakdown || !month) continue;
+
+    const overheadLines: VisitCostLine[] = (overheadByMonth.get(month) ?? []).map(
+      (line) => ({
+        label: line.label,
+        quantity: 1,
+        unitLabel: "",
+        cost: line.amount,
+      })
+    );
+    breakdown.overheadLines = overheadLines;
+    breakdown.overheadTotal = overheadLines.reduce((sum, line) => sum + line.cost, 0);
+  }
 
   const visitDurationMap = await getVisitDurationMinutes(allVisitIds);
   const visitLaborMap = await getVisitLaborMinutes(allVisitIds);
