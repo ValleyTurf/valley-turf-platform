@@ -423,6 +423,30 @@ function buildScheduleVisit(
   const longitude =
     contact?.longitude != null ? Number(contact.longitude) : NaN;
 
+  // Derived from the visit's own start_at/end_at whenever both exist,
+  // NOT the separately-stored duration_minutes column -- that column is
+  // written independently at a few different points (Jobber sync's own
+  // visit.duration field in jobberWebhookProcessor.ts, and native jobs'
+  // flat DEFAULT_VISIT_DURATION_MINUTES in nativeJobs.ts's buildVisitRow,
+  // used for every future occurrence a recurring native job generates)
+  // and had drifted out of sync with the actual scheduled window on both
+  // sides -- confirmed live by Ryan (2026-11-02): Katy Sanchez's actual
+  // 3:00-4:30 PM slot (90 min) showed "60 min" (the native default),
+  // while Colleen Prock's actual 8:30-9:30 AM slot (60 min) showed
+  // "1440 min" (a stale/bad duration_minutes value, whatever wrote it).
+  // end_at/start_at are what endTimeLabel/startTimeLabel above are
+  // already built from, so deriving duration from the same pair keeps
+  // the "X:XX - Y:YY · Z min" line internally consistent by
+  // construction instead of trusting a second, independently-written
+  // number to agree with it. Only falls back to the stored column for a
+  // visit with no end_at at all.
+  const startMs = visit.start_at ? new Date(visit.start_at).getTime() : NaN;
+  const endMs = visit.end_at ? new Date(visit.end_at).getTime() : NaN;
+  const computedDurationMinutes =
+    Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs
+      ? Math.round((endMs - startMs) / 60000)
+      : toNumber(visit.duration_minutes);
+
   return {
     id: visit.jobber_visit_id,
     clientId: visit.jobber_client_id,
@@ -438,7 +462,7 @@ function buildScheduleVisit(
       : timeLabel,
     startTimeLabel: timeLabel,
     endTimeLabel: visit.end_at ? formatTime(visit.end_at) : null,
-    durationMinutes: toNumber(visit.duration_minutes),
+    durationMinutes: computedDurationMinutes,
     service: visit.title,
     serviceLabel: label,
     serviceChipClass: chip,
