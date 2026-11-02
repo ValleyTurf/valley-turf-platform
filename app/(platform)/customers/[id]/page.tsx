@@ -2677,6 +2677,31 @@ export default async function CustomerDetailPage({
     breakdown.overheadTotal = overheadLines.reduce((sum, line) => sum + line.cost, 0);
   }
 
+  // The dollar figure shown next to each visit (both collapsed, before
+  // you expand it, and on the Next Visit card) used to come straight
+  // from visitCostMap (the visit_material_cost view -- labor + materials
+  // only), the same anchor getVisitCostBreakdowns' own header comment
+  // describes. That stopped matching the expanded "Visit Total" the
+  // moment Equipment and then Overhead were added to the breakdown below
+  // it -- Ryan (2026-11-02): Carole Cobb's visit showed $139 collapsed
+  // but $162 once expanded, same visit, two different "totals." This
+  // reconciles them: the collapsed figure is now the same
+  // labor+material+equipment+overhead sum the breakdown already computes,
+  // falling back to visitCostMap only for a visit with no breakdown entry
+  // at all (shouldn't happen -- getVisitCostBreakdowns seeds one for
+  // every id in allVisitIds -- but keeps this from ever showing nothing).
+  const visitDisplayTotalMap = new Map<string, number>();
+  for (const visit of visitsForCostBreakdown) {
+    const breakdown = visitCostBreakdownMap.get(visit.jobber_visit_id);
+    const total = breakdown
+      ? breakdown.laborTotal +
+        breakdown.materialTotal +
+        breakdown.equipmentTotal +
+        breakdown.overheadTotal
+      : (visitCostMap.get(visit.jobber_visit_id) ?? 0);
+    visitDisplayTotalMap.set(visit.jobber_visit_id, total);
+  }
+
   const visitDurationMap = await getVisitDurationMinutes(allVisitIds);
   const visitLaborMap = await getVisitLaborMinutes(allVisitIds);
   const visitAssignedNamesMap = await getVisitAssignedNames(allVisitIds);
@@ -2915,7 +2940,7 @@ export default async function CustomerDetailPage({
 
                       <p className="text-sm font-bold">
                         {formatCurrencyPrecise(
-                          visitCostMap.get(nextVisit.jobber_visit_id) ?? 0
+                          visitDisplayTotalMap.get(nextVisit.jobber_visit_id) ?? 0
                         )}
                       </p>
                     </div>
@@ -3540,7 +3565,7 @@ export default async function CustomerDetailPage({
 
                           <p className="text-sm font-bold">
                             {formatCurrencyPrecise(
-                              visitCostMap.get(visit.jobber_visit_id) ?? 0
+                              visitDisplayTotalMap.get(visit.jobber_visit_id) ?? 0
                             )}
                           </p>
                         </div>
