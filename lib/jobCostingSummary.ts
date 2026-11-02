@@ -55,6 +55,15 @@ export type JobCostingSummary = {
 export type CostBreakdown = {
   labor: number;
   materials: number;
+  // Flat per-use equipment charge (equipment_usage_summary.next_use_cost,
+  // same $1/use rate the customer page's Visit Cost Breakdown shows --
+  // see that page's getEquipmentList comment). Previously left out of
+  // every directCost calculation below with the explicit note "Equipment
+  // usage has no dollar rate of its own in this schema" -- that stopped
+  // being true once it got one (Ryan, 2026-11-01: caught Carole Cobb's
+  // Profitability panel showing $440 when the real per-job numbers,
+  // equipment included, add up to $437.10).
+  equipment: number;
   unloggedLabor: boolean;
   visitCount: number;
   firstVisitDate: string | null;
@@ -77,7 +86,10 @@ export function buildCategorySummaries(
     const revenue = toNumber(row.revenue);
     const overhead = toNumber(row.overhead_allocated);
     const breakdown = costBreakdowns.get(row.jobber_invoice_id);
-    const directCost = (breakdown?.labor ?? 0) + (breakdown?.materials ?? 0);
+    const directCost =
+      (breakdown?.labor ?? 0) +
+      (breakdown?.materials ?? 0) +
+      (breakdown?.equipment ?? 0);
     const profit = revenue - directCost - overhead;
 
     const existing = map.get(category) ?? {
@@ -196,8 +208,10 @@ const DRILLDOWN_BATCH_SIZE = 500;
 // visits and double-count them) -- both reasonable for this business's
 // actual billing pattern (one monthly invoice per property).
 //
-// Equipment usage (visit_equipment_usage) has no dollar rate of its own
-// in this schema, so it isn't part of either bucket.
+// Equipment usage (visit_equipment_usage) is priced into its own
+// `equipment` bucket below, at its flat per-use rate -- see that section
+// further down for why it's priced at today's rate rather than a
+// point-in-time snapshot.
 export async function fetchCostBreakdownForInvoices(
   rows: InvoiceCostRow[]
 ): Promise<Map<string, CostBreakdown>> {
@@ -215,6 +229,7 @@ export async function fetchCostBreakdownForInvoices(
     const fresh: CostBreakdown = {
       labor: 0,
       materials: 0,
+      equipment: 0,
       unloggedLabor: false,
       visitCount: 0,
       firstVisitDate: null,
@@ -359,6 +374,47 @@ export async function fetchCostBreakdownForInvoices(
     } else {
       bucket.materials += cost;
     }
+  }
+
+  // Equipment usage (visit_equipment_usage) priced at its flat per-use
+  // rate (equipment_usage_summary.next_use_cost, same $1/use figure the
+  // customer page's Visit Cost Breakdown shows), same batched-IN-query
+  // pattern as the materials query above. No point-in-time snapshot
+  // exists for this rate the way unit_cost_at_time is for materials, so
+  // (like the customer page) this prices every historical use at
+  // whatever the rate is today.
+  const { data: equipmentUsageData, error: equipmentUsageError } =
+    await supabaseServer
+      .from("visit_equipment_usage")
+      .select("jobber_visit_id, equipment_id")
+      .in("jobber_visit_id", visitIds);
+  if (equipmentUsageError) throw equipmentUsageError;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: equipmentRateData, error: equipmentRateError } =
+    await supabaseServer
+      .from("equipment_usage_summary")
+      .select("id:equipment_id, next_use_cost")
+      .or(`retired_date.is.null,retired_date.gt.${today}`);
+  if (equipmentRateError) throw equipmentRateError;
+
+  const equipmentRateById = new Map(
+    (
+      (equipmentRateData ?? []) as { id: string; next_use_cost: number | string }[]
+    ).map((row) => [row.id, toNumber(row.next_use_cost)])
+  );
+
+  for (const row of (equipmentUsageData ?? []) as {
+    jobber_visit_id: string;
+    equipment_id: string;
+  }[]) {
+    const invoiceId = visitToInvoice.get(row.jobber_visit_id);
+    if (!invoiceId) continue;
+
+    const rate = equipmentRateById.get(row.equipment_id);
+    if (!rate) continue;
+
+    getBucket(invoiceId).equipment += rate;
   }
 
   // Timer fallback for labor that was clocked but never saved.
@@ -523,7 +579,10 @@ export async function getCustomerJobCostingSummary(
   for (const row of rows) {
     const breakdown = costBreakdowns.get(row.jobber_invoice_id);
     revenue += toNumber(row.revenue);
-    directCost += (breakdown?.labor ?? 0) + (breakdown?.materials ?? 0);
+    directCost +=
+      (breakdown?.labor ?? 0) +
+      (breakdown?.materials ?? 0) +
+      (breakdown?.equipment ?? 0);
     overhead += toNumber(row.overhead_allocated);
   }
 
