@@ -59,10 +59,20 @@ export function getPlaidEnv(): string {
 // Bank balance reconciliation (migration 103) -- live balances per
 // account, used to populate bank_accounts.live_balance on each sync
 // alongside the computed in-app balance, so Ryan can see the two side
-// by side the way QuickBooks' own "Bank Accounts" panel does. Uses
-// /accounts/balance/get rather than /accounts/get -- Plaid's own docs
-// call that one out specifically for forcing a fresh, non-cached read
-// instead of whatever was last cached from a transactions sync.
+// by side the way QuickBooks' own "Bank Accounts" panel does.
+//
+// Uses /accounts/get rather than /accounts/balance/get -- tried that
+// first (it forces a fresh, non-cached read), but every existing bank
+// connection here was linked with only the Transactions product
+// (app/api/plaid/create-link-token/route.ts), and /accounts/balance/get
+// needs its own separate "Balance" product authorization on the Plaid
+// client that this app doesn't have (confirmed in production: "client
+// is not authorized to access the following products: ["balance"]").
+// /accounts/get's balance data is covered by Transactions instead --
+// Plaid's own docs note it stays at least as fresh as the most recent
+// transaction sync, which this app already runs regularly, so the
+// "live" balance here is really "as of the last sync," same caveat
+// QuickBooks' own balance figure carries.
 export type PlaidAccountBalance = {
   accountId: string;
   current: number | null;
@@ -74,7 +84,7 @@ export async function getAccountBalances(
 ): Promise<PlaidAccountBalance[]> {
   const client = getPlaidClient();
 
-  const response = await client.accountsBalanceGet({
+  const response = await client.accountsGet({
     access_token: accessToken,
   });
 
