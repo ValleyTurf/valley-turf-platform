@@ -27,32 +27,21 @@ export {
   type TipsByUserAndDay,
 } from "@/lib/tipAttribution";
 
-// Payments can post well after the visits they're for were worked —
-// tip attribution below is keyed off the visit day, not the payment
-// day, so this looks back further than the pay period itself when
-// pulling candidate payments. Generous enough to cover realistic
-// invoice-to-payment lag without scanning the whole payments table.
-const PAYMENT_LOOKBACK_DAYS = 120;
-
-function shiftDateKey(dateKeyStr: string, days: number): string {
-  const [year, month, day] = dateKeyStr.split("-").map(Number);
-  const shifted = new Date(Date.UTC(year, month - 1, day + days));
-  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}-${String(
-    shifted.getUTCDate()
-  ).padStart(2, "0")}`;
-}
-
+// Attribution is keyed off the payment's own date (see
+// lib/tipAttribution.ts's header comment for why), so the payments
+// query only needs the period's own bounds -- no lookback window
+// needed: a job worked long before this period but paid (and tipped)
+// within it is found by jobber_visits having no date filter at all
+// below, not by widening this query.
 export async function getTipsByUserAndDay(
   periodStartDate: string,
   periodEndDate: string
 ): Promise<TipsByUserAndDay> {
-  const lookbackStart = shiftDateKey(periodStartDate, -PAYMENT_LOOKBACK_DAYS);
-
   const { data: paymentsData } = await supabaseServer
     .from("jobber_payments")
-    .select("jobber_invoice_id, tip_amount")
+    .select("jobber_invoice_id, tip_amount, payment_date")
     .gt("tip_amount", 0)
-    .gte("payment_date", lookbackStart)
+    .gte("payment_date", periodStartDate)
     .lte("payment_date", periodEndDate);
 
   const payments = (paymentsData ?? []) as TippedPayment[];

@@ -24,15 +24,32 @@
 // assigned to any of the invoice's visits" is this app's stand-in for
 // "everyone assigned to that job."
 //
-// Per the owner's own call on how to handle a recurring job whose
-// visits span several days: the tip is attributed to the single most
-// recent visit day among the invoice's visits, not split further or
-// repeated across days.
+// The day of record is the PAYMENT's own date (payment.payment_date),
+// not the visit day -- this used to be keyed off the most recent visit
+// day instead, on the theory that a tip "belongs to" the day the job
+// was worked. Ryan caught the real-world failure mode (2026-11-03):
+// Carole Cobb's job was worked last pay period but she paid (and
+// tipped) today, in this period -- keying off the visit day meant the
+// tip fell in a period that had already closed out, and the old
+// lookback window in lib/tips.ts only looked BACKWARD from a period's
+// start for a late-arriving payment, not forward past a period's own
+// end for a payment that posts after that period closes, so the tip
+// was invisible on both periods' timecards. His call: "If it gets paid
+// in this pay period and leaves a tip, then the tip needs to go to the
+// correct employees for this pay period" -- tips get paid out with
+// whatever period the money actually lands in, same as the wages they
+// sit next to on this page, not the period the job happened to be
+// worked in. Who the tip gets split between is unchanged (everyone
+// assigned to any of the invoice's visits); only which day/period it
+// lands on changed. The most recent visit is still used for the job
+// number shown next to each tip, since that's just a label, not an
+// attribution decision.
 import { toPhoenixDateString } from "@/lib/phoenixDate";
 
 export type TippedPayment = {
   jobber_invoice_id: string;
   tip_amount: number;
+  payment_date: string | null;
 };
 
 export type TippedVisit = {
@@ -72,18 +89,6 @@ export function attributeTips(
   periodStartDate: string,
   periodEndDate: string
 ): TipsByUserAndDay {
-  // Combine tip amounts per invoice first — an invoice can have more
-  // than one payment record (e.g. a partial payment + a tip added
-  // later), and each one only carries its own slice of the tip.
-  const tipByInvoice = new Map<string, number>();
-  for (const payment of payments) {
-    if (!payment.jobber_invoice_id || payment.tip_amount <= 0) continue;
-    tipByInvoice.set(
-      payment.jobber_invoice_id,
-      (tipByInvoice.get(payment.jobber_invoice_id) ?? 0) + payment.tip_amount
-    );
-  }
-
   const visitsByInvoice = new Map<string, TippedVisit[]>();
   for (const visit of visits) {
     if (!visit.jobber_invoice_id) continue;
@@ -101,8 +106,18 @@ export function attributeTips(
 
   const result: TipsByUserAndDay = new Map();
 
-  for (const [invoiceId, tipAmount] of tipByInvoice) {
-    const invoiceVisits = visitsByInvoice.get(invoiceId) ?? [];
+  // Processed per PAYMENT, not pre-combined per invoice -- an invoice
+  // can have more than one payment record (e.g. a partial payment + a
+  // tip added later), and each one carries its own date as well as its
+  // own slice of the tip, so two payments on the same invoice can
+  // legitimately land on two different days/pay periods.
+  for (const payment of payments) {
+    if (!payment.jobber_invoice_id || payment.tip_amount <= 0) continue;
+
+    const dayKey = toPhoenixDateString(payment.payment_date);
+    if (!dayKey || dayKey < periodStartDate || dayKey > periodEndDate) continue;
+
+    const invoiceVisits = visitsByInvoice.get(payment.jobber_invoice_id) ?? [];
     if (invoiceVisits.length === 0) continue; // no synced visit for this invoice yet
 
     const assignedUserIds = new Set<string>();
@@ -113,7 +128,9 @@ export function attributeTips(
     }
     if (assignedUserIds.size === 0) continue; // nobody assigned; nothing to attribute
 
-    // Day of record: the most recent visit on this invoice.
+    // Most recent visit on the invoice -- used only for the job-number
+    // label shown next to this tip, not for which day it's attributed
+    // to (that's dayKey, above, from the payment itself).
     let latestVisit: TippedVisit | null = null;
     let latestTime = -Infinity;
     for (const visit of invoiceVisits) {
@@ -124,13 +141,9 @@ export function attributeTips(
         latestVisit = visit;
       }
     }
-    if (!latestVisit) continue;
 
-    const dayKey = toPhoenixDateString(latestVisit.completed_at ?? latestVisit.start_at);
-    if (!dayKey || dayKey < periodStartDate || dayKey > periodEndDate) continue;
-
-    const perPersonAmount = roundCents(tipAmount / assignedUserIds.size);
-    const jobNumber = latestVisit.job_number;
+    const perPersonAmount = roundCents(payment.tip_amount / assignedUserIds.size);
+    const jobNumber = latestVisit?.job_number ?? null;
 
     for (const userId of assignedUserIds) {
       const userMap = result.get(userId) ?? new Map<string, UserDailyTip>();
