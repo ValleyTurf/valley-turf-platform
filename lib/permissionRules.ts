@@ -98,6 +98,11 @@ const SECTION_PREFIXES: Record<PermissionSection, string[]> = {
     // kind of real financial data an admin may or may not want to hand
     // a manager/staff member.
     "/expenses",
+    // Bank balance reconciliation report (migration 103, Ryan,
+    // 2026-11-03) -- reviewing/categorizing bank-fed transactions
+    // account by account, same kind of data as /expenses above, so it
+    // rides the same delegable gate rather than getting its own.
+    "/reconciliation",
   ],
   // /job-costing-analytics/trends is deliberately listed here, not under
   // job_costing below, even though its URL still lives under

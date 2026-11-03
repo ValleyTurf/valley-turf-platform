@@ -41,7 +41,18 @@ export type ExpenseRow = {
 export const inputClasses =
   "mt-1 w-full rounded-lg border border-[#d9d4c6] px-3 py-2 text-sm outline-none focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20";
 
-export default function ExpenseRowItem({ expense }: { expense: ExpenseRow }) {
+export default function ExpenseRowItem({
+  expense,
+  runningBalance,
+}: {
+  expense: ExpenseRow;
+  // Reconciliation register (app/(platform)/reconciliation/[accountId])
+  // -- the account balance right after this transaction, so Ryan can
+  // read the list top-to-bottom like a bank statement. Undefined
+  // everywhere else (the plain Expenses/Journal lists aren't scoped to
+  // one account, so a running balance wouldn't mean anything there).
+  runningBalance?: number;
+}) {
   return (
     <details className="rounded-xl border border-[#e7e2d5] px-3 py-2">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
@@ -71,9 +82,14 @@ export default function ExpenseRowItem({ expense }: { expense: ExpenseRow }) {
           </p>
         </div>
 
-        <p className="shrink-0 text-sm font-bold">
-          {formatCurrency(expense.amount)}
-        </p>
+        <div className="shrink-0 text-right">
+          <p className="text-sm font-bold">{formatCurrency(expense.amount)}</p>
+          {runningBalance !== undefined && (
+            <p className="text-[11px] text-[#9c9684]">
+              Balance: {formatCurrency(runningBalance)}
+            </p>
+          )}
+        </div>
       </summary>
 
       <div className="mt-4 border-t border-[#e7e2d5] pt-4">
