@@ -56,6 +56,35 @@ export function getPlaidEnv(): string {
   return process.env.PLAID_ENV ?? "sandbox";
 }
 
+// Bank balance reconciliation (migration 103) -- live balances per
+// account, used to populate bank_accounts.live_balance on each sync
+// alongside the computed in-app balance, so Ryan can see the two side
+// by side the way QuickBooks' own "Bank Accounts" panel does. Uses
+// /accounts/balance/get rather than /accounts/get -- Plaid's own docs
+// call that one out specifically for forcing a fresh, non-cached read
+// instead of whatever was last cached from a transactions sync.
+export type PlaidAccountBalance = {
+  accountId: string;
+  current: number | null;
+  available: number | null;
+};
+
+export async function getAccountBalances(
+  accessToken: string
+): Promise<PlaidAccountBalance[]> {
+  const client = getPlaidClient();
+
+  const response = await client.accountsBalanceGet({
+    access_token: accessToken,
+  });
+
+  return response.data.accounts.map((account) => ({
+    accountId: account.account_id,
+    current: account.balances.current,
+    available: account.balances.available,
+  }));
+}
+
 // Plaid's Node client throws a plain Axios error on a non-2xx response,
 // and Axios's own Error#message is just "Request failed with status
 // code 400" -- it says nothing about *why*. Plaid's actual reason lives

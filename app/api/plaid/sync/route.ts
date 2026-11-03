@@ -20,10 +20,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/currentUser";
 import { supabaseServer } from "@/lib/supabase-server";
 import { recordAuditLog } from "@/lib/auditLog";
-import { describePlaidError } from "@/lib/plaid";
+import { describePlaidError, getAccountBalances } from "@/lib/plaid";
 import { syncTransactions } from "@/lib/plaidTransactions";
-import { mapPlaidCategory } from "@/lib/plaidCategoryMap";
+import { mapPlaidCategory, mapPlaidDeposit } from "@/lib/plaidCategoryMap";
 import { expenseCategoryLabel } from "@/app/(platform)/expenses/constants";
+import type { LedgerType } from "@/app/(platform)/expenses/constants";
 import type { Transaction } from "plaid";
 
 export const dynamic = "force-dynamic";
@@ -77,6 +78,10 @@ function buildExpenseRow(
     vendor: transaction.merchant_name ?? transaction.name ?? null,
     description: transaction.name ?? null,
     category,
+    // Explicit null (rather than leaving the key off) so this matches
+    // buildDepositRow's shape -- modifiedUpdates below updates this
+    // column on every row regardless of which builder produced it.
+    ledger_type: null as LedgerType | null,
     amount: transaction.amount,
     expense_date: transaction.date,
     source: "bank_feed" as const,
@@ -91,16 +96,62 @@ function buildExpenseRow(
   };
 }
 
-// True deposits/income/transfers -- never imported, same as before.
-// Everything else with a negative (money-in) amount is treated as a
-// refund of a prior purchase and DOES get imported (see buildExpenseRow
-// above): Plaid has no dedicated "refund" category, a refund just keeps
-// the original purchase's category with the sign flipped.
+// A true deposit/income/transfer -- as opposed to a refund of a prior
+// purchase, which also arrives as a negative (money-in) amount but
+// keeps its original purchase's category (Plaid has no dedicated
+// "refund" category). Used to be discarded entirely; migration 103
+// (bank balance reconciliation) started importing these via
+// buildDepositRow below instead, since the running in-app balance
+// Ryan asked for ("so I can see balances... and the books are
+// balanced") can't be computed from the expense side alone -- it needs
+// the deposit side too.
 function isTrueDeposit(
   transaction: Transaction
 ): boolean {
   const primary = transaction.personal_finance_category?.primary ?? null;
   return !primary || primary === "TRANSFER_IN" || primary === "INCOME";
+}
+
+// Same combined check the pre-migration-103 code used to decide what
+// to discard (transaction.amount < 0 && isTrueDeposit(transaction)) --
+// kept as its own helper so the "added" loop and the "modified" loop
+// route a transaction to the same builder consistently.
+function isDepositTransaction(transaction: Transaction): boolean {
+  return transaction.amount < 0 && isTrueDeposit(transaction);
+}
+
+// A true deposit becomes a journal entry (migration 096/103), never a
+// "real expense" -- it would otherwise land as a giant negative expense
+// inflating P&L/job costing/vendor totals. ledger_type is always set
+// (mapPlaidDeposit never returns null), and status is always
+// needs_review regardless of how confident the guess is -- see
+// mapPlaidDeposit's comment for why. Category has no real meaning for
+// a journal entry (same as the other four ledger types) -- "other" is
+// just a valid placeholder so the NOT NULL category column is
+// satisfied.
+function buildDepositRow(
+  bankAccountIdByPlaidId: Map<string, string>,
+  transaction: Transaction
+) {
+  const { ledgerType } = mapPlaidDeposit(transaction);
+
+  return {
+    vendor: transaction.merchant_name ?? transaction.name ?? null,
+    description: transaction.name ?? null,
+    category: "other" as const,
+    ledger_type: ledgerType,
+    amount: transaction.amount,
+    expense_date: transaction.date,
+    source: "bank_feed" as const,
+    status: "needs_review" as const,
+    plaid_transaction_id: transaction.transaction_id,
+    bank_account_id: bankAccountIdByPlaidId.get(transaction.account_id) ?? null,
+    notes: `Bank feed (Plaid) -- deposit, defaulted to "${ledgerType}" (confirm on /expenses/journal). Category: "${
+      transaction.personal_finance_category?.detailed ??
+      transaction.personal_finance_category?.primary ??
+      "unknown"
+    }".`,
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -134,7 +185,8 @@ export async function POST(request: NextRequest) {
     connections: [] as Array<{
       institutionName: string | null;
       added: number;
-      skippedDeposits: number;
+      depositsImported: number;
+      skippedZeroAmount: number;
       skippedBeforeCutoff: number;
       skippedAccountNotTracked: number;
       modified: number;
@@ -143,6 +195,7 @@ export async function POST(request: NextRequest) {
       removedSkippedAlreadyReviewed: number;
       byCategory: Array<{ category: string; label: string; count: number; total: number }>;
       needsReviewCount: number;
+      balanceError?: string;
       error?: string;
     }>,
     totalInserted: 0,
@@ -153,7 +206,8 @@ export async function POST(request: NextRequest) {
     const connectionSummary = {
       institutionName: connection.institution_name,
       added: 0,
-      skippedDeposits: 0,
+      depositsImported: 0,
+      skippedZeroAmount: 0,
       skippedBeforeCutoff: 0,
       skippedAccountNotTracked: 0,
       modified: 0,
@@ -162,6 +216,7 @@ export async function POST(request: NextRequest) {
       removedSkippedAlreadyReviewed: 0,
       byCategory: [] as Array<{ category: string; label: string; count: number; total: number }>,
       needsReviewCount: 0,
+      balanceError: undefined as string | undefined,
     };
 
     let syncResult;
@@ -202,7 +257,10 @@ export async function POST(request: NextRequest) {
     );
 
     const byCategory = new Map<string, { count: number; total: number }>();
-    const rowsToInsert: ReturnType<typeof buildExpenseRow>[] = [];
+    const rowsToInsert: (
+      | ReturnType<typeof buildExpenseRow>
+      | ReturnType<typeof buildDepositRow>
+    )[] = [];
 
     for (const transaction of syncResult.added) {
       if (!bankAccountIdByPlaidId.has(transaction.account_id)) {
@@ -211,12 +269,7 @@ export async function POST(request: NextRequest) {
       }
 
       if (transaction.amount === 0) {
-        connectionSummary.skippedDeposits += 1;
-        continue;
-      }
-
-      if (transaction.amount < 0 && isTrueDeposit(transaction)) {
-        connectionSummary.skippedDeposits += 1;
+        connectionSummary.skippedZeroAmount += 1;
         continue;
       }
 
@@ -225,18 +278,32 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      const row = buildExpenseRow(bankAccountIdByPlaidId, transaction);
+      const isDeposit = isDepositTransaction(transaction);
+      const row = isDeposit
+        ? buildDepositRow(bankAccountIdByPlaidId, transaction)
+        : buildExpenseRow(bankAccountIdByPlaidId, transaction);
+
       rowsToInsert.push(row);
       connectionSummary.added += 1;
+
+      if (isDeposit) {
+        connectionSummary.depositsImported += 1;
+      }
 
       if (row.status === "needs_review") {
         connectionSummary.needsReviewCount += 1;
       }
 
-      const existing = byCategory.get(row.category) ?? { count: 0, total: 0 };
-      existing.count += 1;
-      existing.total += row.amount;
-      byCategory.set(row.category, existing);
+      // Deposits always carry category "other" (it isn't a real
+      // category for them -- see buildDepositRow) so they're left out
+      // of the by-category breakdown, which exists to help Ryan spot
+      // real-expense miscategorization, not journal entries.
+      if (!isDeposit) {
+        const existing = byCategory.get(row.category) ?? { count: 0, total: 0 };
+        existing.count += 1;
+        existing.total += row.amount;
+        byCategory.set(row.category, existing);
+      }
     }
 
     connectionSummary.byCategory = Array.from(byCategory.entries())
@@ -269,7 +336,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const modifiedUpdates: Array<{ id: string; row: ReturnType<typeof buildExpenseRow> }> = [];
+    const modifiedUpdates: Array<{
+      id: string;
+      row: ReturnType<typeof buildExpenseRow> | ReturnType<typeof buildDepositRow>;
+    }> = [];
     for (const transaction of syncResult.modified) {
       const existing = existingByPlaidId.get(transaction.transaction_id);
 
@@ -289,10 +359,15 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      modifiedUpdates.push({
-        id: existing.id,
-        row: buildExpenseRow(bankAccountIdByPlaidId, transaction),
-      });
+      // Same builder choice as the "added" loop -- a deposit that was
+      // pending (e.g. a Jobber payout not yet settled) can come back
+      // through here once it posts, and needs the same ledger_type
+      // treatment, not buildExpenseRow's "real expense" shape.
+      const row = isDepositTransaction(transaction)
+        ? buildDepositRow(bankAccountIdByPlaidId, transaction)
+        : buildExpenseRow(bankAccountIdByPlaidId, transaction);
+
+      modifiedUpdates.push({ id: existing.id, row });
       connectionSummary.modified += 1;
     }
 
@@ -339,6 +414,7 @@ export async function POST(request: NextRequest) {
             vendor: update.row.vendor,
             description: update.row.description,
             category: update.row.category,
+            ledger_type: update.row.ledger_type,
             amount: update.row.amount,
             expense_date: update.row.expense_date,
             status: update.row.status,
@@ -361,6 +437,32 @@ export async function POST(request: NextRequest) {
           last_error: null,
         })
         .eq("id", connection.id);
+
+      // Bank balance reconciliation (migration 103) -- cache a live
+      // balance snapshot per tracked account alongside this sync, so
+      // the Bank Feed settings page can show it next to the computed
+      // in-app balance without making Ryan wait on a Plaid call just to
+      // view that page. Non-fatal: a balance-fetch failure shouldn't
+      // mark an otherwise-successful sync as an error (transactions
+      // already imported above stay imported either way).
+      try {
+        const balances = await getAccountBalances(connection.plaid_access_token);
+
+        for (const balance of balances) {
+          const accountId = bankAccountIdByPlaidId.get(balance.accountId);
+          if (!accountId) continue;
+
+          await supabaseServer
+            .from("bank_accounts")
+            .update({
+              live_balance: balance.current ?? balance.available,
+              live_balance_as_of: new Date().toISOString(),
+            })
+            .eq("id", accountId);
+        }
+      } catch (error) {
+        connectionSummary.balanceError = describePlaidError(error);
+      }
     }
 
     summary.connections.push(connectionSummary);

@@ -11,10 +11,12 @@ import { useRouter } from "next/navigation";
 type ConnectionSummary = {
   institutionName: string | null;
   added: number;
-  skippedDeposits: number;
+  depositsImported: number;
+  skippedZeroAmount: number;
   skippedBeforeCutoff: number;
   skippedAccountNotTracked: number;
   needsReviewCount: number;
+  balanceError?: string;
   error?: string;
 };
 
@@ -61,18 +63,23 @@ export default function SyncButton({ disabled }: { disabled?: boolean }) {
             (sum, c) => sum + (c.skippedBeforeCutoff ?? 0),
             0
           );
-          const totalSkippedDeposits = connections.reduce(
-            (sum, c) => sum + (c.skippedDeposits ?? 0),
+          const totalSkippedZeroAmount = connections.reduce(
+            (sum, c) => sum + (c.skippedZeroAmount ?? 0),
             0
           );
           const totalSkippedNotTracked = connections.reduce(
             (sum, c) => sum + (c.skippedAccountNotTracked ?? 0),
             0
           );
+          const totalDeposits = connections.reduce(
+            (sum, c) => sum + (c.depositsImported ?? 0),
+            0
+          );
+          const balanceErrors = connections.filter((c) => c.balanceError);
 
           const skippedReasons = [
             totalSkippedCutoff > 0 ? `${totalSkippedCutoff} were dated before 10/1/2026` : null,
-            totalSkippedDeposits > 0 ? `${totalSkippedDeposits} were deposits/credits, not expenses` : null,
+            totalSkippedZeroAmount > 0 ? `${totalSkippedZeroAmount} were $0 placeholders` : null,
             totalSkippedNotTracked > 0 ? `${totalSkippedNotTracked} were from an untracked account` : null,
           ].filter((reason): reason is string => reason !== null);
 
@@ -83,12 +90,24 @@ export default function SyncButton({ disabled }: { disabled?: boolean }) {
                 )} -- all skipped on purpose.)`
               : "";
 
+          const depositsNote =
+            totalDeposits > 0
+              ? ` ${totalDeposits} ${totalDeposits === 1 ? "was a deposit" : "were deposits"} -- confirm on the Journal page.`
+              : "";
+
+          const balanceNote =
+            balanceErrors.length > 0
+              ? ` Live balance couldn't be refreshed: ${balanceErrors.map((c) => c.balanceError).join("; ")}`
+              : "";
+
           setMessage(
             `Synced ${totalInserted} new expense${totalInserted === 1 ? "" : "s"}` +
               (totalNeedsReview > 0
                 ? ` -- ${totalNeedsReview} need${totalNeedsReview === 1 ? "s" : ""} review on the Expenses page.`
                 : ".") +
-              skippedNote
+              depositsNote +
+              skippedNote +
+              balanceNote
           );
         }
       }

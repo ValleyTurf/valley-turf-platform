@@ -16,7 +16,7 @@ import { toNumber, formatCurrencyPrecise as formatCurrency } from "@/lib/format"
 // unchanged; this is the new transaction-level half, reconciled into a
 // single P&L view in a later phase.
 type ExpensesPageProps = {
-  searchParams: Promise<{ month?: string; status?: string }>;
+  searchParams: Promise<{ month?: string; status?: string; bank_account_id?: string }>;
 };
 
 function currentMonth(): string {
@@ -41,17 +41,35 @@ export default async function ExpensesPage({ searchParams }: ExpensesPageProps) 
   // any month, so this view deliberately ignores the month filter entirely
   // rather than making him click through nine months one at a time.
   const showingNeedsReview = params.status === "needs_review";
+  // Bank balance reconciliation (migration 103) -- the Bank Feed
+  // settings page links here with a specific account's "N to review"
+  // count, which (unlike the global Needs Review link above) has to
+  // include ledger_type rows too -- a true deposit imported by the
+  // bank feed always needs review (see buildDepositRow in
+  // app/api/plaid/sync/route.ts) and otherwise only ever shows up on
+  // /expenses/journal, not here. Scoping to one account is exactly
+  // when it's safe to also show those: this view already narrows to
+  // "things to review for THIS account," so mixing in a few journal
+  // rows reads as complete, not confusing, the way it would on the
+  // global (every-account, every-row) Needs Review list.
+  const bankAccountId = params.bank_account_id || null;
 
   // .is("ledger_type", null) excludes journal entries (migration 096,
   // owner draws/loan payments/transfers/contributions) -- those live on
   // /expenses/journal instead, same reasoning as the status filter
-  // above but for a different kind of "not a real expense" row.
-  const baseQuery = supabaseServer
+  // above but for a different kind of "not a real expense" row. Not
+  // applied when scoped to a specific bank account -- see above.
+  let baseQuery = supabaseServer
     .from("expenses")
     .select(
       "id, vendor, description, category, ledger_type, amount, expense_date, notes, created_by_name, status, job_costing_treatment, amortization_end_date"
-    )
-    .is("ledger_type", null);
+    );
+
+  if (!bankAccountId) {
+    baseQuery = baseQuery.is("ledger_type", null);
+  } else {
+    baseQuery = baseQuery.eq("bank_account_id", bankAccountId);
+  }
 
   const { data, error } = showingNeedsReview
     ? await baseQuery
@@ -178,7 +196,12 @@ export default async function ExpensesPage({ searchParams }: ExpensesPageProps) 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-bold">
               {showingNeedsReview ? (
-                <>Needs Review <span className="font-normal text-[#6b705c]">(every month)</span></>
+                <>
+                  Needs Review{" "}
+                  <span className="font-normal text-[#6b705c]">
+                    {bankAccountId ? "(this account)" : "(every month)"}
+                  </span>
+                </>
               ) : (
                 monthLabel
               )}
@@ -215,10 +238,9 @@ export default async function ExpensesPage({ searchParams }: ExpensesPageProps) 
 
           {showingNeedsReview ? (
             <p className="mt-2 text-sm text-[#6b705c]">
-              Mostly from the QuickBooks import -- QuickBooks didn&apos;t
-              break these down far enough to map with confidence. Open a
-              row, fix the category if needed, and hit Save -- that clears
-              its review flag and it drops off this list.
+              {bankAccountId
+                ? "Includes both expenses and journal entries (deposits, transfers) for this account that still need a human look. Open a row, fix the category or Entry Type if needed, and hit Save -- that clears its review flag."
+                : <>Mostly from the QuickBooks import -- QuickBooks didn&apos;t break these down far enough to map with confidence. Open a row, fix the category if needed, and hit Save -- that clears its review flag and it drops off this list.</>}
             </p>
           ) : (
             <div className="mt-4 flex flex-wrap gap-3">

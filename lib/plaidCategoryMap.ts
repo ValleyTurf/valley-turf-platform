@@ -1,4 +1,7 @@
-import type { ExpenseCategory } from "@/app/(platform)/expenses/constants";
+import type {
+  ExpenseCategory,
+  LedgerType,
+} from "@/app/(platform)/expenses/constants";
 
 // Maps Plaid's Personal Finance Category taxonomy onto this app's own
 // expense categories -- same shape and same philosophy as
@@ -84,6 +87,37 @@ const PRIMARY_CATEGORY_MAP: Record<
 > = {
   BANK_FEES: { category: "bank_fees", needsReview: false },
 };
+
+// Bank balance reconciliation (migration 103) -- true deposits used to
+// be discarded outright (see isTrueDeposit in
+// app/api/plaid/sync/route.ts); now they're imported so a per-account
+// running balance can be computed, which means every one of them needs
+// a ledger_type guess (a deposit is never a "real expense" -- it has
+// to land in one of the journal buckets or it would inflate P&L/job
+// costing as a giant negative expense). The guess is deliberately
+// conservative: match a payout processor by name for
+// "revenue_deposit," default everything else (a paycheck, a transfer
+// from another of Ryan's own accounts, a tax refund, interest) to
+// "internal_transfer" as the least-wrong of the four pre-existing
+// buckets, and flag EVERY deposit needs_review regardless of
+// confidence -- unlike mapPlaidCategory's expense-side mapping, this
+// is brand new and gets the actual bank balance wrong if a guess is
+// off, so Ryan reviews each one at least once on /expenses/journal
+// until the mapping proves itself out.
+const DEPOSIT_PROCESSOR_PATTERN = /stripe|jobber/i;
+
+export function mapPlaidDeposit(transaction: {
+  merchant_name?: string | null;
+  name?: string | null;
+}): { ledgerType: LedgerType; needsReview: boolean } {
+  const label = `${transaction.merchant_name ?? ""} ${transaction.name ?? ""}`;
+
+  const ledgerType: LedgerType = DEPOSIT_PROCESSOR_PATTERN.test(label)
+    ? "revenue_deposit"
+    : "internal_transfer";
+
+  return { ledgerType, needsReview: true };
+}
 
 export function mapPlaidCategory(
   primary: string | null | undefined,

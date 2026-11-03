@@ -86,13 +86,22 @@ export type LedgerType =
   | "owner_draw"
   | "loan_payment"
   | "internal_transfer"
-  | "owner_contribution";
+  | "owner_contribution"
+  | "revenue_deposit";
 
 export const LEDGER_TYPES: { value: LedgerType; label: string }[] = [
   { value: "owner_draw", label: "Owner Draw" },
   { value: "loan_payment", label: "Paid to Loan" },
   { value: "internal_transfer", label: "Internal Transfer" },
   { value: "owner_contribution", label: "Owner Contribution" },
+  // Migration 103 (bank balance reconciliation) -- a deposit that's
+  // genuine business revenue already recorded elsewhere (a
+  // Jobber/Stripe payout landing in the bank account), not a money
+  // movement in the owner-draw/loan/transfer/contribution sense. Kept
+  // distinct from those four so it's visible on /expenses/journal for
+  // what it actually is, while still excluded from the P&L/job-costing
+  // double count the same way the other four are.
+  { value: "revenue_deposit", label: "Revenue (Already Recorded)" },
 ];
 
 const LEDGER_LABEL_BY_VALUE = new Map(
