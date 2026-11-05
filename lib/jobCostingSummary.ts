@@ -64,6 +64,23 @@ export type CostBreakdown = {
   // Profitability panel showing $440 when the real per-job numbers,
   // equipment included, add up to $437.10).
   equipment: number;
+  // Card/ACH processing fee Jobber Payments (or native Stripe) charged
+  // against this specific invoice's payment(s) -- Ryan, 2026-11-05:
+  // "For profitability, we are looking at the full price of the job,
+  // not splitting out processing fees and tips from the equation,
+  // should we be factoring those in?" Tips never entered revenue to
+  // begin with (jobber_payments.tip_amount is a separate field from
+  // invoice.total, which is where `revenue` above comes from -- Jobber
+  // never folds a tip into the invoice total). Processing fees were the
+  // real gap: already auto-logged as their own `expenses` row the
+  // moment Stripe/Jobber reports the fee (migration 097,
+  // lib/paymentFeeExpenses.ts), and already reducing the overall P&L
+  // correctly, but never attributed back to the specific invoice that
+  // generated them -- so a card-paid job's shown profit here used to be
+  // overstated by whatever it cost to process that payment. See the
+  // processing-fee block in fetchCostBreakdownForInvoices below for how
+  // this is traced back to a specific invoice.
+  processingFee: number;
   unloggedLabor: boolean;
   visitCount: number;
   firstVisitDate: string | null;
@@ -89,7 +106,8 @@ export function buildCategorySummaries(
     const directCost =
       (breakdown?.labor ?? 0) +
       (breakdown?.materials ?? 0) +
-      (breakdown?.equipment ?? 0);
+      (breakdown?.equipment ?? 0) +
+      (breakdown?.processingFee ?? 0);
     const profit = revenue - directCost - overhead;
 
     const existing = map.get(category) ?? {
@@ -230,6 +248,7 @@ export async function fetchCostBreakdownForInvoices(
       labor: 0,
       materials: 0,
       equipment: 0,
+      processingFee: 0,
       unloggedLabor: false,
       visitCount: 0,
       firstVisitDate: null,
@@ -417,6 +436,65 @@ export async function fetchCostBreakdownForInvoices(
     getBucket(invoiceId).equipment += rate;
   }
 
+  // Processing fees (Ryan, 2026-11-05 -- see the CostBreakdown.processingFee
+  // comment). Traced invoice-id-first rather than through visitToInvoice
+  // like the buckets above -- a processing fee is charged against a
+  // PAYMENT, which is already tied directly to an invoice
+  // (jobber_payment_fees.jobber_invoice_id), no visit/month matching
+  // needed. Sourced from `expenses` (not jobber_payment_fees directly)
+  // so this reflects any manual correction or deletion Ryan makes to
+  // that auto-logged row, same as every other direct cost here. Native
+  // Stripe charges (the other source lib/paymentFeeExpenses.ts logs)
+  // aren't included -- those link to this app's own native `invoices`
+  // table (migration 043), a separate, not-yet-live invoicing path with
+  // no bridge back to a jobber_invoice_id.
+  const invoiceIds = Array.from(
+    new Set(eligibleRows.map((r) => r.jobber_invoice_id))
+  );
+
+  const { data: paymentFeeRows, error: paymentFeeError } = await supabaseServer
+    .from("jobber_payment_fees")
+    .select("jobber_payment_record_id, jobber_invoice_id")
+    .in("jobber_invoice_id", invoiceIds);
+  if (paymentFeeError) throw paymentFeeError;
+
+  const invoiceIdByPaymentRecordId = new Map(
+    (
+      (paymentFeeRows ?? []) as {
+        jobber_payment_record_id: string;
+        jobber_invoice_id: string | null;
+      }[]
+    )
+      .filter((row) => row.jobber_invoice_id)
+      .map((row) => [row.jobber_payment_record_id, row.jobber_invoice_id as string])
+  );
+
+  const paymentRecordIds = Array.from(invoiceIdByPaymentRecordId.keys());
+
+  if (paymentRecordIds.length > 0) {
+    const { data: feeExpenseRows, error: feeExpenseError } = await supabaseServer
+      .from("expenses")
+      .select("jobber_payment_record_id, amount")
+      .eq("source", "processing_fee")
+      .in("jobber_payment_record_id", paymentRecordIds);
+    if (feeExpenseError) throw feeExpenseError;
+
+    for (const row of (feeExpenseRows ?? []) as {
+      jobber_payment_record_id: string | null;
+      amount: number | string;
+    }[]) {
+      if (!row.jobber_payment_record_id) continue;
+      const invoiceId = invoiceIdByPaymentRecordId.get(row.jobber_payment_record_id);
+      if (!invoiceId) continue;
+
+      // getBucket (not a result.has guard) deliberately -- the fee is
+      // real even for an invoice with zero visits matched above (no
+      // logged labor/materials/equipment yet), so this still creates a
+      // bucket for it rather than silently dropping the cost.
+      getBucket(invoiceId).processingFee += toNumber(row.amount);
+    }
+  }
+
   // Timer fallback for labor that was clocked but never saved.
   const userNameMap = new Map<string, string>();
   {
@@ -582,7 +660,8 @@ export async function getCustomerJobCostingSummary(
     directCost +=
       (breakdown?.labor ?? 0) +
       (breakdown?.materials ?? 0) +
-      (breakdown?.equipment ?? 0);
+      (breakdown?.equipment ?? 0) +
+      (breakdown?.processingFee ?? 0);
     overhead += toNumber(row.overhead_allocated);
   }
 

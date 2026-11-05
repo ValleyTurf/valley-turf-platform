@@ -374,6 +374,12 @@ type VisitCostBreakdown = {
   materialTotal: number;
   equipmentTotal: number;
   overheadTotal: number;
+  // This invoice-month's share of card processing fees (Ryan,
+  // 2026-11-05 -- "should we be factoring [tips and processing fees]
+  // in?"). A single number, not an itemized line list like overhead,
+  // since it's already one real expense row per payment rather than a
+  // pool split across named sources -- see getProcessingFeeShareByMonth.
+  processingFeeTotal: number;
 };
 
 // Per-item amount, already divided down to a single invoice's share --
@@ -662,6 +668,7 @@ async function getVisitCostBreakdowns(
       materialTotal: 0,
       equipmentTotal: equipmentLines.reduce((sum, line) => sum + line.cost, 0),
       overheadTotal: 0,
+      processingFeeTotal: 0,
     });
   }
 
@@ -868,6 +875,102 @@ async function getOverheadSharePerInvoiceByMonth(
       monthKey,
       lines.sort((a, b) => b.amount - a.amount)
     );
+  }
+
+  return result;
+}
+
+// This client's own share of card processing fees, per month (Ryan,
+// 2026-11-05 -- see VisitCostBreakdown.processingFeeTotal's comment).
+// Unlike getOverheadSharePerInvoiceByMonth above, this isn't a pool
+// split sitewide -- a processing fee is charged against one specific
+// payment, which is already tied to one specific invoice
+// (jobber_payment_fees.jobber_invoice_id), so this only has to find
+// this client's own invoices issued in the given months, then sum the
+// fee expenses already linked to those invoices via jobber_payment_fees
+// -- same join lib/jobCostingSummary.ts's fetchCostBreakdownForInvoices
+// uses, just scoped to one client instead of a batch of invoice ids.
+// Sourced from `expenses` (not jobber_payment_fees directly) so this
+// reflects any manual correction Ryan makes, same as every other direct
+// cost here. Native Stripe charges are excluded for the same reason
+// given there -- no bridge back to a jobber_invoice_id yet.
+async function getProcessingFeeShareByMonth(
+  jobberClientId: string,
+  months: string[]
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  const uniqueMonths = Array.from(new Set(months)).filter(Boolean);
+  if (uniqueMonths.length === 0) return result;
+
+  const { data: invoiceRows, error: invoiceError } = await supabaseServer
+    .from("jobber_invoices")
+    .select("jobber_invoice_id, issue_date")
+    .eq("jobber_client_id", jobberClientId);
+
+  if (invoiceError) {
+    console.error("Processing fee share query failed:", invoiceError.message);
+    return result;
+  }
+
+  const monthByInvoiceId = new Map<string, string>();
+  for (const row of (invoiceRows ?? []) as {
+    jobber_invoice_id: string;
+    issue_date: string | null;
+  }[]) {
+    const month = row.issue_date?.slice(0, 7);
+    if (month && uniqueMonths.includes(month)) {
+      monthByInvoiceId.set(row.jobber_invoice_id, month);
+    }
+  }
+
+  const invoiceIds = Array.from(monthByInvoiceId.keys());
+  if (invoiceIds.length === 0) return result;
+
+  const { data: paymentFeeRows, error: paymentFeeError } = await supabaseServer
+    .from("jobber_payment_fees")
+    .select("jobber_payment_record_id, jobber_invoice_id")
+    .in("jobber_invoice_id", invoiceIds);
+
+  if (paymentFeeError) {
+    console.error("Processing fee share query failed:", paymentFeeError.message);
+    return result;
+  }
+
+  const invoiceIdByPaymentRecordId = new Map(
+    (
+      (paymentFeeRows ?? []) as {
+        jobber_payment_record_id: string;
+        jobber_invoice_id: string | null;
+      }[]
+    )
+      .filter((row) => row.jobber_invoice_id)
+      .map((row) => [row.jobber_payment_record_id, row.jobber_invoice_id as string])
+  );
+
+  const paymentRecordIds = Array.from(invoiceIdByPaymentRecordId.keys());
+  if (paymentRecordIds.length === 0) return result;
+
+  const { data: feeExpenseRows, error: feeExpenseError } = await supabaseServer
+    .from("expenses")
+    .select("jobber_payment_record_id, amount")
+    .eq("source", "processing_fee")
+    .in("jobber_payment_record_id", paymentRecordIds);
+
+  if (feeExpenseError) {
+    console.error("Processing fee share query failed:", feeExpenseError.message);
+    return result;
+  }
+
+  for (const row of (feeExpenseRows ?? []) as {
+    jobber_payment_record_id: string | null;
+    amount: number | string;
+  }[]) {
+    if (!row.jobber_payment_record_id) continue;
+    const invoiceId = invoiceIdByPaymentRecordId.get(row.jobber_payment_record_id);
+    const month = invoiceId ? monthByInvoiceId.get(invoiceId) : undefined;
+    if (!month) continue;
+
+    result.set(month, (result.get(month) ?? 0) + toNumber(row.amount));
   }
 
   return result;
@@ -2251,7 +2354,8 @@ function VisitCostBreakdownSection({
     (breakdown.laborLines.length > 0 ||
       breakdown.materialLines.length > 0 ||
       breakdown.equipmentLines.length > 0 ||
-      breakdown.overheadLines.length > 0);
+      breakdown.overheadLines.length > 0 ||
+      breakdown.processingFeeTotal > 0);
 
   if (!breakdown || !hasAnything) {
     return (
@@ -2265,7 +2369,8 @@ function VisitCostBreakdownSection({
     breakdown.laborTotal +
     breakdown.materialTotal +
     breakdown.equipmentTotal +
-    breakdown.overheadTotal;
+    breakdown.overheadTotal +
+    breakdown.processingFeeTotal;
 
   return (
     <div className="space-y-3 text-sm">
@@ -2363,6 +2468,26 @@ function VisitCostBreakdownSection({
                 </span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {breakdown.processingFeeTotal > 0 && (
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-[#9c7a20]">
+            Processing Fee
+          </p>
+          <p className="mt-0.5 text-[11px] text-[#9c9684]">
+            This job&apos;s own card processing fee, already a real
+            expense -- see Job Costing Analytics for how this is traced.
+          </p>
+          <div className="mt-1 space-y-1">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[#6b705c]">Processing fee</span>
+              <span className="shrink-0 font-semibold">
+                {formatCurrencyPrecise(breakdown.processingFeeTotal)}
+              </span>
+            </div>
           </div>
         </div>
       )}
@@ -2660,6 +2785,13 @@ export default async function CustomerDetailPage({
     .filter((month): month is string => Boolean(month));
   const overheadByMonth = await getOverheadSharePerInvoiceByMonth(overheadMonths);
 
+  // Processing fee share, same per-month keying as overhead above (Ryan,
+  // 2026-11-05) -- see VisitCostBreakdown.processingFeeTotal's comment.
+  const processingFeeByMonth = await getProcessingFeeShareByMonth(
+    decodedId,
+    overheadMonths
+  );
+
   for (const visit of visitsForCostBreakdown) {
     const month = visit.start_at?.slice(0, 7);
     const breakdown = visitCostBreakdownMap.get(visit.jobber_visit_id);
@@ -2675,6 +2807,7 @@ export default async function CustomerDetailPage({
     );
     breakdown.overheadLines = overheadLines;
     breakdown.overheadTotal = overheadLines.reduce((sum, line) => sum + line.cost, 0);
+    breakdown.processingFeeTotal = processingFeeByMonth.get(month) ?? 0;
   }
 
   // The dollar figure shown next to each visit (both collapsed, before
@@ -2697,7 +2830,8 @@ export default async function CustomerDetailPage({
       ? breakdown.laborTotal +
         breakdown.materialTotal +
         breakdown.equipmentTotal +
-        breakdown.overheadTotal
+        breakdown.overheadTotal +
+        breakdown.processingFeeTotal
       : (visitCostMap.get(visit.jobber_visit_id) ?? 0);
     visitDisplayTotalMap.set(visit.jobber_visit_id, total);
   }

@@ -59,8 +59,13 @@ type CategoryJobRow = {
   // uninvoiced material costs showed $0. Using laborCost + materialCost +
   // equipmentCost here instead means Total Cost is built from the same
   // calendar-month-matched numbers already shown in the Labor/Materials/
-  // Equipment columns, so the four always sum to Total Cost exactly —
-  // see fetchCostBreakdownForInvoices.
+  // Equipment/Processing Fee columns, so the five always sum to Total
+  // Cost exactly -- see fetchCostBreakdownForInvoices. Processing Fee
+  // added 2026-11-05 (Ryan: "should we be factoring [tips and
+  // processing fees] in?") -- tips were never part of revenue to begin
+  // with, but a card-paid invoice's processing fee used to be invisible
+  // here even though it was already a real expense reducing the
+  // overall P&L; see CostBreakdown.processingFee's comment.
   direct_cost: number;
   overhead_allocated: number;
   estimated_profit: number;
@@ -68,6 +73,7 @@ type CategoryJobRow = {
   laborCost: number;
   materialCost: number;
   equipmentCost: number;
+  processingFeeCost: number;
   // True when laborCost is wholly or partly a timer-derived estimate
   // (visit_time_logs at today's rate) rather than a saved
   // visit_material_usage amount — see fetchCostBreakdownForInvoices.
@@ -193,12 +199,13 @@ function buildCategoryJobRows(
     const meta = invoiceMeta.get(row.jobber_invoice_id);
     const breakdown = costBreakdowns.get(row.jobber_invoice_id);
     // See the CategoryJobRow type comment above: direct_cost is
-    // laborCost + materialCost + equipmentCost, not the view's own
-    // (unreliable) column.
+    // laborCost + materialCost + equipmentCost + processingFeeCost, not
+    // the view's own (unreliable) column.
     const directCost =
       (breakdown?.labor ?? 0) +
       (breakdown?.materials ?? 0) +
-      (breakdown?.equipment ?? 0);
+      (breakdown?.equipment ?? 0) +
+      (breakdown?.processingFee ?? 0);
     const profit = revenue - directCost - overhead;
 
     const jobRow: CategoryJobRow = {
@@ -218,6 +225,7 @@ function buildCategoryJobRows(
       laborCost: breakdown?.labor ?? 0,
       materialCost: breakdown?.materials ?? 0,
       equipmentCost: breakdown?.equipment ?? 0,
+      processingFeeCost: breakdown?.processingFee ?? 0,
       laborIsEstimated: breakdown?.unloggedLabor ?? false,
       visitCount: breakdown?.visitCount ?? 0,
       firstVisitDate: breakdown?.firstVisitDate ?? null,
@@ -707,7 +715,7 @@ export default async function JobCostingAnalyticsPage({
                       {jobRows.length > 0 && (
                         <div className="mt-5 hidden group-open:block">
                           <div className="overflow-x-auto rounded-xl border border-[#e7e2d5]">
-                            <table className="w-full min-w-[980px] text-left text-sm">
+                            <table className="w-full min-w-[1060px] text-left text-sm">
                               <thead className="bg-[#f7f6f1] text-xs font-semibold uppercase tracking-wide text-[#6b705c]">
                                 <tr>
                                   <th className="px-4 py-2">Customer</th>
@@ -724,6 +732,9 @@ export default async function JobCostingAnalyticsPage({
                                   </th>
                                   <th className="px-4 py-2 text-right">
                                     Equipment
+                                  </th>
+                                  <th className="px-4 py-2 text-right">
+                                    Processing Fee
                                   </th>
                                   <th className="px-4 py-2 text-right">
                                     Overhead
@@ -818,6 +829,9 @@ export default async function JobCostingAnalyticsPage({
                                       {formatCurrency(job.equipmentCost)}
                                     </td>
                                     <td className="px-4 py-2 text-right text-[#6b705c]">
+                                      {formatCurrency(job.processingFeeCost)}
+                                    </td>
+                                    <td className="px-4 py-2 text-right text-[#6b705c]">
                                       {formatCurrency(job.overhead_allocated)}
                                     </td>
                                     <td className="px-4 py-2 text-right">
@@ -846,8 +860,9 @@ export default async function JobCostingAnalyticsPage({
                             </table>
                           </div>
                           <p className="mt-2 text-xs text-[#9c7a20]">
-                            Labor, Materials, Equipment, and Overhead
-                            always sum to Total Cost exactly —
+                            Labor, Materials, Equipment, Processing
+                            Fee, and Overhead always sum to Total Cost
+                            exactly —
                             <span className="whitespace-nowrap"> *</span>{" "}
                             marks Labor that&apos;s estimated from clocked
                             time because it hasn&apos;t been manually saved
