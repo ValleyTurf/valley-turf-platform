@@ -44,8 +44,6 @@
 // lands on changed. The most recent visit is still used for the job
 // number shown next to each tip, since that's just a label, not an
 // attribution decision.
-import { toPhoenixDateString } from "@/lib/phoenixDate";
-
 export type TippedPayment = {
   jobber_invoice_id: string;
   tip_amount: number;
@@ -114,7 +112,21 @@ export function attributeTips(
   for (const payment of payments) {
     if (!payment.jobber_invoice_id || payment.tip_amount <= 0) continue;
 
-    const dayKey = toPhoenixDateString(payment.payment_date);
+    // payment.payment_date is already a Phoenix calendar date string
+    // ("YYYY-MM-DD") by the time it gets here -- every writer of
+    // jobber_payments.payment_date (app/api/jobber/sync-payments's
+    // cleanDate = toPhoenixDateString, and the native-payment paths in
+    // lib/payments.ts / lib/stripeWebhookProcessor.ts, which slice an
+    // ISO timestamp down to its first 10 characters) already produces
+    // one. Running it through toPhoenixDateString a second time here
+    // used to re-parse that bare date as UTC midnight and convert THAT
+    // to Phoenix time (UTC-7), silently shifting every tip back one
+    // calendar day -- e.g. a payment correctly dated "2026-08-05"
+    // became dayKey "2026-08-04". Caught via the dedicated test suite
+    // in lib/tipAttribution.test.ts, where every date-specific
+    // assertion (payment_date "2026-08-05" expected to land on
+    // "2026-08-05", not "2026-08-04") was failing in CI.
+    const dayKey = payment.payment_date;
     if (!dayKey || dayKey < periodStartDate || dayKey > periodEndDate) continue;
 
     const invoiceVisits = visitsByInvoice.get(payment.jobber_invoice_id) ?? [];
