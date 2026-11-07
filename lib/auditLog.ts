@@ -22,6 +22,26 @@ export type AuditActor = {
 
 export type AuditAction = "create" | "update" | "delete";
 
+// Wraps each field of a create/delete's sanitized record as a
+// {before, after} pair, matching the shape diffRecords already produces
+// for updates and that the Audit Log page's AuditRowItem expects for
+// every entry.
+function toFieldChanges(
+  sanitized: PlainRecord,
+  direction: "create" | "delete"
+): Record<string, { before: unknown; after: unknown }> {
+  const result: Record<string, { before: unknown; after: unknown }> = {};
+
+  for (const [key, value] of Object.entries(sanitized)) {
+    result[key] =
+      direction === "create"
+        ? { before: null, after: value }
+        : { before: value, after: null };
+  }
+
+  return result;
+}
+
 export async function recordAuditLog(params: {
   actor: AuditActor;
   action: AuditAction;
@@ -60,9 +80,38 @@ export async function recordAuditLog(params: {
 
     changes = note ? { ...diff, _note: note } : diff;
   } else if (action === "create") {
-    changes = sanitizeRecord(after) ?? (note ? { _note: note } : null);
+    // Shaped as {field: {before: null, after: value}} per field, NOT the
+    // raw sanitized record -- the Audit Log page's AuditRowItem reads
+    // every entry as {before, after} unconditionally (change.before /
+    // change.after). This used to hand it the flat sanitized value
+    // directly instead, so a created row with any null field (routine --
+    // most optional columns are null on create) stored changes.someField
+    // = null, and AuditRowItem's `change.before` crashed rendering with
+    // "Cannot read properties of null" the moment that row was in the
+    // first page of results -- the actual cause of the Audit Log's "page
+    // couldn't load" error (see AuditRowItem's normalizeChange, which
+    // also tolerates rows already written in the old flat shape).
+    const sanitized = sanitizeRecord(after);
+    const fieldChanges = sanitized ? toFieldChanges(sanitized, "create") : null;
+    changes = fieldChanges
+      ? note
+        ? { ...fieldChanges, _note: note }
+        : fieldChanges
+      : note
+        ? { _note: note }
+        : null;
   } else {
-    changes = sanitizeRecord(before) ?? (note ? { _note: note } : null);
+    // Same fix, mirrored for delete: each field shows as {before: value,
+    // after: null} instead of the bare value.
+    const sanitized = sanitizeRecord(before);
+    const fieldChanges = sanitized ? toFieldChanges(sanitized, "delete") : null;
+    changes = fieldChanges
+      ? note
+        ? { ...fieldChanges, _note: note }
+        : fieldChanges
+      : note
+        ? { _note: note }
+        : null;
   }
 
   try {

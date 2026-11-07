@@ -211,13 +211,39 @@ export default async function AuditPage({ searchParams }: AuditPageProps) {
   );
 }
 
+// recordAuditLog (lib/auditLog.ts) now always writes each field as a
+// {before, after} pair, but rows written before that fix still have the
+// field's raw value stored directly -- which can be `null`. Reading
+// change.before/change.after unconditionally crashed the whole page the
+// moment a row like that showed up in the first page of results (the
+// cause of the Audit Log's "page couldn't load" error). This normalizes
+// either shape, inferring which side a legacy flat value belongs on from
+// the row's own action (create's recorded value was always "after";
+// delete's was always "before").
+function normalizeChange(change: unknown, action: AuditAction): AuditChange {
+  if (
+    change !== null &&
+    typeof change === "object" &&
+    ("before" in change || "after" in change)
+  ) {
+    return change as AuditChange;
+  }
+
+  return action === "delete"
+    ? { before: change, after: null }
+    : { before: null, after: change };
+}
+
 function AuditRowItem({ row }: { row: AuditRow }) {
   const rawChanges = row.changes ?? {};
   const note = typeof rawChanges._note === "string" ? rawChanges._note : null;
 
-  const changeEntries = Object.entries(rawChanges).filter(
-    ([key]) => key !== "_note"
-  ) as [string, AuditChange][];
+  const changeEntries = Object.entries(rawChanges)
+    .filter(([key]) => key !== "_note")
+    .map(([field, change]) => [field, normalizeChange(change, row.action)]) as [
+    string,
+    AuditChange,
+  ][];
 
   return (
     <details className="rounded-xl border border-[#e7e2d5] bg-white px-4 py-3">
