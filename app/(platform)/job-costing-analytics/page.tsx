@@ -859,26 +859,6 @@ export default async function JobCostingAnalyticsPage({
                               </tbody>
                             </table>
                           </div>
-                          <p className="mt-2 text-xs text-[#9c7a20]">
-                            Labor, Materials, Equipment, Processing
-                            Fee, and Overhead always sum to Total Cost
-                            exactly —
-                            <span className="whitespace-nowrap"> *</span>{" "}
-                            marks Labor that&apos;s estimated from clocked
-                            time because it hasn&apos;t been manually saved
-                            on{" "}
-                            <Link href="/job-costs" className="underline">
-                              /job-costs
-                            </Link>{" "}
-                            yet, priced at today&apos;s rate rather than a
-                            point-in-time one. The small line under each
-                            date is which visits that dollar figure covers
-                            — matched to the invoice by calendar month
-                            (same month as the invoice date), not by
-                            Jobber&apos;s own visit-to-invoice link, which
-                            doesn&apos;t line up with how this business
-                            actually bills.
-                          </p>
                         </div>
                       )}
                     </details>
@@ -886,6 +866,24 @@ export default async function JobCostingAnalyticsPage({
                 })}
               </div>
             </section>
+
+            <p className="mt-4 text-xs text-[#9c7a20]">
+              Labor, Materials, Equipment, Processing Fee, and Overhead
+              always sum to Total Cost exactly —
+              <span className="whitespace-nowrap"> *</span>{" "}
+              marks Labor that&apos;s estimated from clocked time because it
+              hasn&apos;t been manually saved on{" "}
+              <Link href="/job-costs" className="underline">
+                /job-costs
+              </Link>{" "}
+              yet, priced at today&apos;s rate rather than a point-in-time
+              one. The small line under each date (in a category&apos;s job
+              list below) is which visits that dollar figure covers —
+              matched to the invoice by calendar month (same month as the
+              invoice date), not by Jobber&apos;s own visit-to-invoice link,
+              which doesn&apos;t line up with how this business actually
+              bills.
+            </p>
           </>
         )}
       </div>
