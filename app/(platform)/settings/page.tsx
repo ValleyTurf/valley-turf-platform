@@ -154,14 +154,7 @@ export default async function SettingsPage() {
           </p>
         </div>
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns:
-              "repeat(auto-fit, minmax(260px, 1fr))",
-            gap: "20px",
-          }}
-        >
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {visibleSections.map((section) => {
             const CardTag = section.external ? "a" : Link;
 
@@ -173,8 +166,8 @@ export default async function SettingsPage() {
                 display: "block",
                 background: "#ffffff",
                 border: "1px solid #e2e8f0",
-                borderRadius: "16px",
-                padding: "24px",
+                borderRadius: "20px",
+                padding: "20px",
                 textDecoration: "none",
                 boxShadow:
                   "0 1px 3px rgba(15, 23, 42, 0.05)",
@@ -182,88 +175,39 @@ export default async function SettingsPage() {
                   "transform 0.15s ease, box-shadow 0.15s ease",
               }}
             >
-              <div
+              <span style={{ fontSize: "26px" }}>{section.icon}</span>
+
+              <h2
                 style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  gap: "16px",
+                  margin: "10px 0 0",
+                  color: "#0f172a",
+                  fontSize: "17px",
                 }}
               >
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "16px",
-                    alignItems: "flex-start",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: "52px",
-                      height: "52px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      borderRadius: "14px",
-                      background: "#f1f5f9",
-                      fontSize: "26px",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {section.icon}
-                  </div>
+                {section.title}
+              </h2>
 
-                  <div>
-                    <h2
-                      style={{
-                        margin: "0 0 8px",
-                        color: "#0f172a",
-                        fontSize: "20px",
-                      }}
-                    >
-                      {section.title}
-                    </h2>
-
-                    <p
-                      style={{
-                        margin: 0,
-                        color: "#64748b",
-                        fontSize: "14px",
-                        lineHeight: 1.6,
-                      }}
-                    >
-                      {section.description}
-                    </p>
-                  </div>
-                </div>
-
-                <span
-                  style={{
-                    padding: "6px 10px",
-                    borderRadius: "999px",
-                    background: "#dcfce7",
-                    color: "#166534",
-                    fontSize: "12px",
-                    fontWeight: 700,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {section.status}
-                </span>
-              </div>
-
-              <div
+              <p
                 style={{
-                  marginTop: "22px",
-                  paddingTop: "18px",
-                  borderTop: "1px solid #f1f5f9",
+                  margin: "4px 0 0",
+                  color: "#64748b",
+                  fontSize: "13px",
+                  lineHeight: 1.5,
+                }}
+              >
+                {section.description}
+              </p>
+
+              <p
+                style={{
+                  margin: "12px 0 0",
                   color: "#174734",
-                  fontSize: "14px",
+                  fontSize: "13px",
                   fontWeight: 700,
                 }}
               >
                 {section.external ? "Download →" : "Open settings →"}
-              </div>
+              </p>
             </CardTag>
             );
           })}
