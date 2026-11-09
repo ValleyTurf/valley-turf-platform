@@ -33,6 +33,68 @@ function formatDateOnly(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+const MONTHS_PER_STEP: Partial<Record<RecurrenceFrequency, number>> = {
+  bimonthly: 2,
+  monthly: 1,
+  quarterly: 3,
+  triannual: 4,
+  semiannual: 6,
+};
+
+const DAYS_PER_STEP: Partial<Record<RecurrenceFrequency, number>> = {
+  weekly: 7,
+  biweekly: 14,
+};
+
+function daysInMonth(year: number, monthIndex0: number): number {
+  // Day 0 of the month AFTER monthIndex0 is the last day of monthIndex0.
+  return new Date(Date.UTC(year, monthIndex0 + 1, 0)).getUTCDate();
+}
+
+// Adds `months` calendar months to `date`, keeping the same day-of-month
+// whenever the target month has one, and CLAMPING to that month's last
+// day when it doesn't — Jan 31 + 1 month lands on Feb 28 (or Feb 29 in a
+// leap year), not "Mar 3." Plain JS Date month arithmetic (setUTCMonth)
+// does not do this on its own: it overflows a too-high day-of-month
+// into the following month instead of clamping. That overflow is what
+// silently ate Katie Ray's February 2027 visit (Ryan, 2026-11-09): her
+// job is anchored on the 29th, and Feb 2027 (not a leap year) has no
+// 29th, so the old unclamped math landed on March 1 instead of February
+// at all — see app/api/jobs/restore-ray-feb-2027-visit/route.ts for the
+// one-time backfill this bug fix doesn't retroactively apply on its own.
+function addCalendarMonths(date: Date, months: number): Date {
+  const day = date.getUTCDate();
+  const totalMonths = date.getUTCFullYear() * 12 + date.getUTCMonth() + months;
+  const targetYear = Math.floor(totalMonths / 12);
+  const targetMonthIndex = ((totalMonths % 12) + 12) % 12;
+  const clampedDay = Math.min(day, daysInMonth(targetYear, targetMonthIndex));
+  return new Date(Date.UTC(targetYear, targetMonthIndex, clampedDay));
+}
+
+// `step` occurrences of `frequency` after `anchorDate` (step 0 is the
+// anchor itself). Always computed relative to the ORIGINAL anchor, never
+// by chaining off a previously-computed (and possibly clamped) date —
+// that's what keeps a day-29 anchor landing back on the 29th every month
+// that has one, instead of permanently drifting to the 28th (or into the
+// next month) after the one short month that needed clamping. See
+// occurrencesInWindow below, the only caller.
+function occurrenceAtStep(
+  anchorDate: string,
+  frequency: RecurrenceFrequency,
+  step: number
+): string {
+  const anchor = parseDateOnly(anchorDate);
+
+  const days = DAYS_PER_STEP[frequency];
+  if (days !== undefined) {
+    anchor.setUTCDate(anchor.getUTCDate() + days * step);
+    return formatDateOnly(anchor);
+  }
+
+  const months = MONTHS_PER_STEP[frequency] as number;
+  return formatDateOnly(addCalendarMonths(anchor, months * step));
+}
+
 // The next occurrence after `date`, same cadence rule this app already
 // uses for Jobber's RRULE (see lib/jobberJob.ts's RECURRENCE_RULES) —
 // "Bi-Monthly" means every 2 months here, not twice a month, matching
@@ -42,33 +104,7 @@ export function nextOccurrenceDate(
   date: string,
   frequency: RecurrenceFrequency
 ): string {
-  const parsed = parseDateOnly(date);
-
-  switch (frequency) {
-    case "weekly":
-      parsed.setUTCDate(parsed.getUTCDate() + 7);
-      break;
-    case "biweekly":
-      parsed.setUTCDate(parsed.getUTCDate() + 14);
-      break;
-    case "bimonthly":
-      parsed.setUTCMonth(parsed.getUTCMonth() + 2);
-      break;
-    case "monthly":
-      parsed.setUTCMonth(parsed.getUTCMonth() + 1);
-      break;
-    case "quarterly":
-      parsed.setUTCMonth(parsed.getUTCMonth() + 3);
-      break;
-    case "triannual":
-      parsed.setUTCMonth(parsed.getUTCMonth() + 4);
-      break;
-    case "semiannual":
-      parsed.setUTCMonth(parsed.getUTCMonth() + 6);
-      break;
-  }
-
-  return formatDateOnly(parsed);
+  return occurrenceAtStep(date, frequency, 1);
 }
 
 // Every occurrence strictly after `afterDate` (exclusive) up through
@@ -93,13 +129,18 @@ export function occurrencesInWindow(
 ): string[] {
   const occurrences: string[] = [];
 
-  let current = anchorDate;
+  let step = 0;
   let iterations = 0;
 
-  // Walk forward from the anchor (not from afterDate) so the cadence
-  // never drifts, but don't start collecting until we're past afterDate.
+  // Each occurrence is computed fresh from the anchor (occurrenceAtStep),
+  // not chained off the previous one, so the cadence never drifts — see
+  // that function's comment for why chaining would be wrong whenever a
+  // short month clamps one occurrence in the middle of the window.
   while (iterations < 500) {
     iterations += 1;
+
+    const current = occurrenceAtStep(anchorDate, frequency, step);
+    step += 1;
 
     if (current > windowEndDate) {
       break;
@@ -108,8 +149,6 @@ export function occurrencesInWindow(
     if (current > afterDate) {
       occurrences.push(current);
     }
-
-    current = nextOccurrenceDate(current, frequency);
   }
 
   return occurrences;
