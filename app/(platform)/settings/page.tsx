@@ -69,6 +69,14 @@ const settingsSections: SettingsSection[] = [
     status: "Manage",
   },
   {
+    title: "Schedule Colors",
+    description:
+      "Manage which color each service type shows as on the Schedule -- add, recolor, reorder, or remove a rule any time, no code change needed.",
+    href: "/settings/schedule-colors",
+    icon: "🎨",
+    status: "Manage",
+  },
+  {
     title: "Notifications",
     description:
       "Configure automated pre-visit text/email reminders and (once ready) review request messages.",

@@ -9,6 +9,11 @@ import {
   fetchVisitOneTimeChargesForVisits,
   sumOneTimeCharges,
 } from "@/lib/visitCharges";
+import {
+  classifyServiceLabel,
+  fetchServiceColorRules,
+  type ServiceColorRule,
+} from "@/lib/scheduleServiceColors";
 import ScheduleInteractive from "./ScheduleInteractive";
 import AddJobModal from "@/app/components/AddJobModal";
 import type { AssignableUser, GridDate, SchedulePin, ScheduleVisit } from "./types";
@@ -298,94 +303,24 @@ function visitServiceLabel(title: string | null): string {
   return service || trimmed;
 }
 
-// Named colors, each pairing a Tailwind chip class (for the DOM) with the
-// matching hex value (for Leaflet map pins, which take real CSS colors,
-// not Tailwind classes — and Tailwind's build-time scanner needs the
-// class names written out literally rather than assembled with template
-// strings, or they'd get purged from the production CSS).
-const NAMED_COLORS = {
-  green: { chip: "bg-green-100 text-green-800 border border-green-300", hex: "#16a34a" },
-  blue: { chip: "bg-blue-100 text-blue-800 border border-blue-300", hex: "#2563eb" },
-  orange: { chip: "bg-orange-100 text-orange-800 border border-orange-300", hex: "#ea580c" },
-  sky: { chip: "bg-sky-100 text-sky-800 border border-sky-300", hex: "#0284c7" },
-  purple: { chip: "bg-purple-100 text-purple-800 border border-purple-300", hex: "#9333ea" },
-  lime: { chip: "bg-lime-100 text-lime-800 border border-lime-300", hex: "#65a30d" },
-  yellow: { chip: "bg-yellow-100 text-yellow-800 border border-yellow-300", hex: "#ca8a04" },
-  pink: { chip: "bg-pink-100 text-pink-800 border border-pink-300", hex: "#db2777" },
-  rose: { chip: "bg-rose-100 text-rose-800 border border-rose-300", hex: "#e11d48" },
-  emerald: { chip: "bg-emerald-100 text-emerald-800 border border-emerald-300", hex: "#059669" },
-} as const;
-
-function normalizeServiceText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[-–—]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-// Fixed, explicit rules (checked in order — first match wins) rather than
-// an automatic per-view assignment: the business wants a given service to
-// always be the same color everywhere, permanently, not just distinct
-// from whatever else happens to be on screen. Matching is substring-based
-// against the normalized service label (hyphens collapsed to spaces) so
-// small wording differences in the Jobber title ("Bimonthly" vs
-// "Bi-Monthly") still hit the right rule. Anything that matches none of
-// these falls through to emerald.
-const SERVICE_COLOR_RULES: {
-  color: keyof typeof NAMED_COLORS;
-  test: (label: string) => boolean;
-}[] = [
-  {
-    color: "green",
-    test: (l) => l.includes("initial") && l.includes("full") && l.includes("clean"),
-  },
-  {
-    color: "blue",
-    test: (l) => l.includes("full") && l.includes("clean") && l.includes("return"),
-  },
-  {
-    color: "orange",
-    test: (l) => l.includes("bimonthly") || l.includes("bi monthly"),
-  },
-  {
-    color: "rose",
-    test: (l) => l.includes("semi annual") || l.includes("semiannual"),
-  },
-  {
-    color: "sky",
-    test: (l) => l.includes("quarterly"),
-  },
-  {
-    color: "purple",
-    test: (l) => l.includes("maintenance") && l.includes("monthly"),
-  },
-  {
-    color: "lime",
-    test: (l) => l.includes("full") && l.includes("monthly"),
-  },
-  {
-    color: "yellow",
-    test: (l) => l.includes("spray") && l.includes("only"),
-  },
-  {
-    color: "pink",
-    test: (l) => l.includes("weekly"),
-  },
-];
-
+// Colors are self-service now (Settings -> Schedule Colors,
+// /settings/schedule-colors) -- Ryan (2026-11-09) asked for a menu to
+// change which color each service type gets rather than needing a code
+// change every time. The NAMED_COLORS palette, the keyword-matching
+// rules, and classifyServiceLabel() itself all moved to
+// lib/scheduleServiceColors.ts (migration
+// 104_schedule_service_colors.sql backs the rules), so this page just
+// fetches the current rules once (see the Promise.all below) and
+// classifies each visit against them.
 function classifyService(
-  rawTitle: string | null
+  rawTitle: string | null,
+  rules: ServiceColorRule[]
 ): { label: string; chip: string; hex: string } {
   const label = visitServiceLabel(rawTitle);
-  const normalized = normalizeServiceText(label);
+  const { chip, hex } = classifyServiceLabel(label, rules);
 
-  const rule = SERVICE_COLOR_RULES.find((r) => r.test(normalized));
-  const color = NAMED_COLORS[rule?.color ?? "emerald"];
-
-  return { label, chip: color.chip, hex: color.hex };
+  return { label, chip, hex };
 }
-
 function addDays(date: Date, days: number): Date {
   const result = new Date(date);
   result.setUTCDate(result.getUTCDate() + days);
@@ -406,7 +341,8 @@ function buildScheduleVisit(
   assignedUsers: AssignableUser[],
   jobPricing: JobPricing | null,
   jobVisitCountThisMonth: number,
-  oneTimeChargeTotal: number
+  oneTimeChargeTotal: number,
+  colorRules: ServiceColorRule[]
 ): ScheduleVisit {
   const meta = statusMeta(visit.visit_status);
   const address = contact
@@ -416,7 +352,7 @@ function buildScheduleVisit(
     : null;
 
   const dateKey = phoenixDateKey(visit.start_at);
-  const { label, chip, hex } = classifyService(visit.title);
+  const { label, chip, hex } = classifyService(visit.title, colorRules);
   const timeLabel = formatTime(visit.start_at);
 
   const latitude = contact?.latitude != null ? Number(contact.latitude) : NaN;
@@ -691,6 +627,7 @@ export default async function SchedulePage({
     { data: jobsData },
     { data: monthVisitsData },
     oneTimeChargesByVisit,
+    colorRules,
   ] = await Promise.all([
     clientIds.length > 0
       ? supabaseServer
@@ -733,6 +670,7 @@ export default async function SchedulePage({
           .lte("start_at", jobCountRangeEndIso)
       : Promise.resolve({ data: [] as MonthVisitRow[] }),
     fetchVisitOneTimeChargesForVisits(visitIds),
+    fetchServiceColorRules(),
   ]);
 
   const contactMap = new Map<string, CustomerContact>(
@@ -801,7 +739,8 @@ export default async function SchedulePage({
       assignmentMap.get(visit.jobber_visit_id) ?? [],
       visit.jobber_job_id ? jobPricingMap.get(visit.jobber_job_id) ?? null : null,
       jobVisitCountThisMonth,
-      sumOneTimeCharges(oneTimeChargesByVisit.get(visit.jobber_visit_id) ?? [])
+      sumOneTimeCharges(oneTimeChargesByVisit.get(visit.jobber_visit_id) ?? []),
+      colorRules
     );
   });
 
