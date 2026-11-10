@@ -40,8 +40,14 @@ import { generateNativeId } from "@/lib/nativeJobs";
 
 export const dynamic = "force-dynamic";
 
-const JOBBER_JOB_ID = "gid://Jobber/Job/143759498";
-const JOBBER_CLIENT_ID = "gid://Jobber/Client/120905097";
+// jobber_jobs/jobber_clients store the base64-encoded Jobber gid (the
+// same string used in this app's own /jobs/<id>/edit and
+// /customers/<id> URLs), not the decoded "gid://Jobber/..." form --
+// confirmed live via the existing debug-jobber-jobs-columns route
+// before writing this constant, after an initial version of this route
+// (using the decoded gid) returned "Job not found" against production.
+const JOBBER_JOB_ID = "Z2lkOi8vSm9iYmVyL0pvYi8xNDM3NTk0OTg=";
+const JOBBER_CLIENT_ID = "Z2lkOi8vSm9iYmVyL0NsaWVudC8xMjA5MDUwOTc=";
 
 // Last day of Feb 2027 (not a leap year) -- the nearest sane date to
 // the job's day-29 cadence that actually falls in February, matching
