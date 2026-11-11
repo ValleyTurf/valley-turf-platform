@@ -49,6 +49,7 @@ import { listContactsForCustomer } from "@/lib/customerContacts";
 import { listAddressesForCustomer } from "@/lib/customerAddresses";
 import ResendInvoiceButton from "./ResendInvoiceButton";
 import MarkPaidButton from "./MarkPaidButton";
+import ChargeCardButton from "./ChargeCardButton";
 import ProfitTimeframePicker from "./ProfitTimeframePicker";
 import Pagination from "./Pagination";
 import { LogCallForm } from "./LogCallForm";
@@ -4149,6 +4150,18 @@ export default async function CustomerDetailPage({
                               jobberClientId={decodedId}
                               invoiceId={invoice.invoiceId}
                             />
+
+                            {invoice.status !== "paid" &&
+                              invoice.status !== "void" &&
+                              autopayPaymentMethod?.autopayEnabled &&
+                              autopayPaymentMethod?.stripePaymentMethodId && (
+                                <ChargeCardButton
+                                  jobberClientId={decodedId}
+                                  invoiceId={invoice.invoiceId}
+                                  total={invoice.total}
+                                  cardLast4={autopayPaymentMethod.cardLast4}
+                                />
+                              )}
 
                             {invoice.status !== "paid" &&
                               invoice.status !== "void" && (

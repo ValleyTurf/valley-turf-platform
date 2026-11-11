@@ -27,6 +27,8 @@ import {
   type ResendInvoiceResult,
   markInvoicePaidManually,
   type MarkInvoicePaidManuallyResult,
+  chargeInvoiceManually,
+  type ChargeInvoiceManuallyResult,
 } from "../../invoices/actions";
 import { isReferralSource } from "@/lib/referralSource";
 import { isChurnReason } from "@/lib/deactivation";
@@ -894,6 +896,25 @@ export async function markCustomerInvoicePaidManually(
   method: string
 ): Promise<MarkInvoicePaidManuallyResult> {
   const result = await markInvoicePaidManually(invoiceId, method);
+
+  if (!result.error) {
+    revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+  }
+
+  return result;
+}
+
+// Same thin-wrapper pattern as resendCustomerInvoice/
+// markCustomerInvoicePaidManually above, for the "charge the saved
+// autopay card right now" escape hatch (invoices/actions.ts's
+// chargeInvoiceManually) -- adds the customer-page revalidation so a
+// successful charge's eventual "paid" status (set by the Stripe webhook,
+// not this call itself) shows up without a manual refresh.
+export async function chargeCustomerInvoiceManually(
+  jobberClientId: string,
+  invoiceId: string
+): Promise<ChargeInvoiceManuallyResult> {
+  const result = await chargeInvoiceManually(invoiceId);
 
   if (!result.error) {
     revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);

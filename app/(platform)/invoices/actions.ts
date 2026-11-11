@@ -854,6 +854,147 @@ export async function markInvoicePaidManually(
   return { error: null };
 }
 
+export type ChargeInvoiceManuallyResult = { error: string | null };
+
+// Ryan (2026-11-11): Heather Henderson enrolled in autopay the same day
+// she had an older invoice already outstanding -- autopay only ever
+// fires at the moment a NEW native invoice is created and sent
+// (attemptAutopayCharge's only caller is createNativeInvoiceForVisit
+// above), so her enrolling today did nothing for that already-existing
+// invoice and there was no way to charge her saved card against it
+// short of waiting for her next visit's invoice. This is that gap
+// closed: a staff-triggered off-session charge against an
+// already-enrolled customer's saved card, for THIS invoice, right now.
+// Reuses attemptAutopayCharge as-is (same Stripe call, same metadata
+// {source: "autopay"} so stripeWebhookProcessor.ts's
+// payment_intent.succeeded handler treats it identically to an
+// automatic autopay charge -- it's still the webhook, not this
+// function, that ever flips the invoice to "paid"/writes the
+// jobber_payments row, same single-writer reasoning as everywhere else
+// autopay charges). The only things this function adds on top of
+// attemptAutopayCharge: validating there's actually a saved,
+// autopay-enabled card to charge (clearer error than a generic Stripe
+// failure), sending the same autopay receipt email/SMS the automatic
+// path sends, and an audit log entry so a charge triggered by a person
+// is traceable as such.
+export async function chargeInvoiceManually(
+  invoiceId: string
+): Promise<ChargeInvoiceManuallyResult> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    return { error: "You must be signed in." };
+  }
+
+  const invoice = await getInvoiceById(invoiceId);
+
+  if (!invoice) {
+    return { error: "Invoice not found." };
+  }
+
+  if (invoice.status === "paid") {
+    return { error: "This invoice has already been paid -- nothing to charge." };
+  }
+
+  if (invoice.status === "void") {
+    return { error: "This invoice has been voided -- nothing to charge." };
+  }
+
+  if (!invoice.jobberClientId) {
+    return { error: "This invoice has no linked customer to charge." };
+  }
+
+  const paymentMethod = await getPaymentMethodByClientId(invoice.jobberClientId);
+
+  if (
+    !paymentMethod ||
+    !paymentMethod.autopayEnabled ||
+    !paymentMethod.stripeCustomerId ||
+    !paymentMethod.stripePaymentMethodId
+  ) {
+    return {
+      error:
+        "This customer doesn't have autopay enabled with a saved card -- nothing to charge.",
+    };
+  }
+
+  const chargeResult = await attemptAutopayCharge(invoice);
+
+  if (!chargeResult.charged) {
+    return { error: chargeResult.reason };
+  }
+
+  // Best-effort from here down -- the charge itself already succeeded,
+  // same "degrade to a banner, don't crash the action" reasoning
+  // resendInvoice/createNativeInvoiceForVisit use for delivery failures.
+  try {
+    const { data: customerRow } = await supabaseServer
+      .from("customers")
+      .select("email, phone")
+      .eq("jobber_client_id", invoice.jobberClientId)
+      .maybeSingle();
+
+    const recipients = await getNotificationRecipients(
+      invoice.jobberClientId,
+      (customerRow?.email as string | null) ?? null,
+      (customerRow?.phone as string | null) ?? null
+    );
+
+    const lineItems = await getInvoiceLineItems(invoiceId);
+    const pdfBuffer =
+      recipients.emails.length > 0
+        ? await generateInvoicePdf(invoice, lineItems)
+        : null;
+
+    if (pdfBuffer) {
+      for (const toEmail of recipients.emails) {
+        await sendAutopayReceiptEmail({
+          toEmail,
+          customerName: invoice.customerName,
+          invoiceNumber: invoice.invoiceNumber,
+          total: invoice.total,
+          cardLast4: paymentMethod.cardLast4,
+          pdfBuffer,
+          jobberClientId: invoice.jobberClientId,
+        });
+      }
+    }
+
+    for (const toPhone of recipients.phones) {
+      await sendAutopayReceiptSms(
+        toPhone,
+        invoice.customerName,
+        invoice.invoiceNumber,
+        invoice.total,
+        paymentMethod.cardLast4,
+        invoice.jobberClientId
+      );
+    }
+  } catch (deliveryError) {
+    console.error(
+      `Manual autopay charge succeeded but receipt delivery failed for invoice ${invoice.invoiceNumber}:`,
+      deliveryError
+    );
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "invoice",
+    entityId: invoice.id,
+    entityLabel: `${invoice.customerName ?? "Customer"} — Invoice ${invoice.invoiceNumber}`,
+    after: {
+      manualAutopayCharge: true,
+      cardLast4: paymentMethod.cardLast4,
+    },
+  });
+
+  revalidatePath("/invoices");
+  revalidatePath("/invoices/create");
+
+  return { error: null };
+}
+
 export type DismissVisitInvoiceResult = { error: string | null };
 
 // Manual escape hatch for visits Jobber itself already invoiced but
