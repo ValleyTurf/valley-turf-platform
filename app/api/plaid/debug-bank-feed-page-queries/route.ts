@@ -91,7 +91,15 @@ export async function GET() {
     );
   }
 
+  const { data: auditRows } = await supabaseServer
+    .from("audit_log")
+    .select("id, entity_label, changes, created_at")
+    .eq("entity_type", "bank_feed_sync")
+    .order("created_at", { ascending: false })
+    .limit(10);
+
   return NextResponse.json({
+    auditRows,
     connectionsCheck,
     auditCheck,
     accountsCheck,

@@ -66,6 +66,27 @@ function statusColor(status: string) {
   }
 }
 
+// audit_log.changes is free-form JSON written by many code paths over
+// time (Ryan, 2026-11-11: this page started crashing server-side with
+// every query succeeding, i.e. a render-time throw on a row's shape).
+// Everything read out of it below goes through these so a row with an
+// unexpected shape (non-array connections, an object where a string
+// was expected, a null entry) degrades to blank instead of taking the
+// whole page down.
+function safeText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "";
+  }
+}
+
+function safeCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
 export default async function BankFeedSettingsPage() {
   const [connectionsResult, auditResult] = await Promise.all([
     supabaseServer
@@ -437,39 +458,41 @@ export default async function BankFeedSettingsPage() {
           ) : (
             <div style={{ display: "grid", gap: "10px" }}>
               {recentActivity.map((entry) => {
-                const changes = (entry.changes ?? {}) as {
-                  rowsImported?: number;
-                  _note?: string;
-                  connections?: Array<{
-                    institutionName: string | null;
-                    depositsImported?: number;
-                    skippedZeroAmount?: number;
-                    skippedBeforeCutoff?: number;
-                    skippedAccountNotTracked?: number;
-                    balanceError?: string;
-                    error?: string;
-                  }>;
+                const rawChanges = entry.changes;
+                const changes = (
+                  rawChanges && typeof rawChanges === "object" && !Array.isArray(rawChanges)
+                    ? rawChanges
+                    : {}
+                ) as {
+                  rowsImported?: unknown;
+                  _note?: unknown;
+                  connections?: unknown;
                 };
 
-                const connections = changes.connections ?? [];
+                const connections = (
+                  Array.isArray(changes.connections) ? changes.connections : []
+                ).filter(
+                  (c): c is Record<string, unknown> => !!c && typeof c === "object"
+                );
                 const totalSkippedCutoff = connections.reduce(
-                  (sum, c) => sum + (c.skippedBeforeCutoff ?? 0),
+                  (sum, c) => sum + safeCount(c.skippedBeforeCutoff),
                   0
                 );
                 const totalSkippedZeroAmount = connections.reduce(
-                  (sum, c) => sum + (c.skippedZeroAmount ?? 0),
+                  (sum, c) => sum + safeCount(c.skippedZeroAmount),
                   0
                 );
                 const totalSkippedNotTracked = connections.reduce(
-                  (sum, c) => sum + (c.skippedAccountNotTracked ?? 0),
+                  (sum, c) => sum + safeCount(c.skippedAccountNotTracked),
                   0
                 );
                 const totalDeposits = connections.reduce(
-                  (sum, c) => sum + (c.depositsImported ?? 0),
+                  (sum, c) => sum + safeCount(c.depositsImported),
                   0
                 );
-                const connectionErrors = connections.filter((c) => c.error);
-                const balanceErrors = connections.filter((c) => c.balanceError);
+                const connectionErrors = connections.filter((c) => safeText(c.error));
+                const balanceErrors = connections.filter((c) => safeText(c.balanceError));
+                const noteText = safeText(changes._note);
 
                 return (
                   <div
@@ -524,7 +547,7 @@ export default async function BankFeedSettingsPage() {
                       {connectionErrors.length > 0 ? (
                         <div style={{ color: "#991b1b", fontSize: "12px", marginTop: "4px" }}>
                           {connectionErrors
-                            .map((c) => `${c.institutionName ?? "Connection"}: ${c.error}`)
+                            .map((c) => `${safeText(c.institutionName) || "Connection"}: ${safeText(c.error)}`)
                             .join("; ")}
                         </div>
                       ) : null}
@@ -533,14 +556,14 @@ export default async function BankFeedSettingsPage() {
                         <div style={{ color: "#92400e", fontSize: "12px", marginTop: "4px" }}>
                           Live balance not refreshed:{" "}
                           {balanceErrors
-                            .map((c) => `${c.institutionName ?? "Connection"}: ${c.balanceError}`)
+                            .map((c) => `${safeText(c.institutionName) || "Connection"}: ${safeText(c.balanceError)}`)
                             .join("; ")}
                         </div>
                       ) : null}
 
-                      {changes._note ? (
+                      {noteText ? (
                         <div style={{ color: "#991b1b", fontSize: "12px", marginTop: "4px" }}>
-                          {changes._note}
+                          {noteText}
                         </div>
                       ) : null}
                     </div>
