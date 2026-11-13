@@ -83,11 +83,17 @@ export async function logContactHistory(
   // email) -- excludes channel "call" since those are logged by staff
   // after the fact (the Log Phone Call button), not something that just
   // arrived while a phone was in someone's pocket, so pushing one would
-  // just be notifying someone about their own note. Fire-and-forget: a
-  // push hiccup should never be able to take down the contact-history
-  // logging it rides along with.
+  // just be notifying someone about their own note. Awaited (Ryan,
+  // 2026-11-13: only 1 of many inbound texts ever buzzed his phone) --
+  // this used to be `void notifyInboundMessage(params)`, but every
+  // caller is a serverless webhook that returns its response right
+  // after this function does, and Vercel freezes the function as soon
+  // as the response is sent, so an un-awaited push was usually cut off
+  // mid-flight and only occasionally finished in time. Safe to await:
+  // notifyInboundMessage catches everything itself and never throws, so
+  // a push hiccup still can't take down the contact-history logging.
   if (params.direction === "inbound" && params.channel !== "call") {
-    void notifyInboundMessage(params);
+    await notifyInboundMessage(params);
   }
 }
 
