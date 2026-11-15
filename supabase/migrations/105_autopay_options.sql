@@ -54,8 +54,8 @@ create table if not exists autopay_charge_attempts (
   -- What caused it: invoice_created (sent, charge-on-invoice customer),
   -- scheduled (the daily cron), enrollment (card just saved with an
   -- invoice already open), manual (staff pressed Charge Card on File).
-  trigger text not null
-    check (trigger in ('invoice_created', 'scheduled', 'enrollment', 'manual')),
+  triggered_by text not null
+    check (triggered_by in ('invoice_created', 'scheduled', 'enrollment', 'manual')),
   succeeded boolean not null,
   error text,
   created_at timestamptz not null default now()
