@@ -101,11 +101,20 @@ async function notifyInboundMessage(
   params: LogContactHistoryParams
 ): Promise<void> {
   try {
-    const unreadCount = await getUnreadMessageCount();
+    const [unreadCount, senderName] = await Promise.all([
+      getUnreadMessageCount(),
+      getCustomerDisplayName(params.jobberClientId),
+    ]);
     const channelLabel = params.channel === "sms" ? "text" : "email";
 
     await sendPushToAllSubscribers({
-      title: "New customer message",
+      // Ryan (2026-11-14): the lock-screen preview only showed "New
+      // customer mess..." -- no way to tell who it was from without
+      // opening it. The title is the one line every platform shows in
+      // full, so the sender's name goes there and the message itself
+      // stays in the body. Falls back to the old generic title only if
+      // the name lookup comes up empty.
+      title: senderName ?? "New customer message",
       body:
         params.summary?.trim() || params.subject || `New ${channelLabel} reply`,
       url: params.jobberClientId
@@ -116,6 +125,31 @@ async function notifyInboundMessage(
   } catch (err) {
     console.error("notifyInboundMessage failed:", err);
   }
+}
+
+// Same name-resolution order as lib/composeEmailAction.ts. Never throws
+// -- a failed lookup just means the push falls back to its generic
+// title rather than not being sent at all.
+async function getCustomerDisplayName(
+  jobberClientId: string | null
+): Promise<string | null> {
+  if (!jobberClientId) return null;
+
+  const { data, error } = await supabaseServer
+    .from("customers")
+    .select("full_name, first_name, last_name, company_name")
+    .eq("jobber_client_id", jobberClientId)
+    .maybeSingle();
+
+  if (error || !data) return null;
+
+  const name =
+    (data.full_name as string | null) ||
+    [data.first_name, data.last_name].filter(Boolean).join(" ") ||
+    (data.company_name as string | null) ||
+    "";
+
+  return name.trim() || null;
 }
 
 export async function markEmailDelivered(resendEmailId: string): Promise<void> {

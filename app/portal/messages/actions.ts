@@ -43,8 +43,11 @@ export async function sendPortalMessage(formData: FormData): Promise<void> {
     const unreadCount = await getUnreadMessageCount();
 
     await sendPushToAllSubscribers({
-      title: "New customer message",
-      body: `${customer.name}: ${body.slice(0, 120)}`,
+      // Sender's name as the title, same as lib/contactHistory.ts's
+      // notifyInboundMessage -- it's the one line the lock-screen
+      // preview always shows in full.
+      title: customer.name?.trim() || "New customer message",
+      body: body.slice(0, 160),
       url: `/messages/${encodeURIComponent(customer.jobberClientId)}`,
       badgeCount: unreadCount,
     });
