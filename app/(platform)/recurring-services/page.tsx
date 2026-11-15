@@ -4,6 +4,8 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { formatCurrency } from "@/lib/format";
+import { describeGap, findRecurringScheduleGaps } from "@/lib/recurringGaps";
+import { acknowledgeScheduleGap } from "./actions";
 
 type RangeKey = "7" | "30" | "month" | "custom";
 type CategoryKey = "monthly" | "quarterly" | "bimonthly" | "semiannual" | "other";
@@ -322,6 +324,16 @@ export default async function RecurringServicesPage({
       ? Math.round(parsedMonthsAhead)
       : 1;
 
+  // Holes in recurring schedules (lib/recurringGaps.ts) -- independent
+  // of whichever date range is picked below. A failed check just hides
+  // the panel rather than taking this page down with it.
+  const scheduleGaps = await findRecurringScheduleGaps()
+    .then((result) => result.gaps)
+    .catch((error) => {
+      console.error("Schedule gap check failed:", error);
+      return [];
+    });
+
   const today = getPhoenixToday();
   const { start, end } = getRangeBounds(
     range,
@@ -479,6 +491,50 @@ export default async function RecurringServicesPage({
 
           <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Upcoming Recurring Services</h1>
         </header>
+
+        {scheduleGaps.length > 0 && (
+          <section className="mt-6 rounded-2xl border border-[#e3c98a] bg-[#fdf8ea] p-5">
+            <h2 className="text-lg font-bold">
+              Schedule gaps to review ({scheduleGaps.length})
+            </h2>
+            <p className="mt-1 text-sm text-[#6b705c]">
+              Recurring jobs with a missing visit or nothing scheduled ahead.
+              Fix the schedule from the job, or mark the gap as intended to
+              stop it showing here and in the daily digest.
+            </p>
+
+            <div className="mt-3 space-y-2">
+              {scheduleGaps.map((gap) => (
+                <div
+                  key={gap.key}
+                  className="flex flex-col gap-2 rounded-xl bg-white px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <p className="text-sm">{describeGap(gap)}</p>
+
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Link
+                      href={`/jobs/${encodeURIComponent(gap.jobId)}/edit`}
+                      className="rounded-lg border border-[#174734] px-2.5 py-1 text-xs font-bold transition hover:bg-[#f7f6f1]"
+                    >
+                      Open job
+                    </Link>
+
+                    <form action={acknowledgeScheduleGap}>
+                      <input type="hidden" name="key" value={gap.key} />
+                      <input type="hidden" name="label" value={describeGap(gap)} />
+                      <button
+                        type="submit"
+                        className="rounded-lg border border-[#d9d4c6] px-2.5 py-1 text-xs font-bold text-[#6b705c] transition hover:border-[#d4af37]"
+                      >
+                        This is intended
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="mt-6 flex flex-wrap gap-2">
           <Link href={hrefFor("7")} className={rangePillClasses(range === "7")}>

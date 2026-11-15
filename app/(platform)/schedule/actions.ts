@@ -194,6 +194,16 @@ export async function skipVisit(
     return { error: "Missing visit." };
   }
 
+  // Captured before the row is deleted below, purely so the audit entry
+  // can say WHICH job and date was skipped -- lib/recurringGaps.ts reads
+  // that back to tell a deliberate skip from a schedule that silently
+  // lost a visit. Best-effort: a failed lookup never blocks the skip.
+  const { data: skippedVisit } = await supabaseServer
+    .from("jobber_visits")
+    .select("jobber_job_id, start_at, title, customer_name")
+    .eq("jobber_visit_id", visitId)
+    .maybeSingle();
+
   const result = await skipJobberVisit(visitId);
 
   if (!result.ok) {
@@ -218,6 +228,14 @@ export async function skipVisit(
     entityType: "visit",
     entityId: visitId,
     entityLabel: "Skip visit",
+    before: skippedVisit
+      ? {
+          jobber_job_id: skippedVisit.jobber_job_id,
+          start_at: skippedVisit.start_at,
+          title: skippedVisit.title,
+          customer_name: skippedVisit.customer_name,
+        }
+      : null,
   });
 
   revalidateVisitPaths();

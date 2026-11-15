@@ -21,6 +21,7 @@ import {
   type UnpaidInvoicesSection,
 } from "@/lib/notifications";
 import { previewPendingVisitReminders } from "@/lib/visitReminders";
+import { describeGap, findRecurringScheduleGaps } from "@/lib/recurringGaps";
 
 const BUSINESS_UTC_OFFSET = "-07:00";
 
@@ -499,6 +500,23 @@ async function findTimecardIssues(): Promise<{
   };
 }
 
+// Holes in recurring schedules (see lib/recurringGaps.ts). A failed
+// check reports as "nothing found" rather than failing the whole digest
+// -- same as every other section here.
+async function countScheduleGaps(): Promise<{ count: number; sample: string[] }> {
+  try {
+    const { gaps } = await findRecurringScheduleGaps();
+
+    return {
+      count: gaps.length,
+      sample: gaps.slice(0, SAMPLE_LIMIT).map(describeGap),
+    };
+  } catch (error) {
+    console.error("Schedule gap check failed:", error);
+    return { count: 0, sample: [] };
+  }
+}
+
 export type SendDailyDigestResult =
   | { sent: false; reason: string }
   | { sent: true; recipients: number };
@@ -532,6 +550,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     unpaidInvoices,
     remindersGoingOutToday,
     lowRatings,
+    scheduleGaps,
   ] = await Promise.all([
     countUnloggedJobCosts(),
     countVisitsMissingPhotos(),
@@ -540,6 +559,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     countUnpaidInvoices(),
     previewPendingVisitReminders(),
     countLowRatings(),
+    countScheduleGaps(),
   ]);
 
   const data: DailyDigestData = {
@@ -551,6 +571,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     unpaidInvoices,
     remindersGoingOutToday,
     lowRatings,
+    scheduleGaps,
   };
 
   // Reminders queued for today count toward "is there anything worth
@@ -564,7 +585,8 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     data.openTimers.count +
     data.unpaidInvoices.count +
     data.remindersGoingOutToday.count +
-    data.lowRatings.count;
+    data.lowRatings.count +
+    data.scheduleGaps.count;
 
   if (totalFlagged === 0) {
     return { sent: false, reason: "Nothing to report today -- digest skipped." };
