@@ -22,6 +22,7 @@ import {
 } from "@/lib/notifications";
 import { previewPendingVisitReminders } from "@/lib/visitReminders";
 import { describeGap, findRecurringScheduleGaps } from "@/lib/recurringGaps";
+import { listRecentPageErrors } from "@/lib/pageErrors";
 
 const BUSINESS_UTC_OFFSET = "-07:00";
 
@@ -517,6 +518,27 @@ async function countScheduleGaps(): Promise<{ count: number; sample: string[] }>
   }
 }
 
+// Pages/actions that crashed in the last 24h (lib/pageErrors.ts).
+async function countPageErrors(): Promise<{ count: number; sample: string[] }> {
+  try {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const errors = await listRecentPageErrors(since);
+
+    return {
+      count: errors.length,
+      sample: errors
+        .slice(0, SAMPLE_LIMIT)
+        .map(
+          (e) =>
+            `${e.path ?? "unknown page"} -- ${(e.message ?? "no message recorded").slice(0, 160)}`
+        ),
+    };
+  } catch (error) {
+    console.error("Page error lookup failed:", error);
+    return { count: 0, sample: [] };
+  }
+}
+
 export type SendDailyDigestResult =
   | { sent: false; reason: string }
   | { sent: true; recipients: number };
@@ -551,6 +573,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     remindersGoingOutToday,
     lowRatings,
     scheduleGaps,
+    pageErrors,
   ] = await Promise.all([
     countUnloggedJobCosts(),
     countVisitsMissingPhotos(),
@@ -560,6 +583,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     previewPendingVisitReminders(),
     countLowRatings(),
     countScheduleGaps(),
+    countPageErrors(),
   ]);
 
   const data: DailyDigestData = {
@@ -572,6 +596,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     remindersGoingOutToday,
     lowRatings,
     scheduleGaps,
+    pageErrors,
   };
 
   // Reminders queued for today count toward "is there anything worth
@@ -586,7 +611,8 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     data.unpaidInvoices.count +
     data.remindersGoingOutToday.count +
     data.lowRatings.count +
-    data.scheduleGaps.count;
+    data.scheduleGaps.count +
+    data.pageErrors.count;
 
   if (totalFlagged === 0) {
     return { sent: false, reason: "Nothing to report today -- digest skipped." };

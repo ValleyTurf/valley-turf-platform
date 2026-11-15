@@ -279,6 +279,8 @@ export type DailyDigestData = {
   // Recurring jobs with a missing occurrence or no upcoming visits at
   // all (lib/recurringGaps.ts) -- cleared from Recurring Services.
   scheduleGaps: DailyDigestSection;
+  // Pages or actions that threw in the last 24h (lib/pageErrors.ts).
+  pageErrors: DailyDigestSection;
 };
 
 function digestSectionHtml(title: string, section: DailyDigestSection, emptyLabel: string): string {
@@ -343,6 +345,11 @@ export async function sendDailyDigestEmail(
         "Low invoice ratings (last 24h, 4 stars or below)",
         data.lowRatings,
         "No low ratings."
+      )}
+      ${digestSectionHtml(
+        "Pages that crashed (last 24h)",
+        data.pageErrors,
+        "No crashes."
       )}
       ${digestSectionHtml(
         "Recurring schedules with a gap (review on Recurring Services)",

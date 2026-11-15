@@ -3,6 +3,7 @@ export const revalidate = 0;
 
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
+import { listRecentPageErrors } from "@/lib/pageErrors";
 
 type CheckStatus = "pass" | "warn" | "fail";
 
@@ -374,6 +375,37 @@ async function checkSyncFreshness(): Promise<Check> {
   };
 }
 
+// Pages/actions that threw in the last 7 days (lib/pageErrors.ts). A
+// warning rather than a fail -- one crash a week ago isn't an outage,
+// but it should be visible somewhere other than a customer's or a crew
+// member's screen.
+async function checkPageErrors(): Promise<Check> {
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const errors = await listRecentPageErrors(since);
+
+  if (errors.length === 0) {
+    return {
+      name: "Page crashes (last 7 days)",
+      status: "pass",
+      detail: "No pages or actions have crashed.",
+    };
+  }
+
+  const latest = errors[0];
+  const paths = Array.from(new Set(errors.map((e) => e.path ?? "unknown page")));
+
+  return {
+    name: "Page crashes (last 7 days)",
+    status: "warn",
+    detail: `${errors.length} crash${errors.length === 1 ? "" : "es"} on ${paths
+      .slice(0, 4)
+      .join(", ")}${paths.length > 4 ? ` and ${paths.length - 4} more` : ""}. Most recent: ${
+      latest.path ?? "unknown page"
+    } -- ${latest.message ?? "no message recorded"}`,
+    hint: "Full list under Audit Log. Each entry has the error code shown on the crash screen.",
+  };
+}
+
 export default async function HealthPage() {
   const checks = await Promise.all([
     checkInvoiceSubjects(),
@@ -386,6 +418,7 @@ export default async function HealthPage() {
     checkWebhookBacklog(),
     checkSyncFreshness(),
     checkJobberSyncStatus(),
+    checkPageErrors(),
   ]);
 
   const failCount = checks.filter((c) => c.status === "fail").length;

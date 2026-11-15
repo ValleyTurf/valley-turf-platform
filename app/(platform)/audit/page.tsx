@@ -38,6 +38,8 @@ const ENTITY_LABELS: Record<string, string> = {
   employee_rate: "Labor Rate",
   customer: "Customer Profile",
   role_permissions: "Role Permissions",
+  page_error: "Page Crash",
+  schedule_gap_ack: "Schedule Gap Marked Intended",
 };
 
 const ENTITY_TYPES = Object.keys(ENTITY_LABELS);
