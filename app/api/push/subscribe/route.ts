@@ -1,7 +1,7 @@
 // Called by the client once the browser grants Notification permission
 // and creates a PushSubscription (see app/(platform)/account/
-// NotificationsSection.tsx) -- stores it so lib/webPush.ts's
-// sendPushToAllSubscribers can reach this device later, including after
+// NotificationsSection.tsx) -- stores it so lib/webPush.ts's sendPush
+// can reach this device later, including after
 // the app is fully closed.
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/currentUser";

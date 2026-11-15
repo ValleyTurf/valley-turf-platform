@@ -29,6 +29,7 @@ import { headers } from "next/headers";
 import { logContactHistory } from "@/lib/contactHistory";
 import { findJobberClientIdByPhone } from "@/lib/customerContacts";
 import { logUnknownContact } from "@/lib/unknownContacts";
+import { describeTapback, parseTapback } from "@/lib/tapbacks";
 
 export const dynamic = "force-dynamic";
 
@@ -106,12 +107,29 @@ export async function POST(request: NextRequest) {
     const jobberClientId = await findJobberClientIdByPhone(fromPhone);
 
     if (jobberClientId) {
-      await logContactHistory({
-        jobberClientId,
-        channel: "sms",
-        direction: "inbound",
-        summary: body.slice(0, 4000),
-      });
+      // A tapback ("Liked ...") arrives as a full text quoting our own
+      // message back. It's filed as a reaction -- one compact line,
+      // already read, no push -- instead of looking like a new message
+      // that needs a reply (see lib/tapbacks.ts).
+      const tapback = parseTapback(body);
+
+      await logContactHistory(
+        tapback
+          ? {
+              jobberClientId,
+              channel: "sms",
+              direction: "inbound",
+              subject: "Reaction",
+              summary: describeTapback(tapback),
+              quiet: true,
+            }
+          : {
+              jobberClientId,
+              channel: "sms",
+              direction: "inbound",
+              summary: body.slice(0, 4000),
+            }
+      );
     } else {
       await logUnknownContact({
         channel: "sms",

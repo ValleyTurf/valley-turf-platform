@@ -5,7 +5,7 @@ import { requirePortalUser } from "@/lib/currentPortalUser";
 import { supabaseServer } from "@/lib/supabase-server";
 import type { PortalSessionUser } from "@/lib/portalAuth";
 import { getUnreadMessageCount } from "@/lib/contactHistory";
-import { sendPushToAllSubscribers } from "@/lib/webPush";
+import { sendPush } from "@/lib/webPush";
 
 export async function sendPortalMessage(formData: FormData): Promise<void> {
   let customer: PortalSessionUser;
@@ -42,7 +42,7 @@ export async function sendPortalMessage(formData: FormData): Promise<void> {
   try {
     const unreadCount = await getUnreadMessageCount();
 
-    await sendPushToAllSubscribers({
+    await sendPush("customer_message", {
       // Sender's name as the title, same as lib/contactHistory.ts's
       // notifyInboundMessage -- it's the one line the lock-screen
       // preview always shows in full.

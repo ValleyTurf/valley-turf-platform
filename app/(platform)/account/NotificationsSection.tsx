@@ -156,8 +156,9 @@ export default function NotificationsSection() {
       <h2 className="text-lg font-bold">Notifications</h2>
 
       <p className="mt-1 text-sm text-[#174734]/70">
-        Get a red badge on this device&apos;s home-screen icon (and a
-        notification) when a new customer message comes in.
+        Get a notification on this device, and a red badge on its
+        home-screen icon for unread customer messages. Choose which kinds
+        you get below.
       </p>
 
       {status === "unsupported" && (

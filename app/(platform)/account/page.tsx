@@ -4,9 +4,27 @@ export const revalidate = 0;
 import { getCurrentUser } from "@/lib/currentUser";
 import ChangePasswordForm from "./ChangePasswordForm";
 import NotificationsSection from "./NotificationsSection";
+import { supabaseServer } from "@/lib/supabase-server";
+import { pushKindsForRole } from "@/lib/pushKinds";
+import { savePushPreferences } from "./actions";
 
 export default async function AccountPage() {
   const user = await getCurrentUser();
+
+  // Which notification kinds this person has turned off (migration
+  // 108). No row, or a failed lookup, means nothing is turned off.
+  const { data: preferenceRow } = user
+    ? await supabaseServer
+        .from("user_push_preferences")
+        .select("disabled_kinds")
+        .eq("user_id", user.id)
+        .maybeSingle()
+    : { data: null };
+
+  const disabledKinds = new Set<string>(
+    (preferenceRow?.disabled_kinds as string[] | null) ?? []
+  );
+  const availableKinds = user ? pushKindsForRole(user.role) : [];
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
@@ -42,6 +60,41 @@ export default async function AccountPage() {
         </section>
 
         <NotificationsSection />
+
+        {availableKinds.length > 0 && (
+          <section className="mt-6 rounded-2xl bg-white p-5 shadow">
+            <h2 className="text-lg font-bold">What to Notify Me About</h2>
+
+            <p className="mt-1 text-sm text-[#174734]/70">
+              Applies to every device you&apos;ve enabled notifications on.
+              Reactions like &quot;Liked&quot; never send one.
+            </p>
+
+            <form action={savePushPreferences} className="mt-3 space-y-3">
+              {availableKinds.map((entry) => (
+                <label key={entry.kind} className="flex items-start gap-3 text-sm">
+                  <input
+                    type="checkbox"
+                    name={`push_${entry.kind}`}
+                    defaultChecked={!disabledKinds.has(entry.kind)}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="font-bold">{entry.label}</span>
+                    <span className="block text-[#174734]/70">{entry.description}</span>
+                  </span>
+                </label>
+              ))}
+
+              <button
+                type="submit"
+                className="rounded-xl bg-[#174734] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#123a29]"
+              >
+                Save
+              </button>
+            </form>
+          </section>
+        )}
       </div>
     </main>
   );

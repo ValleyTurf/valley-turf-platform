@@ -22,6 +22,8 @@ import {
 import { recordStripeProcessingFeeExpense } from "@/lib/paymentFeeExpenses";
 import { attachPaymentMethodFromSetupIntent } from "@/lib/autopay";
 import { chargeOpenInvoicesAfterEnrollment } from "@/lib/autopaySchedule";
+import { sendPush } from "@/lib/webPush";
+import { getUnreadMessageCount } from "@/lib/contactHistory";
 import { getInvoiceById, getInvoiceLineItems } from "@/lib/invoices";
 import { generateInvoicePdf } from "@/lib/invoicePdf";
 import { getNotificationRecipients } from "@/lib/customerContacts";
@@ -243,6 +245,19 @@ async function notifyStaffOfPayment(
       method,
       viaAutopay,
       tipAmount,
+    });
+
+    // Same news as the email above, on the phone. Admins only, and each
+    // can turn it off (lib/pushKinds.ts). sendPush never throws.
+    await sendPush("payment_received", {
+      title: `Payment: ${invoice.customerName ?? "Customer"} $${amount.toFixed(2)}`,
+      body: `Invoice ${invoice.invoiceNumber}${viaAutopay ? " -- autopay" : ""}${
+        tipAmount > 0 ? ` -- includes a $${tipAmount.toFixed(2)} tip` : ""
+      }`,
+      url: invoice.jobberClientId
+        ? `/customers/${encodeURIComponent(invoice.jobberClientId)}`
+        : "/invoices",
+      badgeCount: await getUnreadMessageCount().catch(() => 0),
     });
   } catch (error) {
     console.error(

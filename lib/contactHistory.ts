@@ -24,7 +24,7 @@
 // chat message, since those never pass through this function.
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
-import { sendPushToAllSubscribers } from "@/lib/webPush";
+import { sendPush } from "@/lib/webPush";
 
 export type ContactChannel = "email" | "sms" | "call";
 export type ContactDirection = "outbound" | "inbound";
@@ -43,6 +43,11 @@ export type LogContactHistoryParams = {
   resendEmailId?: string | null;
   createdByUserId?: string | null;
   createdByName?: string | null;
+  // For an inbound message that isn't asking for anything -- a tapback
+  // ("Liked ...", see lib/tapbacks.ts). Files it as already read, so it
+  // doesn't add to the unread badge, and sends no push notification.
+  // It still shows in the conversation like any other entry.
+  quiet?: boolean;
 };
 
 export async function logContactHistory(
@@ -67,6 +72,7 @@ export async function logContactHistory(
     resend_email_id: params.resendEmailId ?? null,
     created_by_user_id: params.createdByUserId ?? null,
     created_by_name: params.createdByName ?? null,
+    ...(params.quiet ? { read_at: new Date().toISOString() } : {}),
   });
 
   if (error) {
@@ -92,7 +98,7 @@ export async function logContactHistory(
   // mid-flight and only occasionally finished in time. Safe to await:
   // notifyInboundMessage catches everything itself and never throws, so
   // a push hiccup still can't take down the contact-history logging.
-  if (params.direction === "inbound" && params.channel !== "call") {
+  if (params.direction === "inbound" && params.channel !== "call" && !params.quiet) {
     await notifyInboundMessage(params);
   }
 }
@@ -107,7 +113,7 @@ async function notifyInboundMessage(
     ]);
     const channelLabel = params.channel === "sms" ? "text" : "email";
 
-    await sendPushToAllSubscribers({
+    await sendPush("customer_message", {
       // Ryan (2026-11-14): the lock-screen preview only showed "New
       // customer mess..." -- no way to tell who it was from without
       // opening it. The title is the one line every platform shows in
@@ -130,7 +136,7 @@ async function notifyInboundMessage(
 // Same name-resolution order as lib/composeEmailAction.ts. Never throws
 // -- a failed lookup just means the push falls back to its generic
 // title rather than not being sent at all.
-async function getCustomerDisplayName(
+export async function getCustomerDisplayName(
   jobberClientId: string | null
 ): Promise<string | null> {
   if (!jobberClientId) return null;

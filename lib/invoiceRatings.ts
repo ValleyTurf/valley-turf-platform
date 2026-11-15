@@ -6,6 +6,8 @@
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
 import { sendLowRatingAlert } from "@/lib/notifications";
+import { sendPush } from "@/lib/webPush";
+import { getUnreadMessageCount } from "@/lib/contactHistory";
 
 export type RatableInvoice = {
   id: string;
@@ -115,6 +117,17 @@ export async function submitInvoiceRating(
       customerName: invoice.customerName,
       score,
       jobberClientId: invoice.jobberClientId,
+    });
+
+    // Alongside the text/email alert above. Admins and managers, each
+    // able to turn it off (lib/pushKinds.ts). sendPush never throws.
+    await sendPush("low_rating", {
+      title: `${score}-star rating: ${invoice.customerName ?? "Customer"}`,
+      body: `Invoice ${invoice.invoiceNumber} was rated ${score} out of 5.`,
+      url: invoice.jobberClientId
+        ? `/customers/${encodeURIComponent(invoice.jobberClientId)}`
+        : "/invoices",
+      badgeCount: await getUnreadMessageCount().catch(() => 0),
     });
 
     await supabaseServer

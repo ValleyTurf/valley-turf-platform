@@ -7,6 +7,8 @@
 // 066_add_unknown_contacts.sql for the table this reads/writes.
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
+import { sendPush } from "@/lib/webPush";
+import { getUnreadMessageCount } from "@/lib/contactHistory";
 
 export type UnknownContact = {
   id: string;
@@ -59,6 +61,21 @@ export async function logUnknownContact(params: {
 
   if (error) {
     console.error("Failed to log unknown contact:", error.message);
+    return;
+  }
+
+  // A text or email from someone not on file is very often a new lead
+  // -- exactly the message worth a buzz, and until now it sat in the
+  // Unknown Senders queue until someone happened to open Messages.
+  // Calls are left to the voice webhook, which knows whether the call
+  // was actually missed. sendPush never throws.
+  if (params.channel !== "call") {
+    await sendPush("unknown_sender", {
+      title: `Unknown sender: ${params.phone ?? params.email ?? "no number"}`,
+      body: params.summary?.trim().slice(0, 160) || "New message from someone not on file.",
+      url: "/messages",
+      badgeCount: await getUnreadMessageCount().catch(() => 0),
+    });
   }
 }
 

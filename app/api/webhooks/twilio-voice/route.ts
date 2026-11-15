@@ -26,7 +26,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { headers } from "next/headers";
-import { logContactHistory } from "@/lib/contactHistory";
+import {
+  getCustomerDisplayName,
+  getUnreadMessageCount,
+  logContactHistory,
+} from "@/lib/contactHistory";
+import { sendPush } from "@/lib/webPush";
 import { findJobberClientIdByPhone } from "@/lib/customerContacts";
 import { logUnknownContact } from "@/lib/unknownContacts";
 
@@ -150,6 +155,22 @@ export async function POST(request: NextRequest) {
 
     if (fromPhone) {
       const jobberClientId = await findJobberClientIdByPhone(fromPhone);
+
+      // The call was forwarded to Ryan's cell, so a missed one is only
+      // visible there. Push it to everyone who has missed-call
+      // notifications on, with the customer's name when we know it.
+      if (outcome.startsWith("Missed")) {
+        const callerName = await getCustomerDisplayName(jobberClientId);
+
+        await sendPush("missed_call", {
+          title: `Missed call: ${callerName ?? fromPhone}`,
+          body: callerName ? `${fromPhone} -- ${outcome}` : outcome,
+          url: jobberClientId
+            ? `/customers/${encodeURIComponent(jobberClientId)}`
+            : "/messages",
+          badgeCount: await getUnreadMessageCount().catch(() => 0),
+        });
+      }
 
       if (jobberClientId) {
         await logContactHistory({

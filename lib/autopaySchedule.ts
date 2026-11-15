@@ -24,6 +24,8 @@ import { toPhoenixDateString } from "@/lib/phoenixDate";
 import { getOpenInvoicesForClients } from "@/lib/invoices";
 import { autopayReferenceDate } from "@/lib/autopay";
 import { chargeInvoiceAndSendReceipt } from "@/lib/autopayCharge";
+import { sendPush } from "@/lib/webPush";
+import { getUnreadMessageCount } from "@/lib/contactHistory";
 import {
   DEFAULT_AUTOPAY_SCHEDULE,
   autopayChargeDate,
@@ -181,6 +183,20 @@ export async function chargeDueScheduledInvoices(): Promise<ScheduledChargeResul
       result.errors.push(
         `${invoice.customerName ?? "Customer"} -- invoice ${invoice.invoiceNumber}: ${charge.reason}`
       );
+
+      // Not retried automatically (see the header comment), so say so
+      // now rather than only in tomorrow's digest. Admins only;
+      // sendPush never throws.
+      await sendPush("autopay_failed", {
+        title: `Autopay failed: ${invoice.customerName ?? "Customer"}`,
+        body: `Invoice ${invoice.invoiceNumber} ($${invoice.total.toFixed(2)}): ${charge.reason}`.slice(0, 180),
+        url: invoice.jobberClientId
+          ? `/customers/${encodeURIComponent(invoice.jobberClientId)}`
+          : "/invoices",
+        // The badge always means "unread messages" -- pass the real
+        // count so this push doesn't reset it.
+        badgeCount: await getUnreadMessageCount().catch(() => 0),
+      });
     }
   }
 
