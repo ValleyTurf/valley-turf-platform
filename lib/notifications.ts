@@ -281,6 +281,9 @@ export type DailyDigestData = {
   scheduleGaps: DailyDigestSection;
   // Pages or actions that threw in the last 24h (lib/pageErrors.ts).
   pageErrors: DailyDigestSection;
+  // Autopay charges that failed in the last 24h, invoice still unpaid
+  // (lib/autopaySchedule.ts).
+  failedAutopayCharges: DailyDigestSection;
 };
 
 function digestSectionHtml(title: string, section: DailyDigestSection, emptyLabel: string): string {
@@ -345,6 +348,11 @@ export async function sendDailyDigestEmail(
         "Low invoice ratings (last 24h, 4 stars or below)",
         data.lowRatings,
         "No low ratings."
+      )}
+      ${digestSectionHtml(
+        "Autopay charges that failed (last 24h)",
+        data.failedAutopayCharges,
+        "No failed charges."
       )}
       ${digestSectionHtml(
         "Pages that crashed (last 24h)",
@@ -824,7 +832,10 @@ export async function sendInvoiceSms(
   // to the text when this client has one to offer. Optional (not just
   // nullable) so every other caller of this function keeps compiling
   // unchanged.
-  autopayUrl?: string | null
+  autopayUrl?: string | null,
+  // Same as InvoiceEmail's scheduledChargeNote -- replaces the autopay
+  // pitch when the customer is already enrolled on a held schedule.
+  scheduledChargeNote?: string | null
 ): Promise<boolean> {
   if (await isOptedOutOfNotifications(jobberClientId)) {
     return false;
@@ -840,9 +851,11 @@ export async function sendInvoiceSms(
   }
 
   const greetingName = firstNameOf(customerName);
-  const autopaySuffix = autopayUrl
-    ? ` Want us to just charge your card automatically next time? Set up Autopay: ${autopayUrl}`
-    : "";
+  const autopaySuffix = scheduledChargeNote
+    ? ` ${scheduledChargeNote}`
+    : autopayUrl
+      ? ` Want us to just charge your card automatically next time? Set up Autopay: ${autopayUrl}`
+      : "";
   const body = `Hi ${greetingName}, this is Valley Turf Revival. Your invoice ${invoiceNumber} is ready: ${payUrl} Thank you for your business!${autopaySuffix}`;
 
   try {
@@ -1486,6 +1499,13 @@ export type InvoiceEmail = {
   // the link itself never needs to know or branch on enrollment status.
   // null skips the block entirely (no linked customer to enroll).
   autopayUrl?: string | null;
+  // Migration 105: set when this customer is enrolled in autopay on a
+  // held schedule ("Your card ending in 1234 will be charged
+  // automatically on Dec 1. No action needed."). Shown in place of the
+  // Set-up-Autopay line -- they're already set up, and without this
+  // they'd reasonably pay by hand and then be charged again by nobody's
+  // fault.
+  scheduledChargeNote?: string | null;
   // Absolute URL to public/branding/logo.png -- built by the caller from
   // getBaseUrl() (lib/baseUrl.ts) since this file has no request context
   // of its own to derive a host from. Gmail/Outlook/Apple Mail don't
@@ -1580,7 +1600,13 @@ export async function sendInvoiceEmail(
             Pay Now
           </a>
           ${
-            request.autopayUrl
+            request.scheduledChargeNote
+              ? `
+          <p style="margin: 12px 0 0; font-size: 13px; font-weight: bold;">
+            ${escapeHtmlText(request.scheduledChargeNote)}
+          </p>
+          `
+              : request.autopayUrl
               ? `
           <p style="margin: 12px 0 0; font-size: 12px;">
             <a href="${request.autopayUrl}" style="color: #6b705c; text-decoration: underline;">

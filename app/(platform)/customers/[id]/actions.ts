@@ -12,7 +12,16 @@ import {
   deleteVisitNote,
 } from "@/lib/visitNotes";
 import { removeJobberJobNotePhoto } from "@/lib/jobberJobNotes";
-import { getOrCreateEnrollmentToken, setAutopayEnabled } from "@/lib/autopay";
+import {
+  getOrCreateEnrollmentToken,
+  setAutopayEnabled,
+  setAutopaySchedule,
+} from "@/lib/autopay";
+import {
+  describeAutopaySchedule,
+  isAutopayTiming,
+  type AutopaySchedule,
+} from "@/lib/autopayTiming";
 import { syncSingleCustomer } from "@/lib/jobberWebhookProcessor";
 import { logContactHistory } from "@/lib/contactHistory";
 import {
@@ -518,6 +527,71 @@ export async function toggleAutopay(
   });
 
   revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+}
+
+// "When to charge" for a customer's autopay (migration 105) -- as soon
+// as invoiced (the default), on a set day of the month, or a set number
+// of days after each invoice. Applies to invoices sent from now on and
+// to any still-open invoice that hasn't had a charge attempted yet (the
+// daily cron reads the schedule fresh each morning).
+export async function updateAutopaySchedule(
+  jobberClientId: string,
+  input: { timing: string; dayOfMonth: number | null; delayDays: number | null }
+): Promise<{ error: string | null }> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    return { error: "You must be signed in." };
+  }
+
+  if (!isAutopayTiming(input.timing)) {
+    return { error: "Pick when the card should be charged." };
+  }
+
+  const schedule: AutopaySchedule = {
+    timing: input.timing,
+    dayOfMonth: null,
+    delayDays: null,
+  };
+
+  if (input.timing === "day_of_month") {
+    const day = input.dayOfMonth;
+
+    if (day === null || !Number.isInteger(day) || day < 1 || day > 28) {
+      return { error: "Day of the month must be a whole number from 1 to 28." };
+    }
+
+    schedule.dayOfMonth = day;
+  }
+
+  if (input.timing === "days_after_invoice") {
+    const days = input.delayDays;
+
+    if (days === null || !Number.isInteger(days) || days < 1 || days > 60) {
+      return { error: "Number of days must be a whole number from 1 to 60." };
+    }
+
+    schedule.delayDays = days;
+  }
+
+  const result = await setAutopaySchedule(jobberClientId, schedule);
+
+  if (!result.ok) {
+    return { error: result.error };
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "autopay_enrollment",
+    entityId: jobberClientId,
+    entityLabel: jobberClientId,
+    note: `Card is now charged ${describeAutopaySchedule(schedule)}.`,
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+
+  return { error: null };
 }
 
 // Ryan (2026-10-11): "I want to find a way to mark as permanently

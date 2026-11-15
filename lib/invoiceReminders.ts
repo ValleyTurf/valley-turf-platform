@@ -52,8 +52,42 @@ import { getNotificationRecipients } from "@/lib/customerContacts";
 import { getBaseUrl } from "@/lib/baseUrl";
 import { getInvoiceById } from "@/lib/invoices";
 import { sendInvoiceCopy } from "@/lib/invoiceDelivery";
+import { findInvoicesAwaitingScheduledCharge } from "@/lib/autopaySchedule";
 
 const NATIVE_PREFIX = "native-";
+
+// Migration 105: a customer whose autopay is set to charge on, say, the
+// 1st of the month isn't overdue-and-ignoring-us while they wait for
+// the 1st -- they're doing exactly what was agreed. Returns the mirror
+// ids (native-<uuid>) of invoices in that state so both the re-send
+// phase and the reminder phases can leave them alone. Once a charge has
+// actually been attempted the invoice is no longer excused (see
+// lib/autopaySchedule.ts).
+async function awaitingScheduledCharge(
+  invoices: { jobber_invoice_id: string; jobber_client_id: string | null }[]
+): Promise<Set<string>> {
+  const native = invoices.filter((invoice) =>
+    invoice.jobber_invoice_id.startsWith(NATIVE_PREFIX)
+  );
+
+  if (native.length === 0) return new Set();
+
+  try {
+    const awaitingIds = await findInvoicesAwaitingScheduledCharge(
+      native.map((invoice) => ({
+        invoiceId: invoice.jobber_invoice_id.slice(NATIVE_PREFIX.length),
+        jobberClientId: invoice.jobber_client_id,
+      }))
+    );
+
+    return new Set(Array.from(awaitingIds).map((id) => `${NATIVE_PREFIX}${id}`));
+  } catch (error) {
+    // Unknown is treated as "not waiting" -- a reminder that maybe
+    // shouldn't have gone out beats silently never reminding anyone.
+    console.error("Couldn't check scheduled autopay holds:", error);
+    return new Set();
+  }
+}
 
 // Matches Supabase/PostgREST's default response max-rows cap (confirmed
 // 2026-09-20 against this same jobber_invoices table via a one-off
@@ -190,7 +224,13 @@ async function processReminderBatch(
     (snoozeRows ?? []).map((row) => row.jobber_invoice_id as string)
   );
 
-  const unsnoozed = pending.filter((p) => !snoozedIds.has(p.invoice.jobber_invoice_id));
+  const awaitingCharge = await awaitingScheduledCharge(pending.map((p) => p.invoice));
+
+  const unsnoozed = pending.filter(
+    (p) =>
+      !snoozedIds.has(p.invoice.jobber_invoice_id) &&
+      !awaitingCharge.has(p.invoice.jobber_invoice_id)
+  );
 
   if (unsnoozed.length === 0) return;
 
@@ -376,9 +416,14 @@ async function resendOverdueInvoices(
       continue;
     }
 
-    const candidates = ((invoicesData ?? []) as ReminderInvoice[]).filter(
+    const sendable = ((invoicesData ?? []) as ReminderInvoice[]).filter(
       (invoice) =>
         isUnpaidAndSendable(invoice.status) && !snoozedIds.has(invoice.jobber_invoice_id)
+    );
+
+    const awaitingCharge = await awaitingScheduledCharge(sendable);
+    const candidates = sendable.filter(
+      (invoice) => !awaitingCharge.has(invoice.jobber_invoice_id)
     );
 
     if (candidates.length === 0) continue;

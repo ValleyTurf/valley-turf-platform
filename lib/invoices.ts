@@ -142,6 +142,30 @@ export async function getInvoiceById(id: string): Promise<Invoice | null> {
   return mapInvoiceRow(data);
 }
 
+// Native invoices that have been sent but not paid, for a set of
+// customers -- what autopay looks at when a card is saved or a
+// scheduled charge day arrives (lib/autopaySchedule.ts). Drafts are
+// excluded on purpose: nobody has been told they owe a draft.
+export async function getOpenInvoicesForClients(
+  jobberClientIds: string[]
+): Promise<Invoice[]> {
+  if (jobberClientIds.length === 0) return [];
+
+  const { data, error } = await supabaseServer
+    .from("invoices")
+    .select(INVOICE_SELECT_COLUMNS)
+    .in("jobber_client_id", jobberClientIds)
+    .in("status", ["sent", "overdue"])
+    .order("issue_date", { ascending: true });
+
+  if (error || !data) {
+    if (error) console.error("getOpenInvoicesForClients failed:", error.message);
+    return [];
+  }
+
+  return (data as unknown as Record<string, unknown>[]).map(mapInvoiceRow);
+}
+
 export type InvoiceLineItemRow = {
   description: string;
   quantity: number;

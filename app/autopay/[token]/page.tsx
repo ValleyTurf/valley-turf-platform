@@ -67,8 +67,10 @@ export default async function PublicAutopayPage({
       <section className="mt-8 rounded-3xl bg-white p-6 shadow sm:p-8">
         <p className="text-sm text-[#6b705c]">
           Save a card and we&apos;ll automatically charge it when a new
-          invoice is ready -- no need to remember to pay each time. You
-          can turn this off any time by contacting us.
+          invoice is ready -- no need to remember to pay each time. If
+          you have an unpaid invoice right now, it will be charged to
+          this card once it&apos;s saved. You can turn this off any time
+          by contacting us.
         </p>
 
         {setup === "1" && (

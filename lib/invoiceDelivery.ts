@@ -15,7 +15,13 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { getInvoiceLineItems, type Invoice } from "@/lib/invoices";
 import { generateInvoicePdf } from "@/lib/invoicePdf";
 import { sendInvoiceEmail, sendInvoiceSms } from "@/lib/notifications";
-import { getOrCreateEnrollmentToken } from "@/lib/autopay";
+import {
+  autopayReferenceDate,
+  getOrCreateEnrollmentToken,
+  getPaymentMethodByClientId,
+} from "@/lib/autopay";
+import { autopayChargeDate, formatChargeDate } from "@/lib/autopayTiming";
+import { toPhoenixDateString } from "@/lib/phoenixDate";
 import { getNotificationRecipients } from "@/lib/customerContacts";
 
 export type SendInvoiceCopyResult =
@@ -77,6 +83,31 @@ export async function sendInvoiceCopy(
   const enrollment = await getOrCreateEnrollmentToken(invoice.jobberClientId);
   const autopayUrl = enrollment.ok ? `${baseUrl}/autopay/${enrollment.token}` : null;
 
+  // Migration 105: if this customer's card is scheduled to be charged
+  // for this invoice on a day that hasn't come yet, say so instead of
+  // pitching autopay -- same line the original send carries.
+  let scheduledChargeNote: string | null = null;
+  const paymentMethod = await getPaymentMethodByClientId(invoice.jobberClientId);
+  const today = toPhoenixDateString(new Date().toISOString());
+
+  if (
+    today &&
+    paymentMethod?.autopayEnabled &&
+    paymentMethod.stripePaymentMethodId &&
+    paymentMethod.schedule.timing !== "on_invoice"
+  ) {
+    const chargeDate = autopayChargeDate(
+      autopayReferenceDate(invoice),
+      paymentMethod.schedule
+    );
+
+    if (chargeDate > today) {
+      scheduledChargeNote = `Your card${
+        paymentMethod.cardLast4 ? ` ending in ${paymentMethod.cardLast4}` : ""
+      } will be charged automatically on ${formatChargeDate(chargeDate)}. No action needed.`;
+    }
+  }
+
   let delivered = false;
 
   try {
@@ -97,6 +128,7 @@ export async function sendInvoiceCopy(
             logoUrl,
             rateUrl,
             autopayUrl,
+            scheduledChargeNote,
           })) || delivered;
       }
     }
@@ -109,7 +141,8 @@ export async function sendInvoiceCopy(
           invoice.invoiceNumber,
           payUrl,
           invoice.jobberClientId,
-          autopayUrl
+          autopayUrl,
+          scheduledChargeNote
         )) || delivered;
     }
   } catch (deliveryError) {

@@ -21,6 +21,7 @@ import {
 } from "@/lib/payments";
 import { recordStripeProcessingFeeExpense } from "@/lib/paymentFeeExpenses";
 import { attachPaymentMethodFromSetupIntent } from "@/lib/autopay";
+import { chargeOpenInvoicesAfterEnrollment } from "@/lib/autopaySchedule";
 import { getInvoiceById, getInvoiceLineItems } from "@/lib/invoices";
 import { generateInvoicePdf } from "@/lib/invoicePdf";
 import { getNotificationRecipients } from "@/lib/customerContacts";
@@ -512,6 +513,29 @@ async function handleSetupIntentSucceeded(
   setupIntent: Stripe.SetupIntent
 ): Promise<void> {
   await attachPaymentMethodFromSetupIntent(setupIntent);
+
+  // A card was just saved (first enrollment or a replacement card).
+  // Charge anything already due under this customer's autopay schedule
+  // -- before this, enrolling with an invoice already open (Heather
+  // Henderson, 2026-11-10) charged nothing until the NEXT invoice. The
+  // enrollment pages tell the customer this will happen. Wrapped so a
+  // problem here can never make Stripe think the card save itself
+  // failed and redeliver the event.
+  const jobberClientId = setupIntent.metadata?.jobber_client_id;
+
+  if (jobberClientId) {
+    try {
+      const outcome = await chargeOpenInvoicesAfterEnrollment(jobberClientId);
+
+      if (outcome.charged > 0 || outcome.failed > 0) {
+        console.log(
+          `Autopay enrollment for ${jobberClientId}: charged ${outcome.charged} open invoice(s), ${outcome.failed} failed.`
+        );
+      }
+    } catch (error) {
+      console.error("Charging open invoices after autopay enrollment failed:", error);
+    }
+  }
 }
 
 async function processStripeWebhookEvent(

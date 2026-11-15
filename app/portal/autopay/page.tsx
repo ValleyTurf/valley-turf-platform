@@ -36,8 +36,9 @@ export default async function PortalAutopayPage({
         <h2 className="text-lg font-bold">Autopay</h2>
         <p className="mt-1 text-sm text-[#6b705c]">
           Save a card and we&apos;ll charge it automatically when a new
-          invoice is ready -- no more remembering to pay. You can turn
-          this off any time.
+          invoice is ready -- no more remembering to pay. If you have an
+          unpaid invoice right now, it will be charged to this card once
+          it&apos;s saved. You can turn this off any time.
         </p>
 
         {setup === "1" && (

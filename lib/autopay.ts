@@ -30,6 +30,13 @@ import type Stripe from "stripe";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getStripeClient } from "@/lib/stripe";
 import type { Invoice } from "@/lib/invoices";
+import { toPhoenixDateString } from "@/lib/phoenixDate";
+import {
+  DEFAULT_AUTOPAY_SCHEDULE,
+  autopayChargeDate,
+  isAutopayTiming,
+  type AutopaySchedule,
+} from "@/lib/autopayTiming";
 
 export type CustomerPaymentMethod = {
   jobberClientId: string;
@@ -39,6 +46,10 @@ export type CustomerPaymentMethod = {
   cardLast4: string | null;
   autopayEnabled: boolean;
   enrollmentToken: string | null;
+  // When to charge (migration 105). Always present -- a row read before
+  // that migration has run reports the original charge-on-invoice
+  // behavior.
+  schedule: AutopaySchedule;
 };
 
 type PaymentMethodRow = {
@@ -49,10 +60,23 @@ type PaymentMethodRow = {
   card_last4: string | null;
   autopay_enabled: boolean;
   enrollment_token: string | null;
+  autopay_timing?: string | null;
+  autopay_day_of_month?: number | null;
+  autopay_delay_days?: number | null;
 };
 
-const SELECT_COLUMNS =
+const LEGACY_SELECT_COLUMNS =
   "jobber_client_id, stripe_customer_id, stripe_payment_method_id, card_brand, card_last4, autopay_enabled, enrollment_token";
+
+const SELECT_COLUMNS = `${LEGACY_SELECT_COLUMNS}, autopay_timing, autopay_day_of_month, autopay_delay_days`;
+
+// Postgres "undefined column" -- what a select of the migration-105
+// columns returns if that migration hasn't been run yet. Card lookups
+// are on the path of every invoice send, so rather than have autopay
+// silently stop finding anyone's card in that window, the two lookups
+// below retry with the original columns and treat everyone as
+// charge-on-invoice.
+const UNDEFINED_COLUMN = "42703";
 
 function toCustomerPaymentMethod(row: PaymentMethodRow): CustomerPaymentMethod {
   return {
@@ -63,41 +87,52 @@ function toCustomerPaymentMethod(row: PaymentMethodRow): CustomerPaymentMethod {
     cardLast4: row.card_last4,
     autopayEnabled: row.autopay_enabled,
     enrollmentToken: row.enrollment_token,
+    schedule: isAutopayTiming(row.autopay_timing)
+      ? {
+          timing: row.autopay_timing,
+          dayOfMonth: row.autopay_day_of_month ?? null,
+          delayDays: row.autopay_delay_days ?? null,
+        }
+      : DEFAULT_AUTOPAY_SCHEDULE,
   };
+}
+
+async function selectPaymentMethod(
+  column: "jobber_client_id" | "enrollment_token",
+  value: string
+): Promise<CustomerPaymentMethod | null> {
+  let { data, error } = await supabaseServer
+    .from("customer_payment_methods")
+    .select(SELECT_COLUMNS)
+    .eq(column, value)
+    .maybeSingle<PaymentMethodRow>();
+
+  if (error?.code === UNDEFINED_COLUMN) {
+    ({ data, error } = await supabaseServer
+      .from("customer_payment_methods")
+      .select(LEGACY_SELECT_COLUMNS)
+      .eq(column, value)
+      .maybeSingle<PaymentMethodRow>());
+  }
+
+  if (error) {
+    console.error(`Failed to look up customer_payment_methods by ${column}:`, error);
+    return null;
+  }
+
+  return data ? toCustomerPaymentMethod(data) : null;
 }
 
 export async function getPaymentMethodByClientId(
   jobberClientId: string
 ): Promise<CustomerPaymentMethod | null> {
-  const { data, error } = await supabaseServer
-    .from("customer_payment_methods")
-    .select(SELECT_COLUMNS)
-    .eq("jobber_client_id", jobberClientId)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Failed to look up customer_payment_methods:", error);
-    return null;
-  }
-
-  return data ? toCustomerPaymentMethod(data as PaymentMethodRow) : null;
+  return selectPaymentMethod("jobber_client_id", jobberClientId);
 }
 
 export async function getPaymentMethodByEnrollmentToken(
   token: string
 ): Promise<CustomerPaymentMethod | null> {
-  const { data, error } = await supabaseServer
-    .from("customer_payment_methods")
-    .select(SELECT_COLUMNS)
-    .eq("enrollment_token", token)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Failed to look up customer_payment_methods by token:", error);
-    return null;
-  }
-
-  return data ? toCustomerPaymentMethod(data as PaymentMethodRow) : null;
+  return selectPaymentMethod("enrollment_token", token);
 }
 
 function generateEnrollmentToken(): string {
@@ -306,6 +341,134 @@ export async function setAutopayEnabled(
   return { ok: true };
 }
 
+export async function setAutopaySchedule(
+  jobberClientId: string,
+  schedule: AutopaySchedule
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { error } = await supabaseServer
+    .from("customer_payment_methods")
+    .update({
+      autopay_timing: schedule.timing,
+      autopay_day_of_month: schedule.timing === "day_of_month" ? schedule.dayOfMonth : null,
+      autopay_delay_days: schedule.timing === "days_after_invoice" ? schedule.delayDays : null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("jobber_client_id", jobberClientId);
+
+  if (error) {
+    return {
+      ok: false,
+      error:
+        error.code === UNDEFINED_COLUMN
+          ? "Autopay timing isn't available until migration 105 has been run in Supabase."
+          : error.message,
+    };
+  }
+
+  return { ok: true };
+}
+
+// The calendar date (Phoenix) an invoice counts as "sent" for autopay
+// scheduling -- when it actually went out if we know, otherwise its
+// issue date.
+export function autopayReferenceDate(invoice: Invoice): string {
+  return toPhoenixDateString(invoice.sentAt) ?? invoice.issueDate;
+}
+
+export type AutopayPlan =
+  // Not enrolled / no card / autopay off -- send the normal Pay Now.
+  | { action: "none" }
+  // Charge the card right now.
+  | { action: "charge_now" }
+  // Enrolled, but this customer's schedule says wait until chargeDate.
+  | { action: "hold"; chargeDate: string; cardLast4: string | null };
+
+// What should happen card-wise for an invoice being sent today.
+export async function planAutopayForInvoice(
+  invoice: Invoice,
+  todayPhoenix: string
+): Promise<AutopayPlan> {
+  if (!invoice.jobberClientId) return { action: "none" };
+
+  const paymentMethod = await getPaymentMethodByClientId(invoice.jobberClientId);
+
+  if (
+    !paymentMethod ||
+    !paymentMethod.autopayEnabled ||
+    !paymentMethod.stripeCustomerId ||
+    !paymentMethod.stripePaymentMethodId
+  ) {
+    return { action: "none" };
+  }
+
+  // Sent "today" by definition here, whatever sentAt says so far.
+  const chargeDate = autopayChargeDate(todayPhoenix, paymentMethod.schedule);
+
+  return chargeDate <= todayPhoenix
+    ? { action: "charge_now" }
+    : { action: "hold", chargeDate, cardLast4: paymentMethod.cardLast4 };
+}
+
+// What caused a charge attempt -- recorded with each one (migration
+// 105's autopay_charge_attempts).
+export type AutopayTrigger = "invoice_created" | "scheduled" | "enrollment" | "manual";
+
+// Best-effort: the attempt log is for visibility and for the scheduled
+// cron's "already tried" check; failing to write it must never undo or
+// block a charge that already happened.
+async function recordAutopayAttempt(params: {
+  invoice: Invoice;
+  trigger: AutopayTrigger;
+  succeeded: boolean;
+  error: string | null;
+}): Promise<void> {
+  try {
+    const attemptedOn = toPhoenixDateString(new Date().toISOString());
+
+    const { error } = await supabaseServer.from("autopay_charge_attempts").insert({
+      invoice_id: params.invoice.id,
+      jobber_client_id: params.invoice.jobberClientId,
+      attempted_on: attemptedOn,
+      triggered_by: params.trigger,
+      succeeded: params.succeeded,
+      error: params.error ? params.error.slice(0, 500) : null,
+    });
+
+    if (error) {
+      console.error("Failed to record autopay attempt:", error.message);
+    }
+  } catch (error) {
+    console.error("Failed to record autopay attempt:", error);
+  }
+}
+
+// How long after a successful charge a manual "Charge Card on File" is
+// refused for the same invoice. Covers the gap between Stripe taking
+// the money and its webhook marking the invoice paid, without locking
+// staff out of deliberately re-charging much later (after a refund).
+const MANUAL_RECHARGE_BLOCK_MS = 3 * 24 * 60 * 60 * 1000;
+
+// The most recent successful charge recorded for this invoice, if any.
+// An invoice normally flips to "paid" seconds after a charge succeeds,
+// but that flip is done by Stripe's webhook -- if it's late or failed,
+// the invoice still LOOKS unpaid, and without this check the next
+// trigger would charge the card a second time. A lookup error reports
+// "none" (the table doesn't exist before migration 105, and that's
+// exactly the world where nothing has been recorded yet).
+async function getLastSuccessfulAttempt(invoiceId: string): Promise<string | null> {
+  const { data, error } = await supabaseServer
+    .from("autopay_charge_attempts")
+    .select("created_at")
+    .eq("invoice_id", invoiceId)
+    .eq("succeeded", true)
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (error || !data || data.length === 0) return null;
+
+  return data[0].created_at as string;
+}
+
 export type AttemptAutopayChargeResult =
   | { charged: true }
   | { charged: false; reason: string };
@@ -317,12 +480,17 @@ export type AttemptAutopayChargeResult =
 // (declined, requires authentication, etc.) are all just "autopay
 // didn't work this time," not application errors.
 //
+// Charges unconditionally -- deciding WHETHER today is the day
+// (migration 105's per-customer schedule) is the caller's job, via
+// planAutopayForInvoice or lib/autopaySchedule.ts.
+//
 // Doesn't touch the invoice or payments tables directly on success --
 // same as the Pay Now flow, the authoritative write happens once
 // payment_intent.succeeded arrives via the webhook (lib/stripeWebhookProcessor.ts),
 // keeping exactly one code path responsible for marking an invoice paid.
 export async function attemptAutopayCharge(
-  invoice: Invoice
+  invoice: Invoice,
+  trigger: AutopayTrigger = "invoice_created"
 ): Promise<AttemptAutopayChargeResult> {
   if (!invoice.jobberClientId) {
     return { charged: false, reason: "Invoice has no linked customer." };
@@ -345,25 +513,69 @@ export async function attemptAutopayCharge(
     return { charged: false, reason: "Invoice has no valid amount to charge." };
   }
 
+  // Never charge twice for one invoice (see getLastSuccessfulAttempt).
+  // Automated triggers refuse outright; a person pressing the button is
+  // refused only inside the short window where the payment is plausibly
+  // still being confirmed. Deliberately not recorded as a failed
+  // attempt -- nothing was attempted.
+  const lastSuccess = await getLastSuccessfulAttempt(invoice.id);
+
+  if (
+    lastSuccess &&
+    (trigger !== "manual" ||
+      Date.now() - new Date(lastSuccess).getTime() < MANUAL_RECHARGE_BLOCK_MS)
+  ) {
+    const when = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Phoenix",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(lastSuccess));
+
+    return {
+      charged: false,
+      reason: `This invoice's card was already charged successfully on ${when}. It should show as paid once Stripe confirms -- check Stripe before charging again.`,
+    };
+  }
+
+  // Automated triggers get a Stripe idempotency key: two of them firing
+  // for the same invoice, card and day (a cron run retried, a webhook
+  // delivered twice) can then only ever produce one charge -- Stripe
+  // returns the first result for the second request. The card is part
+  // of the key so a customer who replaces a declined card the same day
+  // isn't handed back that old decline. A manual press of "Charge Card
+  // on File" deliberately has no key: it's already behind a confirm
+  // step, and a retry after a decline must be a real new attempt.
+  const today = toPhoenixDateString(new Date().toISOString());
+  const idempotencyKey =
+    trigger === "manual"
+      ? undefined
+      : `autopay-${invoice.id}-${today}-${paymentMethod.stripePaymentMethodId}`;
+
   try {
     const stripe = getStripeClient();
 
-    await stripe.paymentIntents.create({
-      amount: amountCents,
-      currency: "usd",
-      customer: paymentMethod.stripeCustomerId,
-      payment_method: paymentMethod.stripePaymentMethodId,
-      off_session: true,
-      confirm: true,
-      description: `Invoice ${invoice.invoiceNumber}`,
-      // "source: autopay" lets the payment_intent.succeeded webhook
-      // handler (lib/stripeWebhookProcessor.ts) tell this charge apart
-      // from a manual Pay Now checkout -- it uses that to skip sending
-      // the manual-payment receipt, since this flow's caller
-      // (app/(platform)/invoices/actions.ts) already sends the autopay
-      // receipt synchronously as soon as this charge succeeds.
-      metadata: { invoice_id: invoice.id, source: "autopay" },
-    });
+    await stripe.paymentIntents.create(
+      {
+        amount: amountCents,
+        currency: "usd",
+        customer: paymentMethod.stripeCustomerId,
+        payment_method: paymentMethod.stripePaymentMethodId,
+        off_session: true,
+        confirm: true,
+        description: `Invoice ${invoice.invoiceNumber}`,
+        // "source: autopay" lets the payment_intent.succeeded webhook
+        // handler (lib/stripeWebhookProcessor.ts) tell this charge apart
+        // from a manual Pay Now checkout -- it uses that to skip sending
+        // the manual-payment receipt, since every caller of this function
+        // sends the autopay receipt itself as soon as the charge succeeds.
+        metadata: { invoice_id: invoice.id, source: "autopay" },
+      },
+      idempotencyKey ? { idempotencyKey } : undefined
+    );
+
+    await recordAutopayAttempt({ invoice, trigger, succeeded: true, error: null });
 
     return { charged: true };
   } catch (error) {
@@ -378,6 +590,9 @@ export async function attemptAutopayCharge(
       `Autopay charge failed for invoice ${invoice.invoiceNumber}:`,
       message
     );
+
+    await recordAutopayAttempt({ invoice, trigger, succeeded: false, error: message });
+
     return { charged: false, reason: message };
   }
 }

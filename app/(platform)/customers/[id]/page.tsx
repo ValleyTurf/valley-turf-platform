@@ -50,6 +50,7 @@ import { listAddressesForCustomer } from "@/lib/customerAddresses";
 import ResendInvoiceButton from "./ResendInvoiceButton";
 import MarkPaidButton from "./MarkPaidButton";
 import ChargeCardButton from "./ChargeCardButton";
+import AutopayScheduleForm from "./AutopayScheduleForm";
 import ProfitTimeframePicker from "./ProfitTimeframePicker";
 import Pagination from "./Pagination";
 import { LogCallForm } from "./LogCallForm";
@@ -3928,6 +3929,13 @@ export default async function CustomerDetailPage({
                           : "Turn on autopay"}
                       </button>
                     </form>
+
+                    <AutopayScheduleForm
+                      jobberClientId={decodedId}
+                      timing={autopayPaymentMethod.schedule.timing}
+                      dayOfMonth={autopayPaymentMethod.schedule.dayOfMonth}
+                      delayDays={autopayPaymentMethod.schedule.delayDays}
+                    />
                   </>
                 ) : autopayPaymentMethod?.enrollmentToken ? (
                   <>

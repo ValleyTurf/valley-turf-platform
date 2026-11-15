@@ -25,7 +25,6 @@ import { createJobberInvoice } from "@/lib/jobberInvoice";
 import {
   createInvoice as createNativeInvoice,
   getInvoiceById,
-  getInvoiceLineItems,
 } from "@/lib/invoices";
 import {
   mirrorNativeInvoiceInJobberTables,
@@ -43,7 +42,11 @@ import {
   attemptAutopayCharge,
   getPaymentMethodByClientId,
   getOrCreateEnrollmentToken,
+  planAutopayForInvoice,
 } from "@/lib/autopay";
+import { chargeInvoiceAndSendReceipt } from "@/lib/autopayCharge";
+import { formatChargeDate } from "@/lib/autopayTiming";
+import { toPhoenixDateString } from "@/lib/phoenixDate";
 import { getBaseUrl } from "@/lib/baseUrl";
 import { sendInvoiceCopy } from "@/lib/invoiceDelivery";
 import { getNotificationRecipients } from "@/lib/customerContacts";
@@ -248,6 +251,9 @@ async function createNativeInvoiceForVisit(
   }
 
   let autopayCharged = false;
+  // Set only for a customer on a held autopay schedule -- replaces the
+  // "set up autopay" line in the invoice email/text.
+  let scheduledChargeNote: string | null = null;
   // undefined (not false) until a delivery attempt actually happens --
   // a saved draft (markSent=false) was never supposed to be delivered,
   // so it shouldn't render as a delivery failure in the UI.
@@ -258,13 +264,31 @@ async function createNativeInvoiceForVisit(
     // Same order as /invoice-test/actions.ts's proven flow: try autopay
     // first, only fall through to email/SMS delivery if it didn't
     // charge (not enrolled, no card, decline, requires 3DS, etc.).
-    const autopayResult = await attemptAutopayCharge(invoice);
-    autopayCharged = autopayResult.charged;
+    //
+    // Migration 105: a customer can now be on a held schedule (the 1st
+    // of the month, N days after the invoice). For them nothing is
+    // charged here -- the invoice goes out as usual with a line saying
+    // when their card will be charged, and the daily cron
+    // (lib/autopaySchedule.ts) makes the charge on that day.
+    const todayPhoenix =
+      toPhoenixDateString(new Date().toISOString()) ?? invoice.issueDate;
+    const autopayPlan = await planAutopayForInvoice(invoice, todayPhoenix);
 
-    if (!autopayResult.charged) {
-      console.log(
-        `Autopay not applied for invoice ${invoice.invoiceNumber}: ${autopayResult.reason}`
-      );
+    if (autopayPlan.action === "charge_now") {
+      const autopayResult = await attemptAutopayCharge(invoice, "invoice_created");
+      autopayCharged = autopayResult.charged;
+
+      if (!autopayResult.charged) {
+        console.log(
+          `Autopay not applied for invoice ${invoice.invoiceNumber}: ${autopayResult.reason}`
+        );
+      }
+    } else if (autopayPlan.action === "hold") {
+      scheduledChargeNote = `Your card${
+        autopayPlan.cardLast4 ? ` ending in ${autopayPlan.cardLast4}` : ""
+      } will be charged automatically on ${formatChargeDate(
+        autopayPlan.chargeDate
+      )}. No action needed.`;
     }
 
     try {
@@ -358,6 +382,7 @@ async function createNativeInvoiceForVisit(
                 logoUrl,
                 rateUrl,
                 autopayUrl,
+                scheduledChargeNote,
               })) || delivered;
           }
         }
@@ -370,7 +395,8 @@ async function createNativeInvoiceForVisit(
               invoice.invoiceNumber,
               payUrl,
               clientId,
-              autopayUrl
+              autopayUrl,
+              scheduledChargeNote
             )) || delivered;
         }
       }
@@ -826,63 +852,12 @@ export async function chargeInvoiceManually(
     };
   }
 
-  const chargeResult = await attemptAutopayCharge(invoice);
+  // Charge + autopay receipt, shared with the scheduled cron and the
+  // enrollment hook (lib/autopayCharge.ts).
+  const chargeResult = await chargeInvoiceAndSendReceipt(invoice, "manual");
 
   if (!chargeResult.charged) {
     return { error: chargeResult.reason };
-  }
-
-  // Best-effort from here down -- the charge itself already succeeded,
-  // same "degrade to a banner, don't crash the action" reasoning
-  // resendInvoice/createNativeInvoiceForVisit use for delivery failures.
-  try {
-    const { data: customerRow } = await supabaseServer
-      .from("customers")
-      .select("email, phone")
-      .eq("jobber_client_id", invoice.jobberClientId)
-      .maybeSingle();
-
-    const recipients = await getNotificationRecipients(
-      invoice.jobberClientId,
-      (customerRow?.email as string | null) ?? null,
-      (customerRow?.phone as string | null) ?? null
-    );
-
-    const lineItems = await getInvoiceLineItems(invoiceId);
-    const pdfBuffer =
-      recipients.emails.length > 0
-        ? await generateInvoicePdf(invoice, lineItems)
-        : null;
-
-    if (pdfBuffer) {
-      for (const toEmail of recipients.emails) {
-        await sendAutopayReceiptEmail({
-          toEmail,
-          customerName: invoice.customerName,
-          invoiceNumber: invoice.invoiceNumber,
-          total: invoice.total,
-          cardLast4: paymentMethod.cardLast4,
-          pdfBuffer,
-          jobberClientId: invoice.jobberClientId,
-        });
-      }
-    }
-
-    for (const toPhone of recipients.phones) {
-      await sendAutopayReceiptSms(
-        toPhone,
-        invoice.customerName,
-        invoice.invoiceNumber,
-        invoice.total,
-        paymentMethod.cardLast4,
-        invoice.jobberClientId
-      );
-    }
-  } catch (deliveryError) {
-    console.error(
-      `Manual autopay charge succeeded but receipt delivery failed for invoice ${invoice.invoiceNumber}:`,
-      deliveryError
-    );
   }
 
   await recordAuditLog({

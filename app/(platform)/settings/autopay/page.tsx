@@ -10,6 +10,11 @@ export const revalidate = 0;
 // convention (direct sibling within Settings).
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
+import {
+  DEFAULT_AUTOPAY_SCHEDULE,
+  describeAutopaySchedule,
+  isAutopayTiming,
+} from "@/lib/autopayTiming";
 
 type PaymentMethodRow = {
   jobber_client_id: string;
@@ -19,6 +24,9 @@ type PaymentMethodRow = {
   autopay_enabled: boolean;
   enrollment_token: string | null;
   created_at: string | null;
+  autopay_timing: string | null;
+  autopay_day_of_month: number | null;
+  autopay_delay_days: number | null;
 };
 
 type CustomerRow = {
@@ -33,6 +41,10 @@ type DisplayRow = {
   cardBrand: string | null;
   cardLast4: string | null;
   createdAt: string | null;
+  // "charged on the 1st of each month" etc. (migration 105). null for
+  // rows where it isn't meaningful (no card, or a customer who has no
+  // enrollment row at all).
+  scheduleLabel: string | null;
 };
 
 function formatDate(value: string | null): string {
@@ -142,9 +154,16 @@ function AutopaySection({
               {row.name}
             </Link>
 
-            <span style={{ color: "#64748b", fontSize: "13px" }}>
-              {cardLabel(row.cardBrand, row.cardLast4)} since{" "}
-              {formatDate(row.createdAt)}
+            <span style={{ color: "#64748b", fontSize: "13px", textAlign: "right" }}>
+              {row.createdAt
+                ? `${cardLabel(row.cardBrand, row.cardLast4)} since ${formatDate(row.createdAt)}`
+                : cardLabel(row.cardBrand, row.cardLast4)}
+              {row.scheduleLabel ? (
+                <>
+                  <br />
+                  Charged {row.scheduleLabel}
+                </>
+              ) : null}
             </span>
           </div>
         ))
@@ -157,11 +176,29 @@ export default async function AutopaySettingsPage() {
   const { data: rows } = await supabaseServer
     .from("customer_payment_methods")
     .select(
-      "jobber_client_id, stripe_payment_method_id, card_brand, card_last4, autopay_enabled, enrollment_token, created_at"
+      "jobber_client_id, stripe_payment_method_id, card_brand, card_last4, autopay_enabled, enrollment_token, created_at, autopay_timing, autopay_day_of_month, autopay_delay_days"
     );
 
   const paymentRows = (rows as PaymentMethodRow[] | null) ?? [];
-  const clientIds = paymentRows.map((r) => r.jobber_client_id);
+
+  // Everyone with an active recurring job (same definition the visit
+  // generator uses), so the page can also answer "who ISN'T on autopay
+  // yet" -- the people worth sending the enrollment link to.
+  const { data: recurringJobRows } = await supabaseServer
+    .from("jobber_jobs")
+    .select("jobber_client_id")
+    .eq("source", "native")
+    .not("job_status", "in", "(archived,completed)")
+    .not("recurrence_frequency", "is", null)
+    .not("jobber_client_id", "is", null);
+
+  const recurringClientIds = Array.from(
+    new Set((recurringJobRows ?? []).map((r) => r.jobber_client_id as string))
+  );
+
+  const clientIds = Array.from(
+    new Set([...paymentRows.map((r) => r.jobber_client_id), ...recurringClientIds])
+  );
 
   const { data: customerRows } = clientIds.length
     ? await supabaseServer
@@ -183,7 +220,46 @@ export default async function AutopaySettingsPage() {
     cardBrand: r.card_brand,
     cardLast4: r.card_last4,
     createdAt: r.created_at,
+    scheduleLabel: r.stripe_payment_method_id
+      ? describeAutopaySchedule(
+          isAutopayTiming(r.autopay_timing)
+            ? {
+                timing: r.autopay_timing,
+                dayOfMonth: r.autopay_day_of_month,
+                delayDays: r.autopay_delay_days,
+              }
+            : DEFAULT_AUTOPAY_SCHEDULE
+        )
+      : null,
   });
+
+  const onAutopayIds = new Set(
+    paymentRows
+      .filter((r) => r.stripe_payment_method_id && r.autopay_enabled)
+      .map((r) => r.jobber_client_id)
+  );
+
+  const paymentRowByClientId = new Map(paymentRows.map((r) => [r.jobber_client_id, r]));
+
+  const recurringNotOnAutopay: DisplayRow[] = recurringClientIds
+    .filter((id) => !onAutopayIds.has(id))
+    .map((id) => {
+      const existing = paymentRowByClientId.get(id);
+
+      // Someone here can still have a card saved with autopay switched
+      // off -- show that card rather than "No card on file".
+      return existing?.stripe_payment_method_id
+        ? { ...toDisplayRow(existing), scheduleLabel: null }
+        : {
+            jobberClientId: id,
+            name: nameByClientId.get(id) ?? "(unknown customer)",
+            cardBrand: null,
+            cardLast4: null,
+            createdAt: null,
+            scheduleLabel: null,
+          };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const autopayOn = paymentRows
     .filter((r) => r.stripe_payment_method_id && r.autopay_enabled)
@@ -257,6 +333,14 @@ export default async function AutopaySettingsPage() {
           pillBackground="#f3f4f6"
           pillColor="#4b5563"
           rows={enrollmentStartedNotCompleted}
+        />
+
+        <AutopaySection
+          title="Recurring Customers Not on Autopay"
+          description="Have an active recurring service but aren't being charged automatically. Open a customer to get their autopay link."
+          pillBackground="#e0f2fe"
+          pillColor="#075985"
+          rows={recurringNotOnAutopay}
         />
       </div>
     </main>

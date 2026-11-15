@@ -49,6 +49,10 @@
       "schedule": "0 16 * * *"
     },
     {
+      "path": "/api/invoices/charge-scheduled-autopay",
+      "schedule": "40 15 * * *"
+    },
+    {
       "path": "/api/invoices/send-overdue-reminders",
       "schedule": "10 16 * * *"
     },

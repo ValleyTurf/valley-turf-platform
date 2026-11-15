@@ -23,6 +23,7 @@ import {
 import { previewPendingVisitReminders } from "@/lib/visitReminders";
 import { describeGap, findRecurringScheduleGaps } from "@/lib/recurringGaps";
 import { listRecentPageErrors } from "@/lib/pageErrors";
+import { listRecentFailedAutopayCharges } from "@/lib/autopaySchedule";
 
 const BUSINESS_UTC_OFFSET = "-07:00";
 
@@ -539,6 +540,31 @@ async function countPageErrors(): Promise<{ count: number; sample: string[] }> {
   }
 }
 
+// Autopay card charges that failed in the last 24h and whose invoice
+// is still unpaid (lib/autopaySchedule.ts). A failed scheduled charge
+// is not retried automatically, so this is where it gets noticed.
+async function countFailedAutopayCharges(): Promise<{ count: number; sample: string[] }> {
+  try {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const failures = await listRecentFailedAutopayCharges(since);
+
+    return {
+      count: failures.length,
+      sample: failures
+        .slice(0, SAMPLE_LIMIT)
+        .map(
+          (f) =>
+            `${f.customerName || "Unknown customer"} -- invoice ${f.invoiceNumber}: ${(
+              f.error ?? "charge failed"
+            ).slice(0, 140)}`
+        ),
+    };
+  } catch (error) {
+    console.error("Failed autopay lookup failed:", error);
+    return { count: 0, sample: [] };
+  }
+}
+
 export type SendDailyDigestResult =
   | { sent: false; reason: string }
   | { sent: true; recipients: number };
@@ -574,6 +600,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     lowRatings,
     scheduleGaps,
     pageErrors,
+    failedAutopayCharges,
   ] = await Promise.all([
     countUnloggedJobCosts(),
     countVisitsMissingPhotos(),
@@ -584,6 +611,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     countLowRatings(),
     countScheduleGaps(),
     countPageErrors(),
+    countFailedAutopayCharges(),
   ]);
 
   const data: DailyDigestData = {
@@ -597,6 +625,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     lowRatings,
     scheduleGaps,
     pageErrors,
+    failedAutopayCharges,
   };
 
   // Reminders queued for today count toward "is there anything worth
@@ -612,7 +641,8 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     data.remindersGoingOutToday.count +
     data.lowRatings.count +
     data.scheduleGaps.count +
-    data.pageErrors.count;
+    data.pageErrors.count +
+    data.failedAutopayCharges.count;
 
   if (totalFlagged === 0) {
     return { sent: false, reason: "Nothing to report today -- digest skipped." };
