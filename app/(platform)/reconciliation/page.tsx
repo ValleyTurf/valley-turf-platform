@@ -57,6 +57,48 @@ export default async function ReconciliationPage() {
           </p>
         </div>
 
+        <div
+          style={{
+            background: "#ffffff",
+            border: "1px solid #e2e8f0",
+            borderRadius: "16px",
+            padding: "18px 22px",
+            marginBottom: "24px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "16px",
+            flexWrap: "wrap",
+          }}
+        >
+          <div>
+            <h2 style={{ margin: "0 0 4px", color: "#0f172a", fontSize: "16px" }}>
+              Paid by Zelle or check?
+            </h2>
+            <p style={{ margin: 0, color: "#64748b", fontSize: "13px" }}>
+              Match a bank deposit to the invoice it pays -- marks the
+              invoice paid and files the deposit in one step.
+            </p>
+          </div>
+
+          <Link
+            href="/reconciliation/deposits"
+            style={{
+              border: "1px solid #0f172a",
+              background: "#0f172a",
+              color: "#ffffff",
+              padding: "10px 16px",
+              borderRadius: "10px",
+              fontWeight: 700,
+              fontSize: "13px",
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Match Deposits →
+          </Link>
+        </div>
+
         {accounts.length === 0 ? (
           <section
             style={{

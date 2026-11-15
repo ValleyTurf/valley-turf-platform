@@ -10,7 +10,9 @@
 import { useState, useTransition } from "react";
 import { markCustomerInvoicePaidManually } from "./actions";
 
-const METHOD_OPTIONS = ["Cash", "Check", "Other"];
+// Zelle added 2026-11-15 -- it's how a good share of customers actually
+// pay, and it was being recorded as "Other".
+const METHOD_OPTIONS = ["Cash", "Check", "Zelle", "Other"];
 
 export default function MarkPaidButton({
   jobberClientId,
