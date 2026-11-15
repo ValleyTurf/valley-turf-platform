@@ -92,13 +92,20 @@ Agreed with Ryan 2026-11-15. Items 1-9 approved; 10 waits on Gusto.
    Daily reminders stay; on those four days the invoice itself (PDF +
    Pay Now) goes out instead of the plain reminder
    (`lib/invoiceReminders.ts`, `INVOICE_RESEND_DAYS`).
-4. **Autopay options.** Per-customer charge timing (e.g. the 1st of
-   each month), charge open invoices when a customer enrolls, and a
-   list of who is and isn't on autopay. Needs a database change.
-5. **Match bank deposits to invoices.** Add Zelle as a payment method;
-   bank feed suggests which deposit pays which invoice.
-6. **Bank feed category rules.** Remember how a vendor or loan payment
-   was categorized and apply it to repeats.
+4. ~~**Autopay options.**~~ **Done.** Per customer: charge when
+   invoiced, on a set day of the month, or N days after each invoice
+   (customer page > Autopay). Held invoices say when the card will be
+   charged; a daily cron charges them; overdue reminders wait. Saving
+   a card charges anything already due. Settings > Autopay lists
+   recurring customers not enrolled (`lib/autopaySchedule.ts`,
+   migration 105).
+5. ~~**Match bank deposits to invoices.**~~ **Done.** Reconciliation >
+   Match Deposits suggests the unpaid invoice(s) a deposit pays (exact
+   amount only) and marks them paid in one step. Zelle added as a
+   payment method (`lib/depositMatches.ts`, migration 106).
+6. ~~**Bank feed category rules.**~~ **Done.** "Remember this for
+   future bank transactions" on any expense; rules listed on Settings >
+   Bank Feed (`lib/expenseRules.ts`, migration 107).
 7. ~~**Nightly check for gaps in recurring schedules.**~~ **Done.**
    Daily digest section plus a "Schedule gaps to review" panel on
    Recurring Services with a "This is intended" button
@@ -107,9 +114,11 @@ Agreed with Ryan 2026-11-15. Items 1-9 approved; 10 waits on Gusto.
 8. ~~**Page-crash safety net.**~~ **Done.** Crash screen with Try
    Again and, for admins, the real error; every server error logged
    (`lib/pageErrors.ts`), shown on System Health and in the digest.
-9. **Broader push notifications.** Unknown senders, missed calls,
-   payments received, low ratings; per-person on/off; "Liked" tapbacks
-   shown as a reaction instead of a new message.
+9. ~~**Broader push notifications.**~~ **Done.** Unknown senders,
+   missed calls, payments, autopay failures, low ratings; per-person
+   on/off on the Account page; money-related ones admin-only; tapbacks
+   filed as a quiet reaction (`lib/pushKinds.ts`, `lib/tapbacks.ts`,
+   migration 108).
 10. **Send timeclock hours to Gusto.** On hold until Gusto is set up.
 
 ## Fresh ideas (CRM + website)
