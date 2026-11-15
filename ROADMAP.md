@@ -74,6 +74,44 @@ now).
    on for invoicing/payments on customers not yet moved to native
    invoicing.
 
+## Top 10 (November 2026)
+
+Agreed with Ryan 2026-11-15. Items 1-9 approved; 10 waits on Gusto.
+
+1. ~~**Reminder links use the real address.**~~ **Done.** Cron-sent
+   links (visit confirm, overdue pay link, quote follow-up) now go out
+   as go.valleyturfrevival.com instead of a temporary Vercel address
+   (`lib/baseUrl.ts`).
+2. **Why some customers don't get or can't open messages -- in
+   progress.** Katie Ray couldn't open invoice links; Chris Brown says
+   he never got emails or texts. `/api/ops/delivery-check?q=<name>`
+   reads Twilio's real delivery status and our email log. Findings and
+   any fix still to come. (The temporary-address links from item 1 were
+   tested and do open, so that isn't the cause.)
+3. ~~**Re-send the invoice at 1, 3, 7, 14 days overdue.**~~ **Done.**
+   Daily reminders stay; on those four days the invoice itself (PDF +
+   Pay Now) goes out instead of the plain reminder
+   (`lib/invoiceReminders.ts`, `INVOICE_RESEND_DAYS`).
+4. **Autopay options.** Per-customer charge timing (e.g. the 1st of
+   each month), charge open invoices when a customer enrolls, and a
+   list of who is and isn't on autopay. Needs a database change.
+5. **Match bank deposits to invoices.** Add Zelle as a payment method;
+   bank feed suggests which deposit pays which invoice.
+6. **Bank feed category rules.** Remember how a vendor or loan payment
+   was categorized and apply it to repeats.
+7. ~~**Nightly check for gaps in recurring schedules.**~~ **Done.**
+   Daily digest section plus a "Schedule gaps to review" panel on
+   Recurring Services with a "This is intended" button
+   (`lib/recurringGaps.ts`). Skips made before 2026-11-15 can't be
+   matched to a job and need that one-time click.
+8. ~~**Page-crash safety net.**~~ **Done.** Crash screen with Try
+   Again and, for admins, the real error; every server error logged
+   (`lib/pageErrors.ts`), shown on System Health and in the digest.
+9. **Broader push notifications.** Unknown senders, missed calls,
+   payments received, low ratings; per-person on/off; "Liked" tapbacks
+   shown as a reaction instead of a new message.
+10. **Send timeclock hours to Gusto.** On hold until Gusto is set up.
+
 ## Fresh ideas (CRM + website)
 
 1. ~~**Capture inbound text replies.**~~ **Done.** A customer replying
