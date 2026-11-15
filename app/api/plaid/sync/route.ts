@@ -24,7 +24,9 @@ import { describePlaidError, getAccountBalances } from "@/lib/plaid";
 import { syncTransactions } from "@/lib/plaidTransactions";
 import { mapPlaidCategory, mapPlaidDeposit } from "@/lib/plaidCategoryMap";
 import { expenseCategoryLabel } from "@/app/(platform)/expenses/constants";
-import type { LedgerType } from "@/app/(platform)/expenses/constants";
+import type { ExpenseCategory, LedgerType } from "@/app/(platform)/expenses/constants";
+import { loadEnabledRules, outcomeOfRule, recordRuleUse } from "@/lib/expenseRules";
+import { findMatchingRule, type CategoryRule } from "@/lib/expenseRuleMatching";
 import type { Transaction } from "plaid";
 
 export const dynamic = "force-dynamic";
@@ -154,6 +156,52 @@ function buildDepositRow(
   };
 }
 
+// What actually gets written for one transaction: either builder's row,
+// with Ryan's own category rules (migration 107) applied on top. Every
+// row carries job_costing_treatment (null unless a rule sets it) so a
+// batch insert always has the same set of columns.
+type SyncRow = Omit<
+  ReturnType<typeof buildExpenseRow>,
+  "category" | "ledger_type" | "status"
+> & {
+  category: ExpenseCategory;
+  ledger_type: LedgerType | null;
+  status: "needs_review" | "categorized";
+  job_costing_treatment: "one_time" | null;
+};
+
+// A matching rule is Ryan having already answered "what is this?" for
+// that name, so it overrides Plaid's guess AND clears Needs Review --
+// including for deposits/journal entries, which otherwise always land
+// in Needs Review precisely because nobody had answered yet.
+function applyCategoryRule(
+  row: ReturnType<typeof buildExpenseRow> | ReturnType<typeof buildDepositRow>,
+  rules: CategoryRule[],
+  ruleUse: Map<string, number>
+): SyncRow {
+  const base: SyncRow = { ...row, job_costing_treatment: null };
+
+  const rule = findMatchingRule(rules, {
+    vendor: row.vendor,
+    description: row.description,
+    amount: row.amount,
+  });
+  const outcome = rule ? outcomeOfRule(rule) : null;
+
+  if (!rule || !outcome) return base;
+
+  ruleUse.set(rule.id, (ruleUse.get(rule.id) ?? 0) + 1);
+
+  return {
+    ...base,
+    category: outcome.category,
+    ledger_type: outcome.ledger_type,
+    job_costing_treatment: outcome.job_costing_treatment,
+    status: "categorized",
+    notes: `${row.notes} Categorized by your rule for "${rule.matchText}".`,
+  };
+}
+
 export async function POST(request: NextRequest) {
   let actor;
 
@@ -180,6 +228,10 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
+
+  const rules = await loadEnabledRules();
+  // rule id -> how many newly added transactions it categorized this run.
+  const ruleUse = new Map<string, number>();
 
   const summary = {
     connections: [] as Array<{
@@ -257,10 +309,7 @@ export async function POST(request: NextRequest) {
     );
 
     const byCategory = new Map<string, { count: number; total: number }>();
-    const rowsToInsert: (
-      | ReturnType<typeof buildExpenseRow>
-      | ReturnType<typeof buildDepositRow>
-    )[] = [];
+    const rowsToInsert: SyncRow[] = [];
 
     for (const transaction of syncResult.added) {
       if (!bankAccountIdByPlaidId.has(transaction.account_id)) {
@@ -279,9 +328,13 @@ export async function POST(request: NextRequest) {
       }
 
       const isDeposit = isDepositTransaction(transaction);
-      const row = isDeposit
-        ? buildDepositRow(bankAccountIdByPlaidId, transaction)
-        : buildExpenseRow(bankAccountIdByPlaidId, transaction);
+      const row = applyCategoryRule(
+        isDeposit
+          ? buildDepositRow(bankAccountIdByPlaidId, transaction)
+          : buildExpenseRow(bankAccountIdByPlaidId, transaction),
+        rules,
+        ruleUse
+      );
 
       rowsToInsert.push(row);
       connectionSummary.added += 1;
@@ -298,7 +351,7 @@ export async function POST(request: NextRequest) {
       // category for them -- see buildDepositRow) so they're left out
       // of the by-category breakdown, which exists to help Ryan spot
       // real-expense miscategorization, not journal entries.
-      if (!isDeposit) {
+      if (!row.ledger_type) {
         const existing = byCategory.get(row.category) ?? { count: 0, total: 0 };
         existing.count += 1;
         existing.total += row.amount;
@@ -336,10 +389,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const modifiedUpdates: Array<{
-      id: string;
-      row: ReturnType<typeof buildExpenseRow> | ReturnType<typeof buildDepositRow>;
-    }> = [];
+    const modifiedUpdates: Array<{ id: string; row: SyncRow }> = [];
+    // Rule matches on re-categorized (modified) rows aren't counted as
+    // new uses -- the same transaction was already counted when added.
+    const modifiedRuleUse = new Map<string, number>();
     for (const transaction of syncResult.modified) {
       const existing = existingByPlaidId.get(transaction.transaction_id);
 
@@ -363,9 +416,13 @@ export async function POST(request: NextRequest) {
       // pending (e.g. a Jobber payout not yet settled) can come back
       // through here once it posts, and needs the same ledger_type
       // treatment, not buildExpenseRow's "real expense" shape.
-      const row = isDepositTransaction(transaction)
-        ? buildDepositRow(bankAccountIdByPlaidId, transaction)
-        : buildExpenseRow(bankAccountIdByPlaidId, transaction);
+      const row = applyCategoryRule(
+        isDepositTransaction(transaction)
+          ? buildDepositRow(bankAccountIdByPlaidId, transaction)
+          : buildExpenseRow(bankAccountIdByPlaidId, transaction),
+        rules,
+        modifiedRuleUse
+      );
 
       modifiedUpdates.push({ id: existing.id, row });
       connectionSummary.modified += 1;
@@ -415,6 +472,7 @@ export async function POST(request: NextRequest) {
             description: update.row.description,
             category: update.row.category,
             ledger_type: update.row.ledger_type,
+            job_costing_treatment: update.row.job_costing_treatment,
             amount: update.row.amount,
             expense_date: update.row.expense_date,
             status: update.row.status,
@@ -469,6 +527,8 @@ export async function POST(request: NextRequest) {
   }
 
   if (apply) {
+    await recordRuleUse(ruleUse);
+
     await recordAuditLog({
       actor,
       action: "create",

@@ -171,6 +171,33 @@ export default function ExpenseRowItem({
             />
           </div>
 
+          {/* Bank feed category rules (migration 107). Plain form fields
+              on purpose -- this component is shared by four pages and
+              stays a server component; updateExpense reads these two
+              names. */}
+          <div className="rounded-lg bg-[#f7f6f1] px-3 py-2">
+            <label className="flex items-center gap-2 text-xs font-bold text-[#174734]">
+              <input type="checkbox" name="remember_rule" />
+              Remember this for future bank transactions
+            </label>
+            <div className="mt-2">
+              <label className="text-xs text-[#6b705c]">
+                Applies when the transaction name contains
+              </label>
+              <input
+                name="rule_match_text"
+                type="text"
+                defaultValue={expense.vendor ?? expense.description ?? ""}
+                className={inputClasses}
+              />
+              <p className="mt-1 text-[11px] text-[#6b705c]">
+                Trim this down to the part that never changes (leave off
+                reference numbers and dates). Only used if the box above is
+                checked.
+              </p>
+            </div>
+          </div>
+
           <button
             type="submit"
             className="rounded-lg bg-[#174734] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#226246]"

@@ -10,6 +10,8 @@ import {
   type ExpenseCategory,
   type LedgerType,
 } from "./constants";
+import { deleteRule, saveRule } from "@/lib/expenseRules";
+import { directionOfAmount } from "@/lib/expenseRuleMatching";
 
 const VALID_CATEGORIES = new Set(EXPENSE_CATEGORIES.map((c) => c.value));
 const VALID_LEDGER_TYPES = new Set(LEDGER_TYPES.map((t) => t.value));
@@ -233,7 +235,72 @@ export async function updateExpense(
     after: row,
   });
 
+  // "Remember this for future transactions" (migration 107): turn what
+  // was just saved into a rule the bank feed applies on its own from
+  // now on. The direction comes from this transaction's own sign, so a
+  // rule taught from a payment never grabs a refund of the same name. A
+  // rule that fails to save doesn't undo the expense edit above -- the
+  // edit is what the person asked for first.
+  if (formData.get("remember_rule") === "on") {
+    const ruleResult = await saveRule({
+      matchText: cleanText(formData.get("rule_match_text")) ?? row.vendor ?? "",
+      direction: directionOfAmount(row.amount),
+      category: row.category,
+      ledgerType: row.ledger_type,
+      jobCostingTreatment: row.job_costing_treatment,
+      createdByName: actor?.name ?? null,
+      excludeExpenseId: id,
+    });
+
+    if (!ruleResult.ok) {
+      throw new Error(
+        `The expense was saved, but the rule wasn't: ${ruleResult.error}`
+      );
+    }
+
+    await recordAuditLog({
+      actor,
+      action: "create",
+      entityType: "expense_category_rule",
+      entityId: ruleResult.rule.id,
+      entityLabel: ruleResult.rule.matchText,
+      after: {
+        match_text: ruleResult.rule.matchText,
+        direction: ruleResult.rule.direction,
+        category: ruleResult.rule.category,
+        ledger_type: ruleResult.rule.ledgerType,
+        applied_to_existing: ruleResult.appliedToExisting,
+      },
+    });
+  }
+
   revalidatePath("/expenses");
+  revalidatePath("/expenses/journal");
+  revalidatePath("/reconciliation");
+  revalidatePath("/settings/bank-feed");
+}
+
+// Removes a category rule from Settings > Bank Feed. Transactions it
+// already categorized keep their category; it just stops applying to
+// new ones.
+export async function deleteCategoryRule(id: string): Promise<void> {
+  const actor = await getCurrentUser();
+  const result = await deleteRule(id);
+
+  if (result.error) {
+    throw new Error(`Failed to delete rule: ${result.error}`);
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "delete",
+    entityType: "expense_category_rule",
+    entityId: id,
+    entityLabel: "Category rule",
+    note: "Rule removed.",
+  });
+
+  revalidatePath("/settings/bank-feed");
 }
 
 export async function deleteExpense(id: string): Promise<void> {

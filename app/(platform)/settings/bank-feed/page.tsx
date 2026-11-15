@@ -11,6 +11,13 @@ import { supabaseServer } from "@/lib/supabase-server";
 import ConnectBankButton from "./ConnectBankButton";
 import SyncButton from "./SyncButton";
 import { updateTrackedAccounts } from "./actions";
+import { listRules } from "@/lib/expenseRules";
+import { deleteCategoryRule } from "../../expenses/actions";
+import {
+  expenseCategoryLabel,
+  ledgerTypeLabel,
+} from "../../expenses/constants";
+import ConfirmSubmitButton from "@/app/components/ConfirmSubmitButton";
 
 type BankConnection = {
   id: string;
@@ -83,6 +90,27 @@ function safeText(value: unknown): string {
   }
 }
 
+// The actual cause of this page's crash (found 2026-11-15): since
+// lib/auditLog.ts's "create" rows started storing every field as
+// {before: null, after: value} (commit 9511341, the Audit Log fix), a
+// sync written after that has changes.connections = {before, after:
+// [...]} -- an object, where this page called .reduce() on what used to
+// be the array itself. Rows written before that change still hold the
+// bare value, so this reads either shape.
+function unwrapAuditValue(value: unknown): unknown {
+  if (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    "after" in value &&
+    "before" in value
+  ) {
+    return (value as { after: unknown }).after;
+  }
+
+  return value;
+}
+
 function safeCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
@@ -117,6 +145,7 @@ export default async function BankFeedSettingsPage() {
     : { data: [] as BankAccount[] };
 
   const accounts = (accountsResult.data as BankAccount[] | null) ?? [];
+  const categoryRules = await listRules();
   const recentActivity = (auditResult.data as AuditLogRow[] | null) ?? [];
 
   const hasActiveConnection = activeConnections.some((c) => c.status === "active");
@@ -445,6 +474,80 @@ export default async function BankFeedSettingsPage() {
             border: "1px solid #e2e8f0",
             borderRadius: "16px",
             padding: "22px",
+            marginBottom: "32px",
+          }}
+        >
+          <h2 style={{ margin: "0 0 10px", color: "#0f172a", fontSize: "20px" }}>
+            Category Rules
+          </h2>
+
+          <p style={{ margin: "0 0 18px", color: "#64748b", fontSize: "14px" }}>
+            Each sync categorizes matching transactions for you. To add one,
+            open any expense, set it the way you want, and check
+            &quot;Remember this for future bank transactions&quot; before
+            saving.
+          </p>
+
+          {categoryRules.length === 0 ? (
+            <div style={{ padding: "20px", textAlign: "center", color: "#64748b" }}>
+              No rules yet.
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: "10px" }}>
+              {categoryRules.map((rule) => (
+                <div
+                  key={rule.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "16px",
+                    flexWrap: "wrap",
+                    padding: "14px",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "10px",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 700, color: "#0f172a" }}>
+                      Name contains &quot;{rule.matchText}&quot;
+                      {rule.direction === "money_out"
+                        ? " (money out)"
+                        : rule.direction === "money_in"
+                          ? " (money in)"
+                          : ""}
+                    </div>
+                    <div style={{ color: "#64748b", fontSize: "13px", marginTop: "3px" }}>
+                      {rule.ledgerType
+                        ? `Journal entry: ${ledgerTypeLabel(rule.ledgerType)}`
+                        : `Category: ${expenseCategoryLabel(rule.category ?? "other")}`}
+                      {rule.jobCostingTreatment === "one_time" ? " · Job costing: one-time" : ""}
+                      {" · "}
+                      Used {rule.timesApplied} time{rule.timesApplied === 1 ? "" : "s"}
+                      {rule.lastAppliedAt ? `, last ${formatDate(rule.lastAppliedAt)}` : ""}
+                    </div>
+                  </div>
+
+                  <form action={deleteCategoryRule.bind(null, rule.id)}>
+                    <ConfirmSubmitButton
+                      confirmMessage={`Remove the rule for "${rule.matchText}"? Transactions it already categorized stay as they are.`}
+                      className="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-bold text-red-700"
+                    >
+                      Remove
+                    </ConfirmSubmitButton>
+                  </form>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section
+          style={{
+            background: "#ffffff",
+            border: "1px solid #e2e8f0",
+            borderRadius: "16px",
+            padding: "22px",
           }}
         >
           <h2 style={{ margin: "0 0 18px", color: "#0f172a", fontSize: "20px" }}>
@@ -469,8 +572,11 @@ export default async function BankFeedSettingsPage() {
                   connections?: unknown;
                 };
 
+                const rowsImported = unwrapAuditValue(changes.rowsImported);
+                const rawConnections = unwrapAuditValue(changes.connections);
+
                 const connections = (
-                  Array.isArray(changes.connections) ? changes.connections : []
+                  Array.isArray(rawConnections) ? rawConnections : []
                 ).filter(
                   (c): c is Record<string, unknown> => !!c && typeof c === "object"
                 );
@@ -492,7 +598,7 @@ export default async function BankFeedSettingsPage() {
                 );
                 const connectionErrors = connections.filter((c) => safeText(c.error));
                 const balanceErrors = connections.filter((c) => safeText(c.balanceError));
-                const noteText = safeText(changes._note);
+                const noteText = safeText(unwrapAuditValue(changes._note));
 
                 return (
                   <div
@@ -509,8 +615,8 @@ export default async function BankFeedSettingsPage() {
                   >
                     <div>
                       <div style={{ fontWeight: 700, color: "#0f172a" }}>
-                        {typeof changes.rowsImported === "number"
-                          ? `${changes.rowsImported} expense${changes.rowsImported === 1 ? "" : "s"} imported`
+                        {typeof rowsImported === "number"
+                          ? `${rowsImported} expense${rowsImported === 1 ? "" : "s"} imported`
                           : "Sync completed"}
                       </div>
 
