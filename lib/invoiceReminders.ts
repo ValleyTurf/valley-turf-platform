@@ -17,6 +17,15 @@
 //      until it's paid (see sendDueInvoiceReminders' Phase 2 comment for
 //      how that reuses the same dedup table with no schema change).
 //
+// Ryan (2026-11-15): the daily nagging stays, but on 1, 3, 7 and 14
+// days overdue a native invoice gets the INVOICE ITSELF sent again
+// (PDF + Pay Now link, the same thing the Resend button sends) instead
+// of that day's plain reminder -- see INVOICE_RESEND_DAYS and Phase 0
+// in sendDueInvoiceReminders. It records itself in the same
+// invoice_reminders_sent dedup table under that day's number, which is
+// what makes it "instead of": the fixed-day rule or daily tail that
+// would have fired the same day sees it as already handled.
+//
 // Covers BOTH native and Jobber-synced invoices via the existing
 // jobber_invoices mirror table (the same one Invoiced History/Revenue/
 // Transactions/Job Costing Analytics already read) -- due_date, status,
@@ -41,6 +50,8 @@ import { toPhoenixDateString } from "@/lib/phoenixDate";
 import { sendOverdueInvoiceSms, sendOverdueInvoiceEmail } from "@/lib/notifications";
 import { getNotificationRecipients } from "@/lib/customerContacts";
 import { getBaseUrl } from "@/lib/baseUrl";
+import { getInvoiceById } from "@/lib/invoices";
+import { sendInvoiceCopy } from "@/lib/invoiceDelivery";
 
 const NATIVE_PREFIX = "native-";
 
@@ -53,6 +64,11 @@ const NATIVE_PREFIX = "native-";
 // days" with no upper bound, so it gets the same paginate-in-chunks
 // treatment to stay correct as that result set grows.
 const JOBBER_INVOICES_PAGE_SIZE = 1000;
+
+// Days overdue on which the full invoice is re-sent in place of the
+// plain reminder. Native invoices only -- a Jobber-hosted invoice has no
+// PDF/pay page of ours to send, so it keeps getting the normal reminder.
+export const INVOICE_RESEND_DAYS = [1, 3, 7, 14];
 
 type ReminderRule = {
   id: string;
@@ -80,6 +96,10 @@ export type SendInvoiceRemindersResult = {
   rulesProcessed: number;
   invoicesConsidered: number;
   remindersSent: number;
+  // Full invoice re-sends on INVOICE_RESEND_DAYS (also counted in
+  // remindersSent, so existing totals keep meaning "messages that went
+  // out today").
+  invoicesResent: number;
   errors: string[];
 };
 
@@ -316,11 +336,118 @@ async function processReminderBatch(
   }
 }
 
+// Phase 0: re-send the invoice itself on each INVOICE_RESEND_DAYS mark.
+// Runs before the reminder phases on purpose -- see the header comment
+// for how recording the send here suppresses that day's plain reminder.
+// Honors the same snoozes as every other reminder, and anything that
+// fails here is simply left for the normal reminder phases to pick up
+// (nothing is recorded as sent), so a failed re-send never means a
+// customer hears nothing that day.
+async function resendOverdueInvoices(
+  todayPhoenix: string,
+  baseUrl: string,
+  result: SendInvoiceRemindersResult
+): Promise<void> {
+  const { data: snoozeRows } = await supabaseServer
+    .from("invoice_reminder_snoozes")
+    .select("jobber_invoice_id")
+    .gt("snoozed_until", todayPhoenix);
+
+  const snoozedIds = new Set(
+    (snoozeRows ?? []).map((row) => row.jobber_invoice_id as string)
+  );
+
+  for (const daysAfter of INVOICE_RESEND_DAYS) {
+    const targetDueDate = addDaysToPhoenixDate(todayPhoenix, -daysAfter);
+
+    const { data: invoicesData, error: invoicesError } = await supabaseServer
+      .from("jobber_invoices")
+      .select(
+        "jobber_invoice_id, jobber_client_id, customer_name, invoice_number, status, total, due_date, jobber_web_uri"
+      )
+      .eq("due_date", targetDueDate)
+      .like("jobber_invoice_id", `${NATIVE_PREFIX}%`)
+      .not("jobber_client_id", "is", null);
+
+    if (invoicesError) {
+      result.errors.push(
+        `Couldn't load invoices for the ${daysAfter}-day invoice re-send: ${invoicesError.message}`
+      );
+      continue;
+    }
+
+    const candidates = ((invoicesData ?? []) as ReminderInvoice[]).filter(
+      (invoice) =>
+        isUnpaidAndSendable(invoice.status) && !snoozedIds.has(invoice.jobber_invoice_id)
+    );
+
+    if (candidates.length === 0) continue;
+
+    const { data: alreadySentData, error: alreadySentError } = await supabaseServer
+      .from("invoice_reminders_sent")
+      .select("jobber_invoice_id")
+      .eq("days_after", daysAfter)
+      .in(
+        "jobber_invoice_id",
+        candidates.map((invoice) => invoice.jobber_invoice_id)
+      );
+
+    if (alreadySentError) {
+      result.errors.push(
+        `Couldn't check already-sent invoice re-sends: ${alreadySentError.message}`
+      );
+      continue;
+    }
+
+    const alreadySent = new Set(
+      (alreadySentData ?? []).map((row) => row.jobber_invoice_id as string)
+    );
+
+    for (const mirror of candidates) {
+      if (alreadySent.has(mirror.jobber_invoice_id)) continue;
+
+      const invoice = await getInvoiceById(
+        mirror.jobber_invoice_id.slice(NATIVE_PREFIX.length)
+      );
+
+      // The mirror row can lag the real invoice by a moment (paid a
+      // minute ago, voided, etc.) -- the real row is the one that
+      // decides whether anything goes out.
+      if (!invoice || (invoice.status !== "sent" && invoice.status !== "overdue")) {
+        continue;
+      }
+
+      const sendResult = await sendInvoiceCopy(invoice, baseUrl);
+
+      if (!sendResult.ok) {
+        result.errors.push(
+          `Invoice re-send failed for ${invoice.invoiceNumber} (${daysAfter} days overdue): ${sendResult.error}`
+        );
+        continue;
+      }
+
+      const { error: insertError } = await supabaseServer
+        .from("invoice_reminders_sent")
+        .insert({ jobber_invoice_id: mirror.jobber_invoice_id, days_after: daysAfter });
+
+      if (insertError) {
+        result.errors.push(
+          `Invoice ${invoice.invoiceNumber} re-sent but failed to record: ${insertError.message}`
+        );
+      }
+
+      result.invoicesResent += 1;
+      result.remindersSent += 1;
+    }
+  }
+}
+
 export async function sendDueInvoiceReminders(): Promise<SendInvoiceRemindersResult> {
   const result: SendInvoiceRemindersResult = {
     rulesProcessed: 0,
     invoicesConsidered: 0,
     remindersSent: 0,
+    invoicesResent: 0,
     errors: [],
   };
 
@@ -343,6 +470,8 @@ export async function sendDueInvoiceReminders(): Promise<SendInvoiceRemindersRes
   }
 
   const baseUrl = await getBaseUrl();
+
+  await resendOverdueInvoices(todayPhoenix, baseUrl, result);
 
   // Phase 1: the fixed-day rules (Settings > Notifications), each firing
   // on the one exact calendar day an invoice's due_date lands that many

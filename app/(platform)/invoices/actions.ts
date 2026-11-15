@@ -45,6 +45,7 @@ import {
   getOrCreateEnrollmentToken,
 } from "@/lib/autopay";
 import { getBaseUrl } from "@/lib/baseUrl";
+import { sendInvoiceCopy } from "@/lib/invoiceDelivery";
 import { getNotificationRecipients } from "@/lib/customerContacts";
 
 export type InvoiceLineItemParam = {
@@ -651,105 +652,12 @@ export async function resendInvoice(invoiceId: string): Promise<ResendInvoiceRes
     return { error: "This invoice has been voided -- nothing to resend." };
   }
 
-  if (!invoice.jobberClientId) {
-    return { error: "This invoice has no linked customer to resend to." };
-  }
+  // The actual PDF/email/SMS send lives in lib/invoiceDelivery.ts so the
+  // daily overdue cron can resend through this exact same code.
+  const sendResult = await sendInvoiceCopy(invoice, await getBaseUrl());
 
-  if (!invoice.publicToken) {
-    return { error: "This invoice has no payment link to send." };
-  }
-
-  const lineItems = await getInvoiceLineItems(invoiceId);
-
-  if (lineItems.length === 0) {
-    return { error: "Couldn't load this invoice's line items." };
-  }
-
-  const { data: customerRow, error: customerError } = await supabaseServer
-    .from("customers")
-    .select("email, phone")
-    .eq("jobber_client_id", invoice.jobberClientId)
-    .maybeSingle();
-
-  if (customerError) {
-    return { error: `Could not look up customer contact info: ${customerError.message}` };
-  }
-
-  const customerEmail = (customerRow?.email as string | null) ?? null;
-  const customerPhone = (customerRow?.phone as string | null) ?? null;
-
-  const recipients = await getNotificationRecipients(
-    invoice.jobberClientId,
-    customerEmail,
-    customerPhone
-  );
-
-  if (recipients.emails.length === 0 && recipients.phones.length === 0) {
-    return {
-      error:
-        "This customer has no email or phone on file. Add contact info on their Customer page first.",
-    };
-  }
-
-  const baseUrl = await getBaseUrl();
-  const payUrl = `${baseUrl}/pay/${invoice.publicToken}`;
-  const logoUrl = `${baseUrl}/branding/logo.png`;
-  const rateUrl = `${baseUrl}/rate/${invoice.publicToken}`;
-
-  // Same autopay-enrollment CTA as the original send (see
-  // createNativeInvoiceForVisit above) -- invoice.jobberClientId is
-  // already confirmed non-null by the check earlier in this function.
-  // Best-effort: a failure here shouldn't block resending the invoice.
-  const enrollment = await getOrCreateEnrollmentToken(invoice.jobberClientId);
-  const autopayUrl = enrollment.ok ? `${baseUrl}/autopay/${enrollment.token}` : null;
-
-  let delivered = false;
-
-  try {
-    const pdfBuffer =
-      recipients.emails.length > 0
-        ? await generateInvoicePdf(invoice, lineItems)
-        : null;
-
-    if (pdfBuffer) {
-      for (const toEmail of recipients.emails) {
-        delivered =
-          (await sendInvoiceEmail({
-            toEmail,
-            customerName: invoice.customerName,
-            invoiceNumber: invoice.invoiceNumber,
-            total: invoice.total,
-            payNowUrl: payUrl,
-            pdfBuffer,
-            jobberClientId: invoice.jobberClientId,
-            logoUrl,
-            rateUrl,
-            autopayUrl,
-          })) || delivered;
-      }
-    }
-
-    for (const toPhone of recipients.phones) {
-      delivered =
-        (await sendInvoiceSms(
-          toPhone,
-          invoice.customerName,
-          invoice.invoiceNumber,
-          payUrl,
-          invoice.jobberClientId,
-          autopayUrl
-        )) || delivered;
-    }
-  } catch (deliveryError) {
-    console.error(
-      `Resend failed for invoice ${invoice.invoiceNumber}:`,
-      deliveryError
-    );
-    return { error: "Something went wrong generating or sending the invoice." };
-  }
-
-  if (!delivered) {
-    return { error: "Couldn't deliver the invoice on any channel. Check the logs." };
+  if (!sendResult.ok) {
+    return { error: sendResult.error };
   }
 
   // Ryan (2026-09-20): a native invoice saved as a draft and delivered
