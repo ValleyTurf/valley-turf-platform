@@ -23,9 +23,9 @@ create table if not exists saved_replies (
 -- A few starting points, edit or delete them from the reply box.
 insert into saved_replies (title, body)
 select title, body from (values
-  ('Running late', 'Hi {first_name}, this is Valley Turf Revival. We''re running a little behind today and will be there as soon as we can. Thank you for your patience!'),
-  ('Reschedule', 'Hi {first_name}, no problem. What day works better for you? We''ll move your visit and confirm it by text.'),
-  ('Got it', 'Hi {first_name}, got your message, thank you! We''ll take care of it.'),
-  ('Invoice question', 'Hi {first_name}, thanks for reaching out about your invoice. We''ll look into it and get back to you shortly.')
+  ('Running late', 'Hi {first_name}, this is Valley Turf Revival. We are running a little behind today and will be there as soon as we can. Thank you for your patience!'),
+  ('Reschedule', 'Hi {first_name}, no problem. What day works better for you? We will move your visit and confirm it by text.'),
+  ('Got it', 'Hi {first_name}, got your message, thank you! We will take care of it.'),
+  ('Invoice question', 'Hi {first_name}, thanks for reaching out about your invoice. We will look into it and get back to you shortly.')
 ) as seed(title, body)
 where not exists (select 1 from saved_replies);
