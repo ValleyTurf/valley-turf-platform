@@ -41,6 +41,9 @@ export type LogContactHistoryParams = {
   // captured from the send API's response body, so a later webhook
   // event can find this row again.
   resendEmailId?: string | null;
+  // Only for channel: "sms" -- Twilio's message SID, so the delivery
+  // status callback can find this row (lib/twilioDelivery.ts).
+  twilioSid?: string | null;
   createdByUserId?: string | null;
   createdByName?: string | null;
   // For an inbound message that isn't asking for anything -- a tapback
@@ -70,6 +73,8 @@ export async function logContactHistory(
     related_type: params.relatedType ?? null,
     related_id: params.relatedId ?? null,
     resend_email_id: params.resendEmailId ?? null,
+    twilio_sid: params.twilioSid ?? null,
+    ...(params.twilioSid ? { delivery_status: "queued" } : {}),
     created_by_user_id: params.createdByUserId ?? null,
     created_by_name: params.createdByName ?? null,
     ...(params.quiet ? { read_at: new Date().toISOString() } : {}),
@@ -240,6 +245,10 @@ export type ContactHistoryEntry = {
   summary: string | null;
   openedAt: string | null;
   deliveredAt: string | null;
+  // Text delivery result from Twilio (migration 109): queued, sent,
+  // delivered, failed or undelivered. Null for email and older texts.
+  deliveryStatus: string | null;
+  deliveryErrorCode: string | null;
   createdByName: string | null;
   createdAt: string;
 };
@@ -252,6 +261,8 @@ type ContactHistoryRow = {
   summary: string | null;
   opened_at: string | null;
   delivered_at: string | null;
+  delivery_status: string | null;
+  delivery_error_code: string | null;
   created_by_name: string | null;
   created_at: string;
 };
@@ -271,7 +282,7 @@ export async function getContactHistoryForCustomer(
     supabaseServer
       .from("contact_history")
       .select(
-        "id, channel, direction, subject, summary, opened_at, delivered_at, created_by_name, created_at"
+        "id, channel, direction, subject, summary, opened_at, delivered_at, delivery_status, delivery_error_code, created_by_name, created_at"
       )
       .eq("jobber_client_id", jobberClientId)
       .order("created_at", { ascending: false })
@@ -296,6 +307,8 @@ export async function getContactHistoryForCustomer(
     summary: row.summary,
     openedAt: row.opened_at,
     deliveredAt: row.delivered_at,
+    deliveryStatus: row.delivery_status,
+    deliveryErrorCode: row.delivery_error_code,
     createdByName: row.created_by_name,
     createdAt: row.created_at,
   }));
@@ -308,6 +321,8 @@ export async function getContactHistoryForCustomer(
     summary: row.body,
     openedAt: null,
     deliveredAt: null,
+    deliveryStatus: null,
+    deliveryErrorCode: null,
     createdByName: row.sender_name,
     createdAt: row.created_at,
   }));

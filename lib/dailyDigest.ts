@@ -10,6 +10,7 @@
 // Pure data-gathering lives here; lib/notifications.ts's
 // sendDailyDigestEmail() owns the actual HTML rendering, same split as
 // every other automated send in this app.
+import { describeTwilioError } from "@/lib/textDeliveryStatus";
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
@@ -569,6 +570,78 @@ async function countFailedAutopayCharges(): Promise<{ count: number; sample: str
   }
 }
 
+// Customer texts the carrier did not deliver (lib/twilioDelivery.ts fills
+// in contact_history.delivery_status from Twilio's callbacks). Before
+// this, a blocked invoice text went unnoticed.
+async function countFailedTexts(): Promise<{ count: number; sample: string[] }> {
+  try {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+    const { data, error } = await supabaseServer
+      .from("contact_history")
+      .select(
+        "jobber_client_id, subject, delivery_error_code, delivery_fallback_at, customers(full_name, first_name, last_name, company_name, email)"
+      )
+      .in("delivery_status", ["failed", "undelivered"])
+      .gte("delivery_updated_at", since)
+      .order("delivery_updated_at", { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.error("Failed text lookup failed:", error.message);
+      return { count: 0, sample: [] };
+    }
+
+    type Row = {
+      subject: string | null;
+      delivery_error_code: string | null;
+      delivery_fallback_at: string | null;
+      customers:
+        | {
+            full_name: string | null;
+            first_name: string | null;
+            last_name: string | null;
+            company_name: string | null;
+            email: string | null;
+          }
+        | {
+            full_name: string | null;
+            first_name: string | null;
+            last_name: string | null;
+            company_name: string | null;
+            email: string | null;
+          }[]
+        | null;
+    };
+
+    const rows = (data ?? []) as unknown as Row[];
+
+    return {
+      count: rows.length,
+      sample: rows.slice(0, SAMPLE_LIMIT).map((row) => {
+        const customer = Array.isArray(row.customers) ? row.customers[0] : row.customers;
+        const who =
+          customer?.full_name ||
+          [customer?.first_name, customer?.last_name].filter(Boolean).join(" ") ||
+          customer?.company_name ||
+          "Unknown customer";
+        const outcome = row.delivery_fallback_at
+          ? "emailed a copy instead"
+          : customer?.email
+            ? "no email copy sent"
+            : "no email on file, so they have not seen it";
+
+        return `${who} -- ${row.subject ?? "text"}: ${describeTwilioError(
+          row.delivery_error_code
+        )} (${outcome})`;
+      }),
+    };
+  } catch (error) {
+    console.error("Failed text lookup failed:", error);
+    return { count: 0, sample: [] };
+  }
+}
+
 // Pay-ahead customers whose card is charged tomorrow, with the amount
 // (lib/autopayPrepay.ts) -- the day-before heads-up Ryan asked for when
 // he chose to have these charged automatically.
@@ -632,6 +705,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     scheduleGaps,
     pageErrors,
     failedAutopayCharges,
+    failedTexts,
     monthAheadChargesTomorrow,
     skippedInvoicedVisits,
   ] = await Promise.all([
@@ -645,6 +719,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     countScheduleGaps(),
     countPageErrors(),
     countFailedAutopayCharges(),
+    countFailedTexts(),
     countMonthAheadChargesTomorrow(),
     countSkippedInvoicedVisits(),
   ]);
@@ -661,6 +736,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     scheduleGaps,
     pageErrors,
     failedAutopayCharges,
+    failedTexts,
     monthAheadChargesTomorrow,
     skippedInvoicedVisits,
   };
@@ -680,6 +756,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     data.scheduleGaps.count +
     data.pageErrors.count +
     data.failedAutopayCharges.count +
+    data.failedTexts.count +
     data.monthAheadChargesTomorrow.count +
     data.skippedInvoicedVisits.count;
 

@@ -26,6 +26,7 @@
 // bottom of this file, which were never customer-facing to begin with.
 import "server-only";
 import { logContactHistory } from "@/lib/contactHistory";
+import { sendTwilioMessage, twilioSidOf } from "@/lib/twilioSend";
 import { replyToAddressFor } from "@/lib/replyRouting";
 import { supabaseServer } from "@/lib/supabase-server";
 
@@ -284,6 +285,7 @@ export type DailyDigestData = {
   // Autopay charges that failed in the last 24h, invoice still unpaid
   // (lib/autopaySchedule.ts).
   failedAutopayCharges: DailyDigestSection;
+  failedTexts: DailyDigestSection;
   // Pay-ahead customers being charged tomorrow, with amounts, and
   // already-invoiced visits that were skipped/cancelled in the last 7
   // days (lib/autopayPrepay.ts).
@@ -368,6 +370,11 @@ export async function sendDailyDigestEmail(
         "Autopay charges that failed (last 24h)",
         data.failedAutopayCharges,
         "No failed charges."
+      )}
+      ${digestSectionHtml(
+        "Texts that were not delivered (last 24h) -- an email copy goes out automatically where we have an address",
+        data.failedTexts,
+        "Every text was delivered."
       )}
       ${digestSectionHtml(
         "Pages that crashed (last 24h)",
@@ -557,23 +564,7 @@ export async function sendPortalMagicLinkSms(
   const body = `Hi ${greetingName}, this is Valley Turf Revival. Use this link to sign in to your customer portal (valid 15 min, one-time use): ${loginUrl}`;
 
   try {
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${Buffer.from(
-            `${accountSid}:${authToken}`
-          ).toString("base64")}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          To: toPhone,
-          From: fromNumber,
-          Body: body,
-        }),
-      }
-    );
+    const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
 
     if (!response.ok) {
       console.error(
@@ -585,6 +576,7 @@ export async function sendPortalMagicLinkSms(
     }
 
     await logContactHistory({
+      twilioSid: await twilioSidOf(response),
       jobberClientId,
       channel: "sms",
       subject: "Portal Sign-In Link",
@@ -717,23 +709,7 @@ export async function sendManualSms(request: ManualSms): Promise<boolean> {
   }
 
   try {
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${Buffer.from(
-            `${accountSid}:${authToken}`
-          ).toString("base64")}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          To: request.toPhone,
-          From: fromNumber,
-          Body: request.body,
-        }),
-      }
-    );
+    const response = await sendTwilioMessage({ accountSid, authToken, to: request.toPhone, from: fromNumber, body: request.body });
 
     if (!response.ok) {
       console.error("Manual text failed:", response.status, await response.text());
@@ -741,6 +717,7 @@ export async function sendManualSms(request: ManualSms): Promise<boolean> {
     }
 
     await logContactHistory({
+      twilioSid: await twilioSidOf(response),
       jobberClientId: request.jobberClientId,
       channel: "sms",
       summary: request.body,
@@ -788,23 +765,7 @@ export async function sendOnMyWaySms(
   const body = `Hi ${greetingName}, this is Valley Turf Revival — we're on our way to your property now for your turf cleaning! We will be there in about ${etaMinutes} minutes.`;
 
   try {
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${Buffer.from(
-            `${accountSid}:${authToken}`
-          ).toString("base64")}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          To: toPhone,
-          From: fromNumber,
-          Body: body,
-        }),
-      }
-    );
+    const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
 
     if (!response.ok) {
       console.error(
@@ -816,6 +777,7 @@ export async function sendOnMyWaySms(
     }
 
     await logContactHistory({
+      twilioSid: await twilioSidOf(response),
       jobberClientId,
       channel: "sms",
       subject: "On My Way",
@@ -874,23 +836,7 @@ export async function sendInvoiceSms(
   const body = `Hi ${greetingName}, this is Valley Turf Revival. Your invoice ${invoiceNumber} is ready: ${payUrl} Thank you for your business!${autopaySuffix}`;
 
   try {
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${Buffer.from(
-            `${accountSid}:${authToken}`
-          ).toString("base64")}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          To: toPhone,
-          From: fromNumber,
-          Body: body,
-        }),
-      }
-    );
+    const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
 
     if (!response.ok) {
       console.error(
@@ -902,6 +848,7 @@ export async function sendInvoiceSms(
     }
 
     await logContactHistory({
+      twilioSid: await twilioSidOf(response),
       jobberClientId,
       channel: "sms",
       subject: `Invoice ${invoiceNumber} Sent`,
@@ -1039,23 +986,7 @@ export async function sendOverdueInvoiceSms(
   )}) is past due and still awaiting payment. Pay here: ${payUrl}`;
 
   try {
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${Buffer.from(
-            `${accountSid}:${authToken}`
-          ).toString("base64")}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          To: toPhone,
-          From: fromNumber,
-          Body: body,
-        }),
-      }
-    );
+    const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
 
     if (!response.ok) {
       console.error(
@@ -1067,6 +998,7 @@ export async function sendOverdueInvoiceSms(
     }
 
     await logContactHistory({
+      twilioSid: await twilioSidOf(response),
       jobberClientId,
       channel: "sms",
       subject: `Invoice ${invoiceNumber} Overdue Reminder`,
@@ -1191,23 +1123,7 @@ export async function sendQuoteFollowupSms(
   const body = `Hi ${greetingName}, this is Valley Turf Revival. Just checking in on the quote we sent -- still available whenever you're ready: ${quoteUrl}`;
 
   try {
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${Buffer.from(
-            `${accountSid}:${authToken}`
-          ).toString("base64")}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          To: toPhone,
-          From: fromNumber,
-          Body: body,
-        }),
-      }
-    );
+    const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
 
     if (!response.ok) {
       console.error(
@@ -1219,6 +1135,7 @@ export async function sendQuoteFollowupSms(
     }
 
     await logContactHistory({
+      twilioSid: await twilioSidOf(response),
       jobberClientId,
       channel: "sms",
       subject: "Quote Follow-Up",
@@ -1340,23 +1257,7 @@ export async function sendQuoteSms(
   const body = `Hi ${greetingName}, thanks for reaching out to Valley Turf Revival for a turf cleaning quote! View & accept here: ${quoteUrl} Questions? Call/text 480-331-4596. -Ryan, Valley Turf Revival`;
 
   try {
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${Buffer.from(
-            `${accountSid}:${authToken}`
-          ).toString("base64")}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          To: toPhone,
-          From: fromNumber,
-          Body: body,
-        }),
-      }
-    );
+    const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
 
     if (!response.ok) {
       console.error("Quote SMS failed:", response.status, await response.text());
@@ -1364,6 +1265,7 @@ export async function sendQuoteSms(
     }
 
     await logContactHistory({
+      twilioSid: await twilioSidOf(response),
       jobberClientId,
       channel: "sms",
       subject: "Quote Sent",
@@ -1824,23 +1726,7 @@ export async function sendAutopayReceiptSms(
   )}, for your recent turf cleaning service. No action is needed.`;
 
   try {
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${Buffer.from(
-            `${accountSid}:${authToken}`
-          ).toString("base64")}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          To: toPhone,
-          From: fromNumber,
-          Body: body,
-        }),
-      }
-    );
+    const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
 
     if (!response.ok) {
       console.error(
@@ -1852,6 +1738,7 @@ export async function sendAutopayReceiptSms(
     }
 
     await logContactHistory({
+      twilioSid: await twilioSidOf(response),
       jobberClientId,
       channel: "sms",
       subject: `Invoice ${invoiceNumber} Autopay Receipt`,
@@ -2009,23 +1896,7 @@ export async function sendManualPaymentReceiptSms(
   )}${tipNote} for invoice ${invoiceNumber}. Thank you!`;
 
   try {
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${Buffer.from(
-            `${accountSid}:${authToken}`
-          ).toString("base64")}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          To: toPhone,
-          From: fromNumber,
-          Body: body,
-        }),
-      }
-    );
+    const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
 
     if (!response.ok) {
       console.error(
@@ -2037,6 +1908,7 @@ export async function sendManualPaymentReceiptSms(
     }
 
     await logContactHistory({
+      twilioSid: await twilioSidOf(response),
       jobberClientId,
       channel: "sms",
       subject: `Invoice ${invoiceNumber} Payment Receipt`,
@@ -2083,23 +1955,7 @@ export async function sendVisitReminderSms(
   const body = `Hi ${greetingName}, we have your next turf cleaning with Valley Turf Revival scheduled for ${visitDateLabel}. Please confirm here: ${confirmUrl} — or reply to this message if you need to reschedule. Before we arrive, please try to pick up any easily removable dog waste. Thank you!`;
 
   try {
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${Buffer.from(
-            `${accountSid}:${authToken}`
-          ).toString("base64")}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          To: toPhone,
-          From: fromNumber,
-          Body: body,
-        }),
-      }
-    );
+    const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
 
     if (!response.ok) {
       console.error(
@@ -2111,6 +1967,7 @@ export async function sendVisitReminderSms(
     }
 
     await logContactHistory({
+      twilioSid: await twilioSidOf(response),
       jobberClientId,
       channel: "sms",
       subject: "Visit Reminder",
@@ -2238,23 +2095,7 @@ export async function sendReviewRequestSms(
   const body = `Hi ${greetingName}, thanks for choosing Valley Turf Revival! If you have a minute, we'd really appreciate a quick review: ${reviewUrl}`;
 
   try {
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${Buffer.from(
-            `${accountSid}:${authToken}`
-          ).toString("base64")}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          To: toPhone,
-          From: fromNumber,
-          Body: body,
-        }),
-      }
-    );
+    const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
 
     if (!response.ok) {
       console.error(
@@ -2266,6 +2107,7 @@ export async function sendReviewRequestSms(
     }
 
     await logContactHistory({
+      twilioSid: await twilioSidOf(response),
       jobberClientId,
       channel: "sms",
       subject: "Review Request",

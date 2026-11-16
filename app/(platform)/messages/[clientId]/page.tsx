@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+import { deliveryBadge } from "@/lib/textDeliveryStatus";
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { formatDateOnly } from "@/lib/format";
@@ -50,6 +51,8 @@ type OutboundSms = {
   id: string;
   subject: string | null;
   summary: string | null;
+  delivery_status: string | null;
+  delivery_error_code: string | null;
   created_at: string;
 };
 
@@ -77,6 +80,7 @@ type ThreadItem = {
   subject: string | null;
   body: string;
   created_at: string;
+  delivery?: { label: string; tone: "good" | "bad" } | null;
 };
 
 type PortalServiceRequest = {
@@ -168,7 +172,7 @@ export default async function CustomerMessageThreadPage({
       // invoice sends/reminders, quote follow-ups, receipts, etc.
       supabaseServer
         .from("contact_history")
-        .select("id, subject, summary, created_at")
+        .select("id, subject, summary, delivery_status, delivery_error_code, created_at")
         .eq("jobber_client_id", jobberClientId)
         .eq("channel", "sms")
         .eq("direction", "outbound")
@@ -246,6 +250,7 @@ export default async function CustomerMessageThreadPage({
         subject: sms.subject,
         body: sms.summary || "(No message body.)",
         created_at: sms.created_at,
+        delivery: deliveryBadge(sms.delivery_status, sms.delivery_error_code),
       })
     ),
     ...inboundSms.map(
@@ -380,6 +385,17 @@ export default async function CustomerMessageThreadPage({
                   >
                     {item.senderLabel} · {formatMessageTime(item.created_at)}
                   </p>
+                  {item.delivery && (
+                    <p
+                      className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                        item.delivery.tone === "bad"
+                          ? "bg-red-100 text-red-700"
+                          : "bg-white/15 text-white/80"
+                      }`}
+                    >
+                      {item.delivery.label}
+                    </p>
+                  )}
                 </div>
               ))
             )}

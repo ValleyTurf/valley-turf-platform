@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+import { deliveryBadge } from "@/lib/textDeliveryStatus";
 import Link from "next/link";
 import { jobberGraphQL } from "@/lib/jobber";
 import { isNativeId } from "@/lib/nativeJobs";
@@ -3565,6 +3566,19 @@ export default async function CustomerDetailPage({
                             Inbound
                           </span>
                         )}
+                        {entry.channel === "sms" &&
+                          deliveryBadge(entry.deliveryStatus, entry.deliveryErrorCode) && (
+                            <span
+                              className={`text-[10px] font-bold ${
+                                deliveryBadge(entry.deliveryStatus, entry.deliveryErrorCode)
+                                  ?.tone === "bad"
+                                  ? "text-red-600"
+                                  : "text-green-700"
+                              }`}
+                            >
+                              {deliveryBadge(entry.deliveryStatus, entry.deliveryErrorCode)?.label}
+                            </span>
+                          )}
                         {entry.channel === "email" && entry.openedAt && (
                           <span className="text-[10px] font-bold text-green-700">
                             Opened {formatVisitDateTime(entry.openedAt)}

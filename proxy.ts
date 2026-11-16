@@ -32,6 +32,9 @@ const PUBLIC_PATHS = [
   // -> redirected to /login instead of reaching the route) — do not repeat
   // it here.
   "/api/webhooks/twilio",
+  // Twilio reports each customer text's delivery status here; signature
+  // checked inside the route like the inbound webhook above.
+  "/api/webhooks/twilio-status",
   "/api/scan-leads",
   // Called by an external automation (Jobber automation / Zapier), not
   // from inside this app. Guards itself internally with its own
