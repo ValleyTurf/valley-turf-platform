@@ -113,7 +113,7 @@ const settingsSections: SettingsSection[] = [
   {
     title: "Data Backup",
     description:
-      "Download a ZIP of CSV files covering customers, leads, campaigns, materials, job costing data, and everything else that only lives here — not in Jobber.",
+      "A backup also saves and emails you a link automatically every Sunday (newest 8 kept). Use this to download one right now: a ZIP of CSV files covering customers, invoices, expenses, job costing data, and everything else that only lives here.",
     href: "/api/backup/export",
     icon: "💾",
     status: "Download",

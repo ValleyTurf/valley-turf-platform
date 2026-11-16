@@ -99,6 +99,48 @@ export default async function ReconciliationPage() {
           </Link>
         </div>
 
+        <div
+          style={{
+            background: "#ffffff",
+            border: "1px solid #e2e8f0",
+            borderRadius: "16px",
+            padding: "18px 22px",
+            marginBottom: "24px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "16px",
+            flexWrap: "wrap",
+          }}
+        >
+          <div>
+            <h2 style={{ margin: "0 0 4px", color: "#0f172a", fontSize: "16px" }}>
+              Month-end close
+            </h2>
+            <p style={{ margin: 0, color: "#64748b", fontSize: "13px" }}>
+              A checklist for each month, then close it to save the numbers
+              and get warned if they change later.
+            </p>
+          </div>
+
+          <Link
+            href="/reconciliation/month-end"
+            style={{
+              border: "1px solid #0f172a",
+              background: "#0f172a",
+              color: "#ffffff",
+              padding: "10px 16px",
+              borderRadius: "10px",
+              fontWeight: 700,
+              fontSize: "13px",
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Open Checklist →
+          </Link>
+        </div>
+
         {accounts.length === 0 ? (
           <section
             style={{
