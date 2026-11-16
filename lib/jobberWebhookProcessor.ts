@@ -9,6 +9,7 @@
 // now" button.
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
+import { isMergedAway, resolveCustomerId } from "@/lib/customerAliases";
 
 type WebhookEvent = {
   id: string;
@@ -361,6 +362,13 @@ export async function syncSingleCustomer(jobberClientId: string): Promise<void> 
   // Jobber cutover (2026-09): also doubles as the source guard below --
   // fetched up front (before the Jobber API call) so a natively-managed
   // customer skips the round-trip entirely, not just the write.
+  // A customer merged into another (migration 114) must not be brought
+  // back as a duplicate by a late Jobber event.
+  if (await isMergedAway(jobberClientId)) {
+    console.log(`Skipping Jobber sync for merged customer ${jobberClientId}.`);
+    return;
+  }
+
   const { data: existingCustomer } = await supabaseServer
     .from("customers")
     .select("current_property_id, source")
@@ -489,7 +497,7 @@ export async function syncSingleJob(jobberJobId: string): Promise<void> {
 
   const jobRow = {
     jobber_job_id: job.id,
-    jobber_client_id: job.client?.id ?? null,
+    jobber_client_id: await resolveCustomerId(job.client?.id),
     customer_name: cleanText(job.client?.name),
     title: cleanText(job.title),
     job_number: cleanNumericText(job.jobNumber),
@@ -571,7 +579,7 @@ async function syncSingleInvoice(jobberInvoiceId: string): Promise<void> {
 
   const invoiceRow = {
     jobber_invoice_id: invoice.id,
-    jobber_client_id: invoice.client?.id ?? null,
+    jobber_client_id: await resolveCustomerId(invoice.client?.id),
     invoice_number: cleanNumericText(invoice.invoiceNumber),
     customer_name: cleanText(invoice.client?.name),
     subject: cleanText(invoice.subject),
@@ -676,7 +684,7 @@ export async function syncSingleVisit(jobberVisitId: string): Promise<void> {
   const visitRow = {
     jobber_visit_id: visit.id,
     jobber_job_id: visit.job?.id ?? null,
-    jobber_client_id: visit.client?.id ?? null,
+    jobber_client_id: await resolveCustomerId(visit.client?.id),
     jobber_invoice_id: visit.invoice?.id ?? null,
     customer_name: cleanText(visit.client?.name),
     job_number: cleanNumericText(visit.job?.jobNumber),

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
+import { applyAlias, loadCustomerAliases } from "@/lib/customerAliases";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
 import {
   checkNotAlreadyRunning,
@@ -271,8 +272,11 @@ async function syncInvoices(): Promise<SyncResult> {
     invoicesReceived += invoices.length;
 
     if (invoices.length > 0) {
-      const invoiceRows =
-        invoices.map(formatInvoice);
+      const aliases = await loadCustomerAliases();
+      const invoiceRows = invoices.map(formatInvoice).map((row) => ({
+        ...row,
+        jobber_client_id: applyAlias(aliases, row.jobber_client_id),
+      }));
 
       const { error: upsertError } =
         await supabaseServer

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
+import { applyAlias, loadCustomerAliases } from "@/lib/customerAliases";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
 import {
   checkNotAlreadyRunning,
@@ -266,12 +267,19 @@ async function syncPayments() {
 
     invoicesReceived += invoices.length;
 
+    const aliases = await loadCustomerAliases();
+
     const paymentRows = invoices.flatMap((invoice) => {
       const paymentRecords = invoice.paymentRecords?.nodes ?? [];
 
-      return paymentRecords.map((payment) =>
-        formatPayment(invoice, payment)
-      );
+      return paymentRecords.map((payment) => {
+        const row = formatPayment(invoice, payment);
+
+        return {
+          ...row,
+          jobber_client_id: applyAlias(aliases, row.jobber_client_id),
+        };
+      });
     });
 
     paymentsReceived += paymentRows.length;

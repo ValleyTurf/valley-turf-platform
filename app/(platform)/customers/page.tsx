@@ -412,6 +412,13 @@ export default async function CustomersPage({
               </Link>
 
               <Link
+                href="/customers/duplicates"
+                className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold transition hover:bg-white"
+              >
+                Find Duplicates
+              </Link>
+
+              <Link
                 href="/"
                 className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold transition hover:bg-white"
               >
