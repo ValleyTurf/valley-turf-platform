@@ -10,8 +10,9 @@ create table if not exists message_threads_handled (
   handled_by_name text
 );
 
--- Texts staff type again and again. {first_name} is swapped for the
--- customer's first name when a reply is inserted.
+-- Texts staff type again and again, saved from the reply box. The text
+-- {first_name} is swapped for the customer's first name when a reply is
+-- inserted. Starts empty.
 create table if not exists saved_replies (
   id uuid primary key default gen_random_uuid(),
   title text not null,
@@ -19,13 +20,3 @@ create table if not exists saved_replies (
   created_by_name text,
   created_at timestamptz not null default now()
 );
-
--- A few starting points, edit or delete them from the reply box.
-insert into saved_replies (title, body)
-select title, body from (values
-  ('Running late', 'Hi {first_name}, this is Valley Turf Revival. We are running a little behind today and will be there as soon as we can. Thank you for your patience!'),
-  ('Reschedule', 'Hi {first_name}, no problem. What day works better for you? We will move your visit and confirm it by text.'),
-  ('Got it', 'Hi {first_name}, got your message, thank you! We will take care of it.'),
-  ('Invoice question', 'Hi {first_name}, thanks for reaching out about your invoice. We will look into it and get back to you shortly.')
-) as seed(title, body)
-where not exists (select 1 from saved_replies);
