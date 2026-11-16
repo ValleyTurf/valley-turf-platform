@@ -63,6 +63,10 @@
     {
       "path": "/api/ops/send-daily-digest",
       "schedule": "10 14 * * *"
+    },
+    {
+      "path": "/api/ops/weekly-backup",
+      "schedule": "20 10 * * 0"
     }
   ]
 }

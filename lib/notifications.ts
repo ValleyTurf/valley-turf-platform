@@ -2396,3 +2396,85 @@ async function sendLowRatingSmsAlert(alert: LowRatingAlert): Promise<void> {
     console.error("Low rating SMS alert error:", error);
   }
 }
+
+export type BackupEmailData =
+  | {
+      ok: true;
+      fileName: string;
+      bytes: number;
+      tables: number;
+      rows: number;
+      failedTables: string[];
+      downloadUrl: string | null;
+    }
+  | { ok: false; error: string };
+
+// Weekly backup result email (app/api/ops/weekly-backup). Success carries
+// a 7-day signed download link; the file is also kept in the private
+// "backups" bucket, newest 8.
+export async function sendBackupEmail(
+  toEmail: string,
+  data: BackupEmailData
+): Promise<boolean> {
+  const biz = await getBusiness();
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    console.error("Cannot send backup email: RESEND_API_KEY is not set.");
+    return false;
+  }
+
+  const mb = (n: number) => (n / (1024 * 1024)).toFixed(1);
+
+  const html = data.ok
+    ? `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 18px; font-weight: bold;">Weekly backup saved</p>
+      <p>${escapeHtml(data.fileName)} (${mb(data.bytes)} MB): ${data.tables} tables, ${data.rows.toLocaleString("en-US")} rows.</p>
+      ${
+        data.failedTables.length > 0
+          ? `<p style="color: #b42318;"><strong>${data.failedTables.length} table${data.failedTables.length === 1 ? "" : "s"} could not be saved:</strong> ${escapeHtml(data.failedTables.join(", "))}</p>`
+          : ""
+      }
+      ${
+        data.downloadUrl
+          ? `<p><a href="${data.downloadUrl}">Download the backup</a> (link works for 7 days).</p>`
+          : "<p>The file is stored in the private backups bucket.</p>"
+      }
+      <p>The newest 8 weekly backups are kept automatically.</p>
+    </div>`
+    : `
+    <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
+      <p style="font-size: 18px; font-weight: bold; color: #b42318;">Weekly backup FAILED</p>
+      <p>${escapeHtml(data.error)}</p>
+      <p>You can still download one by hand from Settings, or open System Health for details.</p>
+    </div>`;
+
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: fromHeader(biz.name),
+        to: toEmail,
+        subject: data.ok
+          ? `Weekly backup saved (${data.fileName})`
+          : "Weekly backup FAILED",
+        html,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("Backup email failed:", response.status, await response.text());
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Backup email error:", error);
+    return false;
+  }
+}

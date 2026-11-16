@@ -125,6 +125,8 @@ const CRON_PATHS = [
   // missing photos, quotes approved but not scheduled, stuck
   // timeclock/job-timer entries.
   "/api/ops/send-daily-digest",
+  // Weekly automatic data backup (lib/backup.ts) -- Sunday early morning.
+  "/api/ops/weekly-backup",
 ];
 
 // The customer portal is a completely separate auth world from the staff

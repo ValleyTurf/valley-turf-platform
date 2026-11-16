@@ -406,6 +406,72 @@ async function checkPageErrors(): Promise<Check> {
   };
 }
 
+async function checkWeeklyBackup(): Promise<Check> {
+  const { data, error } = await supabaseServer
+    .from("jobber_sync_runs")
+    .select("status, completed_at, started_at, metadata, error_message")
+    .eq("sync_type", "weekly-backup")
+    .order("started_at", { ascending: false })
+    .limit(1);
+
+  if (error) {
+    return {
+      name: "Weekly backup",
+      status: "warn",
+      detail: `Couldn't read backup history: ${error.message}`,
+    };
+  }
+
+  const run = data?.[0];
+
+  if (!run) {
+    return {
+      name: "Weekly backup",
+      status: "warn",
+      detail: "No automatic backup has run yet. The first one runs Sunday morning.",
+      hint: "Make sure migration 112 (backups bucket) has been run, and download one by hand from Settings in the meantime.",
+    };
+  }
+
+  if (run.status === "failed") {
+    return {
+      name: "Weekly backup",
+      status: "fail",
+      detail: "The last automatic backup failed.",
+      hint: run.error_message ?? undefined,
+    };
+  }
+
+  const finished = run.completed_at ?? run.started_at;
+  const daysAgo = (Date.now() - new Date(finished).getTime()) / 86400000;
+
+  if (daysAgo > 9) {
+    return {
+      name: "Weekly backup",
+      status: "warn",
+      detail: `The last backup was ${Math.floor(daysAgo)} days ago.`,
+      hint: "Backups should run every Sunday. Check the weekly-backup cron in Vercel.",
+    };
+  }
+
+  const meta = (run.metadata ?? {}) as { failedTables?: string[] };
+
+  if ((meta.failedTables ?? []).length > 0) {
+    return {
+      name: "Weekly backup",
+      status: "warn",
+      detail: `Last backup was missing ${meta.failedTables!.length} table(s): ${meta.failedTables!.join(", ")}.`,
+      hint: "The backup email lists them too. Usually a table was renamed or removed.",
+    };
+  }
+
+  return {
+    name: "Weekly backup",
+    status: "pass",
+    detail: `Last backup finished ${daysAgo < 1 ? "today" : `${Math.floor(daysAgo)} day(s) ago`}, all tables saved.`,
+  };
+}
+
 export default async function HealthPage() {
   const checks = await Promise.all([
     checkInvoiceSubjects(),
@@ -418,6 +484,7 @@ export default async function HealthPage() {
     checkWebhookBacklog(),
     checkSyncFreshness(),
     checkJobberSyncStatus(),
+    checkWeeklyBackup(),
     checkPageErrors(),
   ]);
 
@@ -570,7 +637,10 @@ async function checkWebhookBacklog(): Promise<Check> {
 async function checkJobberSyncStatus(): Promise<Check> {
   const { data, error } = await supabaseServer
     .from("jobber_sync_status")
-    .select("sync_type, status, last_completed_at, last_error");
+    .select("sync_type, status, last_completed_at, last_error")
+    // The weekly backup has its own check (it runs weekly, so the 3-day
+    // staleness rule below would always flag it).
+    .neq("sync_type", "weekly-backup");
 
   if (error) {
     return {
