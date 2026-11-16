@@ -53,6 +53,14 @@ const settingsSections: SettingsSection[] = [
     status: "Connect",
   },
   {
+    title: "Leaving Jobber",
+    description:
+      "What still depends on Jobber right now (customers invoiced there, unpaid Jobber invoices, payments, daily syncs) and whether it is safe to cancel.",
+    href: "/settings/jobber-exit",
+    icon: "🚪",
+    status: "Check",
+  },
+  {
     title: "Autopay",
     description:
       "See every customer who's turned on native autopay, saved a card but left it off, or started enrollment without finishing.",

@@ -336,6 +336,20 @@ export default async function JobberSyncPage() {
               synchronization, webhook activity,
               and sync health.
             </p>
+
+            <Link
+              href="/settings/jobber-exit"
+              style={{
+                display: "inline-block",
+                marginTop: "10px",
+                color: "#9c7a20",
+                fontSize: "14px",
+                fontWeight: 600,
+                textDecoration: "none",
+              }}
+            >
+              Planning to cancel Jobber? See what still depends on it →
+            </Link>
           </div>
 
           <div
