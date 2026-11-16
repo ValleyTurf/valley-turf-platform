@@ -36,7 +36,9 @@ export type CreateInvoiceParams = {
   lineItems: InvoiceLineItemInput[];
   dueDate?: string | null; // ISO date, e.g. "2026-09-15"
   message?: string | null;
-  createdByUserId: string;
+  // null for an invoice no person created (lib/autopayPrepay.ts's
+  // month-ahead invoices) -- the column is nullable.
+  createdByUserId: string | null;
   createdByName: string;
   // Snapshotted display address ("123 Main St\nPhoenix, AZ 85212") --
   // see migration 059. Resolved by the caller (actions.ts) from

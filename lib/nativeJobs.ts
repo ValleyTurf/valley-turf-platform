@@ -1085,6 +1085,21 @@ export async function cancelNativeJob(
     return { ok: false, error: jobError.message };
   }
 
+  // Future visits that are already on an invoice -- for a pay-ahead
+  // customer, already paid for. They're about to be deleted, so leave
+  // the same kind of audit row the Skip button does; the daily digest
+  // (lib/autopayPrepay.ts's listSkippedInvoicedVisits) reads those to
+  // flag money taken for a visit that now won't happen. Best-effort:
+  // never blocks the cancellation.
+  const { data: invoicedVisits } = await supabaseServer
+    .from("jobber_visits")
+    .select("jobber_visit_id, jobber_job_id, start_at, title, customer_name, jobber_invoice_id")
+    .eq("jobber_job_id", jobId)
+    .eq("source", "native")
+    .is("completed_at", null)
+    .gt("start_at", nowIso)
+    .not("jobber_invoice_id", "is", null);
+
   const { error: visitError } = await supabaseServer
     .from("jobber_visits")
     .delete()
@@ -1095,6 +1110,29 @@ export async function cancelNativeJob(
 
   if (visitError) {
     return { ok: false, error: visitError.message };
+  }
+
+  if (invoicedVisits && invoicedVisits.length > 0) {
+    const { error: auditError } = await supabaseServer.from("audit_log").insert(
+      invoicedVisits.map((visit) => ({
+        actor_name: "System",
+        action: "delete",
+        entity_type: "visit",
+        entity_id: visit.jobber_visit_id as string,
+        entity_label: "Job cancelled",
+        changes: {
+          jobber_job_id: { before: visit.jobber_job_id, after: null },
+          start_at: { before: visit.start_at, after: null },
+          title: { before: visit.title, after: null },
+          customer_name: { before: visit.customer_name, after: null },
+          jobber_invoice_id: { before: visit.jobber_invoice_id, after: null },
+        },
+      }))
+    );
+
+    if (auditError) {
+      console.error("Couldn't record invoiced visits removed by cancellation:", auditError.message);
+    }
   }
 
   return { ok: true, value: null };

@@ -1,11 +1,14 @@
 // Scheduled autopay charges -- daily cron entry point (migration 105).
-// See lib/autopaySchedule.ts's header comment for the actual logic;
-// this route just wraps it with the same run-tracking shape every other
-// cron route in this app uses. Runs before the overdue-reminder cron on
+// Two jobs, each documented in its own file: pay-ahead customers'
+// month-ahead invoices (lib/autopayPrepay.ts), then invoices held for N
+// days after sending (lib/autopaySchedule.ts). This route just wraps
+// them with the same run-tracking shape every other cron route in this
+// app uses. Runs before the overdue-reminder cron on
 // purpose, so an invoice charged this morning is already off that
 // cron's list.
 import { NextResponse } from "next/server";
 import { chargeDueScheduledInvoices } from "@/lib/autopaySchedule";
+import { chargeMonthAheadCustomers } from "@/lib/autopayPrepay";
 import {
   checkNotAlreadyRunning,
   completeSyncRun,
@@ -14,7 +17,11 @@ import {
 } from "@/lib/jobberSyncTracking";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// Each month-ahead customer is an invoice, a PDF, a card charge and a
+// receipt -- a few seconds apiece, all on the same morning for everyone
+// who pays on the 1st. A run that's cut off is finished by the next one
+// (see lib/autopayPrepay.ts), but give it room to finish the first time.
+export const maxDuration = 300;
 
 const SYNC_TYPE = "autopay-scheduled-charges";
 
@@ -41,17 +48,21 @@ export async function GET() {
 
     syncRunId = await startSyncRun(SYNC_TYPE);
 
-    const result = await chargeDueScheduledInvoices();
+    const monthAhead = await chargeMonthAheadCustomers();
+    const held = await chargeDueScheduledInvoices();
 
     await completeSyncRun(SYNC_TYPE, syncRunId, {
-      recordsReceived: result.invoicesConsidered,
-      recordsSaved: result.charged,
-      pagesProcessed: result.customersOnASchedule,
+      recordsReceived: monthAhead.customersDue + held.invoicesConsidered,
+      recordsSaved: monthAhead.charged + held.charged,
+      pagesProcessed: monthAhead.invoicesCreated,
       throttleRetries: 0,
-      metadata: { failed: result.failed, errors: result.errors },
+      metadata: {
+        failed: monthAhead.failed + held.failed,
+        errors: [...monthAhead.errors, ...held.errors],
+      },
     });
 
-    return NextResponse.json({ success: true, ...result });
+    return NextResponse.json({ success: true, monthAhead, held });
   } catch (error) {
     console.error("Scheduled autopay charging failed:", error);
 

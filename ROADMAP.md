@@ -92,12 +92,15 @@ Agreed with Ryan 2026-11-15. Items 1-9 approved; 10 waits on Gusto.
    Daily reminders stay; on those four days the invoice itself (PDF +
    Pay Now) goes out instead of the plain reminder
    (`lib/invoiceReminders.ts`, `INVOICE_RESEND_DAYS`).
-4. ~~**Autopay options.**~~ **Done.** Per customer: charge when
-   invoiced, on a set day of the month, or N days after each invoice
-   (customer page > Autopay). Held invoices say when the card will be
-   charged; a daily cron charges them; overdue reminders wait. Saving
-   a card charges anything already due. Settings > Autopay lists
-   recurring customers not enrolled (`lib/autopaySchedule.ts`,
+4. ~~**Autopay options.**~~ **Done.** Per customer (customer page >
+   Autopay): charge when invoiced; pay AHEAD on a set day of the month
+   (one invoice for the recurring visits until the next pay date, built
+   and charged automatically, previewed in the digest the day before);
+   or N days after each invoice. For pay-ahead customers, extras are
+   charged right away and a paid-for visit that's skipped is flagged in
+   the digest, not refunded automatically. Saving a card charges
+   anything already due. Settings > Autopay lists recurring customers
+   not enrolled (`lib/autopayPrepay.ts`, `lib/autopaySchedule.ts`,
    migration 105).
 5. ~~**Match bank deposits to invoices.**~~ **Done.** Reconciliation >
    Match Deposits suggests the unpaid invoice(s) a deposit pays (exact

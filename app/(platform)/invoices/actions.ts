@@ -265,11 +265,13 @@ async function createNativeInvoiceForVisit(
     // first, only fall through to email/SMS delivery if it didn't
     // charge (not enrolled, no card, decline, requires 3DS, etc.).
     //
-    // Migration 105: a customer can now be on a held schedule (the 1st
-    // of the month, N days after the invoice). For them nothing is
-    // charged here -- the invoice goes out as usual with a line saying
-    // when their card will be charged, and the daily cron
-    // (lib/autopaySchedule.ts) makes the charge on that day.
+    // Migration 105: a customer set to be charged N days after each
+    // invoice isn't charged here -- the invoice goes out as usual with
+    // a line saying when their card will be charged, and the daily cron
+    // (lib/autopaySchedule.ts) makes the charge on that day. Everyone
+    // else is charged now, including a pay-ahead customer: anything a
+    // person invoices to them is an extra on top of their month-ahead
+    // payment (lib/autopayPrepay.ts) and is charged right away.
     const todayPhoenix =
       toPhoenixDateString(new Date().toISOString()) ?? invoice.issueDate;
     const autopayPlan = await planAutopayForInvoice(invoice, todayPhoenix);

@@ -2,8 +2,11 @@
 // 105). Three jobs, all built on lib/autopayTiming.ts's date rules:
 //
 //   1. chargeDueScheduledInvoices() -- the daily cron. For customers
-//      whose autopay is set to a day of the month or N days after the
-//      invoice, charges each open invoice once its charge date arrives.
+//      whose autopay is set to N days after the invoice, charges each
+//      open invoice once its charge date arrives. (Customers who pay on
+//      a day of the month pay AHEAD -- that's lib/autopayPrepay.ts, run
+//      by the same cron -- and anything else invoiced to them is
+//      charged right away, so they're never "held" here.)
 //   2. chargeOpenInvoicesAfterEnrollment() -- called when a card is
 //      saved (Stripe's setup_intent.succeeded). Heather Henderson
 //      enrolled with an invoice already open and nothing charged it;
@@ -55,7 +58,7 @@ function toSchedule(row: EnrolledRow): AutopaySchedule {
 // returns an empty map: with no schedules known, nothing is held and
 // nothing is charged on a schedule, which is exactly the pre-105
 // behavior.
-async function loadEnrolledSchedules(
+export async function loadEnrolledSchedules(
   onlyClientIds?: string[]
 ): Promise<Map<string, AutopaySchedule>> {
   let query = supabaseServer
@@ -144,10 +147,10 @@ export async function chargeDueScheduledInvoices(): Promise<ScheduledChargeResul
 
   const schedules = await loadEnrolledSchedules();
 
-  // Charge-on-invoice customers are handled at invoice creation; this
-  // cron is only for the ones on a held schedule.
+  // Only days_after_invoice ever holds an invoice (see
+  // lib/autopayTiming.ts). Everyone else was charged when it was sent.
   const scheduledClientIds = Array.from(schedules.entries())
-    .filter(([, schedule]) => schedule.timing !== "on_invoice")
+    .filter(([, schedule]) => schedule.timing === "days_after_invoice")
     .map(([clientId]) => clientId);
 
   result.customersOnASchedule = scheduledClientIds.length;
@@ -259,7 +262,7 @@ export async function findInvoicesAwaitingScheduledCharge(
   const schedules = await loadEnrolledSchedules(clientIds);
   const candidates = invoices.filter((invoice) => {
     const schedule = invoice.jobberClientId ? schedules.get(invoice.jobberClientId) : null;
-    return schedule && schedule.timing !== "on_invoice";
+    return schedule && schedule.timing === "days_after_invoice";
   });
 
   if (candidates.length === 0) return awaiting;

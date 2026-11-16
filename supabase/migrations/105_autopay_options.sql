@@ -8,8 +8,14 @@
 --   on_invoice          -- charge as soon as the invoice is sent (the
 --                          existing behavior, and the default, so nobody
 --                          already enrolled changes)
---   day_of_month        -- hold the charge until autopay_day_of_month
---                          (1-28, so it exists in every month)
+--   day_of_month        -- pay AHEAD: on autopay_day_of_month (1-28,
+--                          so it exists in every month) one invoice is
+--                          built and charged for the visits scheduled
+--                          until the next pay date (lib/autopayPrepay.ts).
+--                          Originally written as "hold each invoice
+--                          until that day"; Ryan corrected that the
+--                          same day -- the column's meaning changed,
+--                          the schema didn't.
 --   days_after_invoice  -- hold the charge until autopay_delay_days
 --                          after the invoice was sent
 -- The held charges are made by a daily cron (lib/autopaySchedule.ts).

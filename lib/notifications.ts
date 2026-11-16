@@ -284,6 +284,11 @@ export type DailyDigestData = {
   // Autopay charges that failed in the last 24h, invoice still unpaid
   // (lib/autopaySchedule.ts).
   failedAutopayCharges: DailyDigestSection;
+  // Pay-ahead customers being charged tomorrow, with amounts, and
+  // already-invoiced visits that were skipped/cancelled in the last 7
+  // days (lib/autopayPrepay.ts).
+  monthAheadChargesTomorrow: DailyDigestSection;
+  skippedInvoicedVisits: DailyDigestSection;
 };
 
 function digestSectionHtml(title: string, section: DailyDigestSection, emptyLabel: string): string {
@@ -348,6 +353,16 @@ export async function sendDailyDigestEmail(
         "Low invoice ratings (last 24h, 4 stars or below)",
         data.lowRatings,
         "No low ratings."
+      )}
+      ${digestSectionHtml(
+        "Cards being charged tomorrow for the month ahead",
+        data.monthAheadChargesTomorrow,
+        "None tomorrow."
+      )}
+      ${digestSectionHtml(
+        "Skipped or cancelled visits that were already invoiced (last 7 days) -- refund or credit is your call",
+        data.skippedInvoicedVisits,
+        "None."
       )}
       ${digestSectionHtml(
         "Autopay charges that failed (last 24h)",

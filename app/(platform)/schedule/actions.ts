@@ -200,7 +200,7 @@ export async function skipVisit(
   // lost a visit. Best-effort: a failed lookup never blocks the skip.
   const { data: skippedVisit } = await supabaseServer
     .from("jobber_visits")
-    .select("jobber_job_id, start_at, title, customer_name")
+    .select("jobber_job_id, start_at, title, customer_name, jobber_invoice_id")
     .eq("jobber_visit_id", visitId)
     .maybeSingle();
 
@@ -234,6 +234,10 @@ export async function skipVisit(
           start_at: skippedVisit.start_at,
           title: skippedVisit.title,
           customer_name: skippedVisit.customer_name,
+          // Set when the visit was already invoiced -- for a pay-ahead
+          // customer, already paid for. lib/autopayPrepay.ts lists
+          // those in the daily digest so the money gets dealt with.
+          jobber_invoice_id: skippedVisit.jobber_invoice_id,
         }
       : null,
   });

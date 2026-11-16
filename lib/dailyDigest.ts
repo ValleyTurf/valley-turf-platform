@@ -24,6 +24,10 @@ import { previewPendingVisitReminders } from "@/lib/visitReminders";
 import { describeGap, findRecurringScheduleGaps } from "@/lib/recurringGaps";
 import { listRecentPageErrors } from "@/lib/pageErrors";
 import { listRecentFailedAutopayCharges } from "@/lib/autopaySchedule";
+import {
+  listSkippedInvoicedVisits,
+  previewTomorrowsMonthAheadCharges,
+} from "@/lib/autopayPrepay";
 
 const BUSINESS_UTC_OFFSET = "-07:00";
 
@@ -565,6 +569,33 @@ async function countFailedAutopayCharges(): Promise<{ count: number; sample: str
   }
 }
 
+// Pay-ahead customers whose card is charged tomorrow, with the amount
+// (lib/autopayPrepay.ts) -- the day-before heads-up Ryan asked for when
+// he chose to have these charged automatically.
+async function countMonthAheadChargesTomorrow(): Promise<{ count: number; sample: string[] }> {
+  try {
+    const lines = await previewTomorrowsMonthAheadCharges();
+    // Every line, not SAMPLE_LIMIT of them: this is a list of charges
+    // about to be made, and "+ 6 more" isn't good enough for that.
+    return { count: lines.length, sample: lines };
+  } catch (error) {
+    console.error("Month-ahead autopay preview failed:", error);
+    return { count: 0, sample: [] };
+  }
+}
+
+// Visits skipped or cancelled in the last 7 days that were already
+// invoiced -- paid ahead, usually. Nothing is refunded automatically.
+async function countSkippedInvoicedVisits(): Promise<{ count: number; sample: string[] }> {
+  try {
+    const lines = await listSkippedInvoicedVisits();
+    return { count: lines.length, sample: lines.slice(0, SAMPLE_LIMIT) };
+  } catch (error) {
+    console.error("Skipped invoiced visits lookup failed:", error);
+    return { count: 0, sample: [] };
+  }
+}
+
 export type SendDailyDigestResult =
   | { sent: false; reason: string }
   | { sent: true; recipients: number };
@@ -601,6 +632,8 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     scheduleGaps,
     pageErrors,
     failedAutopayCharges,
+    monthAheadChargesTomorrow,
+    skippedInvoicedVisits,
   ] = await Promise.all([
     countUnloggedJobCosts(),
     countVisitsMissingPhotos(),
@@ -612,6 +645,8 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     countScheduleGaps(),
     countPageErrors(),
     countFailedAutopayCharges(),
+    countMonthAheadChargesTomorrow(),
+    countSkippedInvoicedVisits(),
   ]);
 
   const data: DailyDigestData = {
@@ -626,6 +661,8 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     scheduleGaps,
     pageErrors,
     failedAutopayCharges,
+    monthAheadChargesTomorrow,
+    skippedInvoicedVisits,
   };
 
   // Reminders queued for today count toward "is there anything worth
@@ -642,7 +679,9 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     data.lowRatings.count +
     data.scheduleGaps.count +
     data.pageErrors.count +
-    data.failedAutopayCharges.count;
+    data.failedAutopayCharges.count +
+    data.monthAheadChargesTomorrow.count +
+    data.skippedInvoicedVisits.count;
 
   if (totalFlagged === 0) {
     return { sent: false, reason: "Nothing to report today -- digest skipped." };

@@ -56,9 +56,9 @@ import { findInvoicesAwaitingScheduledCharge } from "@/lib/autopaySchedule";
 
 const NATIVE_PREFIX = "native-";
 
-// Migration 105: a customer whose autopay is set to charge on, say, the
-// 1st of the month isn't overdue-and-ignoring-us while they wait for
-// the 1st -- they're doing exactly what was agreed. Returns the mirror
+// Migration 105: a customer whose autopay is set to charge a number of
+// days after each invoice isn't overdue-and-ignoring-us while they wait
+// for that day -- they're doing exactly what was agreed. Returns the mirror
 // ids (native-<uuid>) of invoices in that state so both the re-send
 // phase and the reminder phases can leave them alone. Once a charge has
 // actually been attempted the invoice is no longer excused (see

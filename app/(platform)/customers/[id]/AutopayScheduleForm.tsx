@@ -65,7 +65,7 @@ export default function AutopayScheduleForm({
           aria-label="When to charge the card"
         >
           <option value="on_invoice">As soon as each invoice is sent</option>
-          <option value="day_of_month">On a set day of the month</option>
+          <option value="day_of_month">On a set day, for the month ahead</option>
           <option value="days_after_invoice">A set number of days after each invoice</option>
         </select>
 
@@ -118,7 +118,19 @@ export default function AutopayScheduleForm({
         {saved && <span className="text-xs font-bold text-green-700">✓ Saved</span>}
       </div>
 
-      {timing !== "on_invoice" && (
+      {timing === "day_of_month" && (
+        <p className="mt-1.5 text-[11px] text-[#6b705c]">
+          On that day each month, one invoice is made for the recurring
+          visits scheduled from then until their next pay date, the card is
+          charged and the receipt is sent, all automatically. The daily
+          digest lists the amount the day before. Anything you invoice
+          separately (an added visit, an add-on) is charged right away. A
+          paid-for visit that gets skipped is not refunded automatically;
+          it shows in the digest for you to decide.
+        </p>
+      )}
+
+      {timing === "days_after_invoice" && (
         <p className="mt-1.5 text-[11px] text-[#6b705c]">
           Invoices still go out right away, with a line telling the customer
           the date their card will be charged. Overdue reminders wait until
