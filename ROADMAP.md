@@ -167,6 +167,35 @@ parked.
     migration 111). The public website pages and the Phoenix time zone
     are still fixed in code.
 
+## Top 10, third list (November 2026)
+
+Proposed 2026-11-16. Ryan picked 4, 5 and 8; the rest are parked.
+
+1. **Recover failed card charges.** Parked.
+2. **Credit for skipped prepaid visits.** Parked.
+3. **Alert if a scheduled job does not run.** Parked.
+4. ~~**Automatic weekly backup.**~~ **Done.** Every Sunday the app saves a
+   ZIP of about 80 tables (no passwords or tokens) to a private storage
+   bucket, keeps the newest 8, and emails the digest recipients a 7-day
+   download link, or a failure notice. System Health has a Weekly backup
+   check (`lib/backup.ts`, `lib/backupTables.ts`, migration 112).
+5. ~~**Month-end close checklist.**~~ **Done.** Reconciliation > Month-end
+   close: per month, bank charges to review, deposits to match, bank vs.
+   app balances, failed card charges, unpaid invoices, and the month's
+   P&L. Closing saves a snapshot and the month shows "changed since
+   close" if invoices or expenses move later (`lib/monthClose.ts`,
+   migration 113).
+6. **New-lead response timer.** Parked.
+7. **Capture why customers leave.** Parked.
+8. ~~**Find and merge duplicate customers.**~~ **Done.** Customers > Find
+   Duplicates (same phone, email, or name and address). Merging moves
+   every invoice, job, visit, payment, message and saved card to the kept
+   customer in one transaction, keeps a full copy of the removed record,
+   and points late Jobber syncs for the old id at the kept customer
+   (`lib/duplicateCustomers.ts`, migration 114).
+9. **Crew checklist per visit.** Parked.
+10. **Two-step sign-in for admin and manager.** Parked.
+
 ## Fresh ideas (CRM + website)
 
 1. ~~**Capture inbound text replies.**~~ **Done.** A customer replying
