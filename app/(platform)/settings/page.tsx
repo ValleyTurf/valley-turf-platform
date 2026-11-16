@@ -53,6 +53,15 @@ const settingsSections: SettingsSection[] = [
     status: "Connect",
   },
   {
+    title: "Business Details",
+    description:
+      "The business name, phone number, website and who signs quotes. Used on every customer text, email and invoice.",
+    href: "/settings/business",
+    icon: "🏷️",
+    status: "Edit",
+    adminOnly: true,
+  },
+  {
     title: "Leaving Jobber",
     description:
       "What still depends on Jobber right now (customers invoiced there, unpaid Jobber invoices, payments, daily syncs) and whether it is safe to cancel.",

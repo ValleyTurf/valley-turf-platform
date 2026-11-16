@@ -8,6 +8,7 @@
 //     copy instead, once, when the customer has an email on file
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
+import { getBusiness } from "@/lib/business";
 import { sendManualEmail } from "@/lib/notifications";
 import { isFailedStatus, shouldApplyStatus } from "@/lib/textDeliveryStatus";
 
@@ -71,6 +72,7 @@ export async function applyTextStatus(params: {
 }
 
 async function handleFailedText(row: HistoryRow): Promise<void> {
+  const biz = await getBusiness();
   // Staff-typed texts stay in staff's hands -- they can see the failure
   // on the thread. Only automated sends get an email copy.
   if (
@@ -105,8 +107,8 @@ async function handleFailedText(row: HistoryRow): Promise<void> {
   if (!claimed || claimed.length === 0) return;
 
   const subject = row.subject
-    ? `${row.subject} - Valley Turf Revival`
-    : "A message from Valley Turf Revival";
+    ? `${row.subject} - ${biz.name}`
+    : `A message from ${biz.name}`;
 
   await sendManualEmail({
     toEmail: email,

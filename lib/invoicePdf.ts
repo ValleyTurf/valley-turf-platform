@@ -9,6 +9,7 @@
 // conservative (text/rect/moveTo-lineTo, no exotic layout features) to
 // minimize surprise, but the first real invoice email should be opened
 // and eyeballed once deployed.
+import { getBusiness } from "@/lib/business";
 import "server-only";
 import fs from "fs";
 import path from "path";
@@ -43,16 +44,13 @@ const MUTED_GRAY = "#6b705c";
 const RULE_GRAY = "#d9dad2";
 
 // Same three contact points Ryan asked to see on the PDF (no business
-// address). Phone/website are stable enough to hardcode -- they're
-// already duplicated as literals in privacy-policy.md/terms-of-service.md
-// -- but the email is genuinely unknown to this codebase (nothing sends
+// address). Phone and website come from Settings > Business Details
+// (lib/business.ts). The email is genuinely unknown to this codebase (nothing sends
 // customer mail from a literal address; lib/notifications.ts reads
 // RESEND_FROM_EMAIL at send time and terms-of-service.md still has an
 // "[insert business email]" placeholder), so it's read from an env var
 // and the line simply omits it until Ryan sets one, same null-safe
 // pattern as the invoice email's reviewUrl.
-const BUSINESS_PHONE = "(480) 331-4596";
-const BUSINESS_WEBSITE = "valleyturfrevival.com";
 
 // Loaded once per cold start rather than per-PDF -- a 300x300 PNG is
 // small, but there's no reason to hit the filesystem on every invoice.
@@ -101,6 +99,8 @@ export async function generateInvoicePdf(
   invoice: Invoice,
   lineItems: InvoicePdfLineItem[]
 ): Promise<Buffer> {
+  const biz = await getBusiness();
+
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: "LETTER", margin: 50 });
     const chunks: Buffer[] = [];
@@ -123,9 +123,9 @@ export async function generateInvoicePdf(
       .fillColor(BRAND_GREEN)
       .fontSize(18)
       .font("Helvetica-Bold")
-      .text("Valley Turf Revival", nameX, 50);
+      .text(biz.name, nameX, 50);
 
-    const contactLine = [BUSINESS_PHONE, BUSINESS_WEBSITE, process.env.BUSINESS_CONTACT_EMAIL]
+    const contactLine = [biz.phoneDisplay, biz.website, process.env.BUSINESS_CONTACT_EMAIL]
       .filter((part): part is string => Boolean(part && part.trim()))
       .join("   ·   ");
 

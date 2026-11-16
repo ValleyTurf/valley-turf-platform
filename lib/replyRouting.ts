@@ -27,6 +27,7 @@
 // Resend threw in production the first time this shipped. Using the id
 // as-is keeps the address well under that limit and is exactly as
 // reversible.
+import { DEFAULT_BUSINESS_INPUT } from "@/lib/businessFormat";
 import "server-only";
 
 const REPLY_LOCAL_PART = "replies";
@@ -61,7 +62,8 @@ function replyDomain(): string | null {
 // (or before Ryan finishes the receiving-domain DNS setup) just gets a
 // normal email with no reply routing, rather than a broken address.
 export function replyToAddressFor(
-  jobberClientId: string | null
+  jobberClientId: string | null,
+  displayName: string = DEFAULT_BUSINESS_INPUT.name
 ): string | undefined {
   const domain = replyDomain();
 
@@ -90,7 +92,7 @@ export function replyToAddressFor(
   // clients populate the reply's To field from this display name, same
   // as they do for the From header (see fromHeader() in
   // lib/notifications.ts).
-  return `Valley Turf Revival <${localPart}@${domain}>`;
+  return `${displayName} <${localPart}@${domain}>`;
 }
 
 // Given one recipient address from an inbound email.received webhook's

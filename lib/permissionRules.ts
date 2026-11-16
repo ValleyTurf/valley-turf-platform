@@ -186,6 +186,9 @@ export const ALWAYS_ADMIN_ONLY_PREFIXES = [
   // "structurally sensitive, not delegable via role_permissions"
   // reasoning as /settings/permissions above.
   "/settings/notifications",
+  // Controls the name, phone and sign-off on every customer text, email
+  // and invoice.
+  "/settings/business",
 ];
 
 // Manager+ only — staff excluded, but unlike ALWAYS_ADMIN_ONLY_PREFIXES,

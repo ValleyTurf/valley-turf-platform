@@ -82,12 +82,15 @@ Agreed with Ryan 2026-11-15. Items 1-9 approved; 10 waits on Gusto.
    links (visit confirm, overdue pay link, quote follow-up) now go out
    as go.valleyturfrevival.com instead of a temporary Vercel address
    (`lib/baseUrl.ts`).
-2. **Why some customers don't get or can't open messages -- in
-   progress.** Katie Ray couldn't open invoice links; Chris Brown says
-   he never got emails or texts. `/api/ops/delivery-check?q=<name>`
-   reads Twilio's real delivery status and our email log. Findings and
-   any fix still to come. (The temporary-address links from item 1 were
-   tested and do open, so that isn't the cause.)
+2. ~~**Why some customers don't get or can't open messages.**~~
+   **Checked.** `/api/ops/delivery-check?q=<name>` reads Twilio's real
+   delivery status and our email log. Result (Nov 2026): 928 of 930
+   texts were delivered, and Katie Ray's and Chris Brown's messages were
+   delivered too. The likely cause is their phones filtering a text from
+   an unknown number, plus Katie Ray having no email on file and Chris
+   Brown's emails going delivered but unopened. One invoice text to
+   another customer was blocked by the carrier (error 30007) and nobody
+   knew, which is what the second list's #1 fixes.
 3. ~~**Re-send the invoice at 1, 3, 7, 14 days overdue.**~~ **Done.**
    Daily reminders stay; on those four days the invoice itself (PDF +
    Pay Now) goes out instead of the plain reminder
@@ -123,6 +126,46 @@ Agreed with Ryan 2026-11-15. Items 1-9 approved; 10 waits on Gusto.
    filed as a quiet reaction (`lib/pushKinds.ts`, `lib/tapbacks.ts`,
    migration 108).
 10. **Send timeclock hours to Gusto.** On hold until Gusto is set up.
+
+## Top 10, second list (November 2026)
+
+Proposed 2026-11-16. Ryan picked 1, 4, 7, 8, 9 and 10; the rest are
+parked.
+
+1. ~~**Track whether each text was delivered.**~~ **Done.** Every
+   customer text asks Twilio to report back
+   (`lib/twilioSend.ts`, `/api/webhooks/twilio-status`); the result shows
+   on the message thread and customer page, failures are listed in the
+   daily digest, and an automated text that fails is emailed to the
+   customer once if they have an email (`lib/twilioDelivery.ts`,
+   migration 109).
+2. **Get customers to save the business number.** Parked.
+3. **Text back missed calls.** Parked.
+4. ~~**Needs-reply view and saved replies.**~~ **Done.** Messages >
+   Needs reply (customer wrote last, nobody on staff has answered,
+   longest wait first) with a "No reply needed" button; saved replies in
+   the reply box with {first_name}; customers waiting over a day show in
+   the daily digest (`lib/needsReply.ts`, migration 110).
+5. **Warn before a saved card expires.** Parked.
+6. **Price increase tool.** Parked.
+7. ~~**Finish leaving Jobber.**~~ **Done (the report).** Settings >
+   Leaving Jobber shows who is still invoiced through Jobber, unpaid
+   Jobber invoices, payments that came through Jobber, the syncs still
+   running, and a safe-to-cancel verdict (`lib/jobberExit.ts`). Moving
+   the remaining customers over is still done from /invoices/routing,
+   and the Jobber syncs get switched off once the report is clear.
+8. ~~**Tax-time package.**~~ **Done.** Revenue > Profit & Loss > Tax
+   Package: one ZIP per year with profit and loss by month, expenses by
+   category and in detail, journal entries kept separate, payments by
+   method, and a README (`lib/taxPackage.ts`).
+9. ~~**Save the tests, clear out the diagnostics.**~~ **Done.** Tests for
+   the logic written this fall are saved in `lib/*.test.ts` (run by CI),
+   and 73 one-off debug, lookup, flip and backfill routes were removed.
+10. ~~**Business details as settings.**~~ **Done.** Settings > Business
+    Details (admin only): name, phone, website and who signs quotes now
+    feed customer texts, emails and invoice PDFs (`lib/business.ts`,
+    migration 111). The public website pages and the Phoenix time zone
+    are still fixed in code.
 
 ## Fresh ideas (CRM + website)
 

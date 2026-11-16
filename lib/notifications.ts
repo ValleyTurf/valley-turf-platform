@@ -29,6 +29,7 @@ import { logContactHistory } from "@/lib/contactHistory";
 import { sendTwilioMessage, twilioSidOf } from "@/lib/twilioSend";
 import { replyToAddressFor } from "@/lib/replyRouting";
 import { supabaseServer } from "@/lib/supabase-server";
+import { getBusiness } from "@/lib/business";
 
 // Overridable via env vars so who gets alerted doesn't require a code
 // change + redeploy. Falls back to the original hardcoded values if unset.
@@ -42,9 +43,9 @@ const ALERT_PHONE = process.env.ALERT_PHONE || "+14803314596";
 // "invoices") as the sender name. Centralized here so every send shows
 // "Valley Turf Revival" regardless of which mailbox it's actually sent
 // from (invoices@, no-reply@, etc.).
-function fromHeader(): string {
+function fromHeader(name: string): string {
   const address = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
-  return `Valley Turf Revival <${address}>`;
+  return `${name} <${address}>`;
 }
 
 // customers.customer_name is a full name ("Sarah Mendez") -- this pulls
@@ -117,6 +118,7 @@ function escapeHtmlText(value: string): string {
 }
 
 async function sendLeadEmailAlert(lead: NewLeadAlert): Promise<void> {
+  const biz = await getBusiness();
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
@@ -146,7 +148,7 @@ async function sendLeadEmailAlert(lead: NewLeadAlert): Promise<void> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromHeader(),
+        from: fromHeader(biz.name),
         to: ALERT_EMAIL,
         subject,
         html,
@@ -187,6 +189,7 @@ export type PaymentReceivedAlert = {
 export async function sendPaymentReceivedAlertEmail(
   alert: PaymentReceivedAlert
 ): Promise<void> {
+  const biz = await getBusiness();
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
@@ -228,7 +231,7 @@ export async function sendPaymentReceivedAlertEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromHeader(),
+        from: fromHeader(biz.name),
         to: ALERT_EMAIL,
         subject,
         html,
@@ -325,6 +328,7 @@ export async function sendDailyDigestEmail(
   toEmail: string,
   data: DailyDigestData
 ): Promise<boolean> {
+  const biz = await getBusiness();
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
@@ -429,7 +433,7 @@ export async function sendDailyDigestEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromHeader(),
+        from: fromHeader(biz.name),
         to: toEmail,
         subject: `Daily Ops Digest -- ${dateLabel}`,
         html,
@@ -468,6 +472,7 @@ export type PortalMagicLinkEmail = {
 export async function sendPortalMagicLinkEmail(
   request: PortalMagicLinkEmail
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(request.jobberClientId)) {
     return false;
   }
@@ -486,7 +491,7 @@ export async function sendPortalMagicLinkEmail(
   const html = `
     <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
       <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
-      <p>Use the link below to sign in to your Valley Turf Revival customer portal. This link is valid for 15 minutes and can only be used once.</p>
+      <p>Use the link below to sign in to your ${biz.name} customer portal. This link is valid for 15 minutes and can only be used once.</p>
       <p style="margin: 24px 0;">
         <a
           href="${request.loginUrl}"
@@ -507,10 +512,10 @@ export async function sendPortalMagicLinkEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromHeader(),
+        from: fromHeader(biz.name),
         to: request.toEmail,
-        reply_to: replyToAddressFor(request.jobberClientId),
-        subject: "Sign in to your Valley Turf Revival portal",
+        reply_to: replyToAddressFor(request.jobberClientId, biz.name),
+        subject: `Sign in to your ${biz.name} portal`,
         html,
       }),
     });
@@ -553,6 +558,7 @@ export async function sendPortalMagicLinkSms(
   loginUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(jobberClientId)) {
     return false;
   }
@@ -567,7 +573,7 @@ export async function sendPortalMagicLinkSms(
   }
 
   const greetingName = firstNameOf(customerName);
-  const body = `Hi ${greetingName}, this is Valley Turf Revival. Use this link to sign in to your customer portal (valid 15 min, one-time use): ${loginUrl}`;
+  const body = `Hi ${greetingName}, this is ${biz.name}. Use this link to sign in to your customer portal (valid 15 min, one-time use): ${loginUrl}`;
 
   try {
     const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
@@ -615,6 +621,7 @@ export type ManualEmail = {
 // paragraphs, no button/CTA chrome -- staff are writing this themselves,
 // so it should read like a normal email, not an automated notice.
 export async function sendManualEmail(request: ManualEmail): Promise<boolean> {
+  const biz = await getBusiness();
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
@@ -638,7 +645,7 @@ export async function sendManualEmail(request: ManualEmail): Promise<boolean> {
     </div>
   `;
 
-  const replyTo = replyToAddressFor(request.jobberClientId);
+  const replyTo = replyToAddressFor(request.jobberClientId, biz.name);
 
   try {
     const response = await fetch("https://api.resend.com/emails", {
@@ -648,7 +655,7 @@ export async function sendManualEmail(request: ManualEmail): Promise<boolean> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromHeader(),
+        from: fromHeader(biz.name),
         to: request.toEmail,
         reply_to: replyTo,
         subject: request.subject,
@@ -754,6 +761,7 @@ export async function sendOnMyWaySms(
   // sendOnWay() before this is ever called.
   etaMinutes: number
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(jobberClientId)) {
     return false;
   }
@@ -768,7 +776,7 @@ export async function sendOnMyWaySms(
   }
 
   const greetingName = firstNameOf(customerName);
-  const body = `Hi ${greetingName}, this is Valley Turf Revival — we're on our way to your property now for your turf cleaning! We will be there in about ${etaMinutes} minutes.`;
+  const body = `Hi ${greetingName}, this is ${biz.name} — we're on our way to your property now for your turf cleaning! We will be there in about ${etaMinutes} minutes.`;
 
   try {
     const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
@@ -820,6 +828,7 @@ export async function sendInvoiceSms(
   // pitch when the customer is already enrolled on a held schedule.
   scheduledChargeNote?: string | null
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(jobberClientId)) {
     return false;
   }
@@ -839,7 +848,7 @@ export async function sendInvoiceSms(
     : autopayUrl
       ? ` Want us to just charge your card automatically next time? Set up Autopay: ${autopayUrl}`
       : "";
-  const body = `Hi ${greetingName}, this is Valley Turf Revival. Your invoice ${invoiceNumber} is ready: ${payUrl} Thank you for your business!${autopaySuffix}`;
+  const body = `Hi ${greetingName}, this is ${biz.name}. Your invoice ${invoiceNumber} is ready: ${payUrl} Thank you for your business!${autopaySuffix}`;
 
   try {
     const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
@@ -886,6 +895,7 @@ export type OverdueInvoiceEmail = {
 export async function sendOverdueInvoiceEmail(
   request: OverdueInvoiceEmail
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(request.jobberClientId)) {
     return false;
   }
@@ -904,7 +914,7 @@ export async function sendOverdueInvoiceEmail(
       <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
       <p>This is a friendly reminder that invoice <strong>${escapeHtml(
         request.invoiceNumber
-      )}</strong> from Valley Turf Revival, for <strong>$${request.total.toFixed(
+      )}</strong> from ${biz.name}, for <strong>$${request.total.toFixed(
     2
   )}</strong>, is past due and still awaiting payment.</p>
       <p style="margin: 20px 0;">
@@ -927,10 +937,10 @@ export async function sendOverdueInvoiceEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromHeader(),
+        from: fromHeader(biz.name),
         to: request.toEmail,
-        reply_to: replyToAddressFor(request.jobberClientId),
-        subject: `Invoice ${request.invoiceNumber} is past due -- Valley Turf Revival`,
+        reply_to: replyToAddressFor(request.jobberClientId, biz.name),
+        subject: `Invoice ${request.invoiceNumber} is past due -- ${biz.name}`,
         html,
       }),
     });
@@ -973,6 +983,7 @@ export async function sendOverdueInvoiceSms(
   payUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(jobberClientId)) {
     return false;
   }
@@ -987,7 +998,7 @@ export async function sendOverdueInvoiceSms(
   }
 
   const greetingName = firstNameOf(customerName);
-  const body = `Hi ${greetingName}, this is Valley Turf Revival. Invoice ${invoiceNumber} ($${total.toFixed(
+  const body = `Hi ${greetingName}, this is ${biz.name}. Invoice ${invoiceNumber} ($${total.toFixed(
     2
   )}) is past due and still awaiting payment. Pay here: ${payUrl}`;
 
@@ -1034,6 +1045,7 @@ export type QuoteFollowupEmail = {
 export async function sendQuoteFollowupEmail(
   request: QuoteFollowupEmail
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(request.jobberClientId)) {
     return false;
   }
@@ -1050,7 +1062,7 @@ export async function sendQuoteFollowupEmail(
   const html = `
     <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
       <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
-      <p>Just checking in on the quote we sent from Valley Turf Revival -- it's still available whenever you're ready.</p>
+      <p>Just checking in on the quote we sent from ${biz.name} -- it's still available whenever you're ready.</p>
       <p style="margin: 20px 0;">
         <a
           href="${request.quoteUrl}"
@@ -1071,10 +1083,10 @@ export async function sendQuoteFollowupEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromHeader(),
+        from: fromHeader(biz.name),
         to: request.toEmail,
-        reply_to: replyToAddressFor(request.jobberClientId),
-        subject: "Still interested? Your quote from Valley Turf Revival",
+        reply_to: replyToAddressFor(request.jobberClientId, biz.name),
+        subject: `Still interested? Your quote from ${biz.name}`,
         html,
       }),
     });
@@ -1112,6 +1124,7 @@ export async function sendQuoteFollowupSms(
   quoteUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(jobberClientId)) {
     return false;
   }
@@ -1126,7 +1139,7 @@ export async function sendQuoteFollowupSms(
   }
 
   const greetingName = firstNameOf(recipientName);
-  const body = `Hi ${greetingName}, this is Valley Turf Revival. Just checking in on the quote we sent -- still available whenever you're ready: ${quoteUrl}`;
+  const body = `Hi ${greetingName}, this is ${biz.name}. Just checking in on the quote we sent -- still available whenever you're ready: ${quoteUrl}`;
 
   try {
     const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
@@ -1168,6 +1181,7 @@ export type QuoteSendEmail = {
 };
 
 export async function sendQuoteEmail(request: QuoteSendEmail): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(request.jobberClientId)) {
     return false;
   }
@@ -1184,7 +1198,7 @@ export async function sendQuoteEmail(request: QuoteSendEmail): Promise<boolean> 
   const html = `
     <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
       <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
-      <p>Thank you for reaching out to Valley Turf Revival for a turf cleaning quote!</p>
+      <p>Thank you for reaching out to ${biz.name} for a turf cleaning quote!</p>
       <p style="margin: 24px 0;">
         <a
           href="${request.quoteUrl}"
@@ -1194,8 +1208,8 @@ export async function sendQuoteEmail(request: QuoteSendEmail): Promise<boolean> 
         </a>
       </p>
       <p>We look forward to earning your business! You can click accept in the quote or reply to this message and we will work to get you scheduled.</p>
-      <p>If you have any questions, reach out here or call/text 480-331-4596.</p>
-      <p>Thank You,<br>Ryan<br>Valley Turf Revival</p>
+      <p>If you have any questions, reach out here or call/text ${biz.phoneDashed}.</p>
+      <p>Thank You,<br>${biz.ownerFirstName}<br>${biz.name}</p>
     </div>
   `;
 
@@ -1207,10 +1221,10 @@ export async function sendQuoteEmail(request: QuoteSendEmail): Promise<boolean> 
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromHeader(),
+        from: fromHeader(biz.name),
         to: request.toEmail,
-        reply_to: replyToAddressFor(request.jobberClientId),
-        subject: "Your Quote from Valley Turf Revival",
+        reply_to: replyToAddressFor(request.jobberClientId, biz.name),
+        subject: `Your Quote from ${biz.name}`,
         html,
       }),
     });
@@ -1246,6 +1260,7 @@ export async function sendQuoteSms(
   quoteUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(jobberClientId)) {
     return false;
   }
@@ -1260,7 +1275,7 @@ export async function sendQuoteSms(
   }
 
   const greetingName = firstNameOf(recipientName);
-  const body = `Hi ${greetingName}, thanks for reaching out to Valley Turf Revival for a turf cleaning quote! View & accept here: ${quoteUrl} Questions? Call/text 480-331-4596. -Ryan, Valley Turf Revival`;
+  const body = `Hi ${greetingName}, thanks for reaching out to ${biz.name} for a turf cleaning quote! View & accept here: ${quoteUrl} Questions? Call/text ${biz.phoneDashed}. -${biz.ownerFirstName}, ${biz.name}`;
 
   try {
     const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
@@ -1298,6 +1313,7 @@ export type QuoteStatusAlert = {
 };
 
 async function sendStaffAlertEmail(subject: string, html: string): Promise<void> {
+  const biz = await getBusiness();
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) return;
 
@@ -1308,7 +1324,7 @@ async function sendStaffAlertEmail(subject: string, html: string): Promise<void>
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ from: fromHeader(), to: ALERT_EMAIL, subject, html }),
+      body: JSON.stringify({ from: fromHeader(biz.name), to: ALERT_EMAIL, subject, html }),
     });
 
     if (!response.ok) {
@@ -1454,6 +1470,7 @@ export type InvoiceEmail = {
 export async function sendInvoiceEmail(
   request: InvoiceEmail
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(request.jobberClientId)) {
     return false;
   }
@@ -1509,8 +1526,8 @@ export async function sendInvoiceEmail(
   const html = `
     <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
       <div style="padding: 20px; text-align: center; border-bottom: 2px solid #174734;">
-        <img src="${request.logoUrl}" alt="Valley Turf Revival" style="height: 56px; width: auto; margin-bottom: 8px;" />
-        <p style="font-size: 17px; font-weight: bold; margin: 0; letter-spacing: 0.02em;">Valley Turf Revival Invoice</p>
+        <img src="${request.logoUrl}" alt="${biz.name}" style="height: 56px; width: auto; margin-bottom: 8px;" />
+        <p style="font-size: 17px; font-weight: bold; margin: 0; letter-spacing: 0.02em;">${biz.name} Invoice</p>
       </div>
       <div style="padding: 24px 20px;">
         <div style="text-align: center; margin: 0 0 20px;">
@@ -1542,11 +1559,11 @@ export async function sendInvoiceEmail(
         </div>
         <div style="border-top: 0.5px solid #e7e2d5; margin: 20px 0; padding-top: 20px;">
           <p style="font-size: 16px; margin: 0 0 14px;">Hi ${escapeHtml(greetingName)},</p>
-          <p style="margin: 0 0 14px;">Thank you for your recent business with Valley Turf Revival. Your invoice <strong>${escapeHtml(
+          <p style="margin: 0 0 14px;">Thank you for your recent business with ${biz.name}. Your invoice <strong>${escapeHtml(
             request.invoiceNumber
           )}</strong> is attached, for <strong>$${request.total.toFixed(2)}</strong>.</p>
           <p style="margin: 0 0 20px;">Questions about this invoice? Just reply to this email.</p>
-          <p style="margin: 0;">Thank you,<br>Valley Turf Revival</p>
+          <p style="margin: 0;">Thank you,<br>${biz.name}</p>
           ${reviewBlock}
         </div>
       </div>
@@ -1561,10 +1578,10 @@ export async function sendInvoiceEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromHeader(),
+        from: fromHeader(biz.name),
         to: request.toEmail,
-        reply_to: replyToAddressFor(request.jobberClientId),
-        subject: `Invoice ${request.invoiceNumber} from Valley Turf Revival`,
+        reply_to: replyToAddressFor(request.jobberClientId, biz.name),
+        subject: `Invoice ${request.invoiceNumber} from ${biz.name}`,
         html,
         attachments: [
           {
@@ -1619,6 +1636,7 @@ export type AutopayReceiptEmail = {
 export async function sendAutopayReceiptEmail(
   request: AutopayReceiptEmail
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(request.jobberClientId)) {
     return false;
   }
@@ -1638,7 +1656,7 @@ export async function sendAutopayReceiptEmail(
       <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
       <p>Your invoice <strong>${escapeHtml(
         request.invoiceNumber
-      )}</strong> from Valley Turf Revival has been paid automatically${escapeHtml(
+      )}</strong> from ${biz.name} has been paid automatically${escapeHtml(
     cardSuffix
   )} for <strong>$${request.total.toFixed(
     2
@@ -1656,10 +1674,10 @@ export async function sendAutopayReceiptEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromHeader(),
+        from: fromHeader(biz.name),
         to: request.toEmail,
-        reply_to: replyToAddressFor(request.jobberClientId),
-        subject: `Invoice ${request.invoiceNumber} paid automatically -- Valley Turf Revival`,
+        reply_to: replyToAddressFor(request.jobberClientId, biz.name),
+        subject: `Invoice ${request.invoiceNumber} paid automatically -- ${biz.name}`,
         html,
         attachments: [
           {
@@ -1710,6 +1728,7 @@ export async function sendAutopayReceiptSms(
   cardLast4: string | null,
   jobberClientId: string | null
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(jobberClientId)) {
     return false;
   }
@@ -1727,7 +1746,7 @@ export async function sendAutopayReceiptSms(
   const cardSuffix = cardLast4 ? ` (card ending in ${cardLast4})` : "";
   // Same wording as the email receipt, minus "Your receipt is attached" --
   // Twilio SMS can't carry a PDF, so that line would be false here.
-  const body = `Hi ${greetingName}, Your invoice ${invoiceNumber} from Valley Turf Revival has been paid automatically${cardSuffix} for $${total.toFixed(
+  const body = `Hi ${greetingName}, Your invoice ${invoiceNumber} from ${biz.name} has been paid automatically${cardSuffix} for $${total.toFixed(
     2
   )}, for your recent turf cleaning service. No action is needed.`;
 
@@ -1789,6 +1808,7 @@ export type ManualPaymentReceiptEmail = {
 export async function sendManualPaymentReceiptEmail(
   request: ManualPaymentReceiptEmail
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(request.jobberClientId)) {
     return false;
   }
@@ -1813,7 +1833,7 @@ export async function sendManualPaymentReceiptEmail(
         2
       )}</strong> for invoice <strong>${escapeHtml(
     request.invoiceNumber
-  )}</strong> from Valley Turf Revival.</p>
+  )}</strong> from ${biz.name}.</p>
       ${tipLine}
       <p>Your receipt is attached.</p>
       <p style="color: #6b705c; font-size: 12px;">Questions about this payment? Just reply to this email.</p>
@@ -1828,10 +1848,10 @@ export async function sendManualPaymentReceiptEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromHeader(),
+        from: fromHeader(biz.name),
         to: request.toEmail,
-        reply_to: replyToAddressFor(request.jobberClientId),
-        subject: `Invoice ${request.invoiceNumber} paid -- Valley Turf Revival`,
+        reply_to: replyToAddressFor(request.jobberClientId, biz.name),
+        subject: `Invoice ${request.invoiceNumber} paid -- ${biz.name}`,
         html,
         attachments: [
           {
@@ -1882,6 +1902,7 @@ export async function sendManualPaymentReceiptSms(
   jobberClientId: string | null,
   tipAmount?: number
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(jobberClientId)) {
     return false;
   }
@@ -1897,7 +1918,7 @@ export async function sendManualPaymentReceiptSms(
 
   const greetingName = firstNameOf(customerName);
   const tipNote = tipAmount && tipAmount > 0 ? ` (includes a $${tipAmount.toFixed(2)} tip)` : "";
-  const body = `Hi ${greetingName}, this is Valley Turf Revival. We've received your payment of $${total.toFixed(
+  const body = `Hi ${greetingName}, this is ${biz.name}. We've received your payment of $${total.toFixed(
     2
   )}${tipNote} for invoice ${invoiceNumber}. Thank you!`;
 
@@ -1944,6 +1965,7 @@ export async function sendVisitReminderSms(
   confirmUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(jobberClientId)) {
     return false;
   }
@@ -1958,7 +1980,7 @@ export async function sendVisitReminderSms(
   }
 
   const greetingName = firstNameOf(customerName);
-  const body = `Hi ${greetingName}, we have your next turf cleaning with Valley Turf Revival scheduled for ${visitDateLabel}. Please confirm here: ${confirmUrl} — or reply to this message if you need to reschedule. Before we arrive, please try to pick up any easily removable dog waste. Thank you!`;
+  const body = `Hi ${greetingName}, we have your next turf cleaning with ${biz.name} scheduled for ${visitDateLabel}. Please confirm here: ${confirmUrl} — or reply to this message if you need to reschedule. Before we arrive, please try to pick up any easily removable dog waste. Thank you!`;
 
   try {
     const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
@@ -1997,6 +2019,7 @@ export async function sendVisitReminderEmail(
   confirmUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(jobberClientId)) {
     return false;
   }
@@ -2013,7 +2036,7 @@ export async function sendVisitReminderEmail(
   const html = `
     <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
       <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
-      <p>We have your next turf cleaning with Valley Turf Revival scheduled for <strong>${escapeHtml(
+      <p>We have your next turf cleaning with ${biz.name} scheduled for <strong>${escapeHtml(
         visitDateLabel
       )}</strong>.</p>
       <p style="margin: 24px 0;">
@@ -2026,7 +2049,7 @@ export async function sendVisitReminderEmail(
       </p>
       <p>Need to reschedule? Just reply to this email or give us a call.</p>
       <p>Before we arrive, please try to pick up any easily removable dog waste. Thank you!</p>
-      <p style="margin-top: 20px;">Valley Turf Revival</p>
+      <p style="margin-top: 20px;">${biz.name}</p>
     </div>
   `;
 
@@ -2038,9 +2061,9 @@ export async function sendVisitReminderEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromHeader(),
+        from: fromHeader(biz.name),
         to: toEmail,
-        reply_to: replyToAddressFor(jobberClientId),
+        reply_to: replyToAddressFor(jobberClientId, biz.name),
         subject: "Upcoming Turf Cleaning Appointment",
         html,
       }),
@@ -2084,6 +2107,7 @@ export async function sendReviewRequestSms(
   reviewUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(jobberClientId)) {
     return false;
   }
@@ -2098,7 +2122,7 @@ export async function sendReviewRequestSms(
   }
 
   const greetingName = customerName?.trim() || "there";
-  const body = `Hi ${greetingName}, thanks for choosing Valley Turf Revival! If you have a minute, we'd really appreciate a quick review: ${reviewUrl}`;
+  const body = `Hi ${greetingName}, thanks for choosing ${biz.name}! If you have a minute, we'd really appreciate a quick review: ${reviewUrl}`;
 
   try {
     const response = await sendTwilioMessage({ accountSid, authToken, to: toPhone, from: fromNumber, body: body });
@@ -2135,6 +2159,7 @@ export async function sendReviewRequestEmail(
   reviewUrl: string,
   jobberClientId: string | null
 ): Promise<boolean> {
+  const biz = await getBusiness();
   if (await isOptedOutOfNotifications(jobberClientId)) {
     return false;
   }
@@ -2151,7 +2176,7 @@ export async function sendReviewRequestEmail(
   const html = `
     <div style="font-family: sans-serif; font-size: 14px; color: #174734;">
       <p style="font-size: 16px;">Hi ${escapeHtml(greetingName)},</p>
-      <p>Thanks for choosing Valley Turf Revival! If you have a minute, we'd really appreciate a quick review.</p>
+      <p>Thanks for choosing ${biz.name}! If you have a minute, we'd really appreciate a quick review.</p>
       <p style="margin: 24px 0;">
         <a
           href="${reviewUrl}"
@@ -2172,9 +2197,9 @@ export async function sendReviewRequestEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromHeader(),
+        from: fromHeader(biz.name),
         to: toEmail,
-        reply_to: replyToAddressFor(jobberClientId),
+        reply_to: replyToAddressFor(jobberClientId, biz.name),
         subject: "How did we do?",
         html,
       }),
@@ -2277,6 +2302,7 @@ export async function sendLowRatingAlert(alert: LowRatingAlert): Promise<void> {
 }
 
 async function sendLowRatingEmailAlert(alert: LowRatingAlert): Promise<void> {
+  const biz = await getBusiness();
   const apiKey = process.env.RESEND_API_KEY;
 
   if (!apiKey) {
@@ -2304,7 +2330,7 @@ async function sendLowRatingEmailAlert(alert: LowRatingAlert): Promise<void> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: fromHeader(),
+        from: fromHeader(biz.name),
         to: ALERT_EMAIL,
         subject,
         html,
