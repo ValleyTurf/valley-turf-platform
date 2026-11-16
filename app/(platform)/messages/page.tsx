@@ -5,6 +5,8 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
 import NewMessageButton from "./NewMessageButton";
+import { loadNeedsReply } from "@/lib/needsReply";
+import { formatWaiting } from "@/lib/needsReplyLogic";
 
 type PortalMessageRow = {
   jobber_client_id: string;
@@ -58,6 +60,9 @@ type InboxRow = {
   lastMessagePreview: string | null;
   unreadCount: number;
   openRequestCount: number;
+  // When this customer's first unanswered message arrived (null = nothing
+  // waiting on us).
+  waitingSince: string | null;
 };
 
 type SentTodayRow = {
@@ -92,7 +97,15 @@ function formatInboxTimestamp(iso: string, todayPhoenix: string | null): string 
   }).format(date);
 }
 
-export default async function MessagesInboxPage() {
+export default async function MessagesInboxPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>;
+}) {
+  const { view } = await searchParams;
+  const needsReplyOnly = view === "needs-reply";
+  const waitingThreads = await loadNeedsReply();
+
   const [messagesResult, requestsResult, inboundMessagesResult, outboundResult] =
     await Promise.all([
       supabaseServer
@@ -154,6 +167,7 @@ export default async function MessagesInboxPage() {
       lastMessagePreview: null,
       unreadCount: 0,
       openRequestCount: 0,
+      waitingSince: null,
     };
 
     inboxMap.set(jobberClientId, created);
@@ -238,6 +252,10 @@ export default async function MessagesInboxPage() {
     }
   }
 
+  for (const thread of waitingThreads) {
+    getOrCreate(thread.clientId).waitingSince = thread.since;
+  }
+
   // Today's outbound sends, newest first -- lets Ryan confirm at a
   // glance that e.g. this morning's visit reminders actually went out,
   // without having to click into every individual customer thread.
@@ -284,9 +302,17 @@ export default async function MessagesInboxPage() {
     }
   }
 
-  const inboxRows = Array.from(inboxMap.values()).sort(
-    (a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : -1)
-  );
+  const allInboxRows = Array.from(inboxMap.values());
+  const waitingCount = allInboxRows.filter((row) => row.waitingSince).length;
+  const now = new Date();
+
+  // Needs Reply view: whoever has waited longest first. Everything else:
+  // most recent contact first.
+  const inboxRows = needsReplyOnly
+    ? allInboxRows
+        .filter((row) => row.waitingSince)
+        .sort((a, b) => ((a.waitingSince ?? "") < (b.waitingSince ?? "") ? -1 : 1))
+    : allInboxRows.sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : -1));
 
   sentToday.sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -361,10 +387,33 @@ export default async function MessagesInboxPage() {
           )}
         </section>
 
-        <section className="mt-6 rounded-3xl bg-white p-5 shadow sm:p-8">
+        <div className="mt-6 flex gap-2">
+          <Link
+            href="/messages"
+            className={`rounded-full border px-4 py-1.5 text-sm font-bold transition ${
+              needsReplyOnly
+                ? "border-[#d8d3c6] text-[#174734] hover:border-[#9c7a20]"
+                : "border-[#174734] bg-[#174734] text-white"
+            }`}
+          >
+            All
+          </Link>
+          <Link
+            href="/messages?view=needs-reply"
+            className={`rounded-full border px-4 py-1.5 text-sm font-bold transition ${
+              needsReplyOnly
+                ? "border-[#174734] bg-[#174734] text-white"
+                : "border-[#d8d3c6] text-[#174734] hover:border-[#9c7a20]"
+            }`}
+          >
+            Needs reply{waitingCount > 0 ? ` (${waitingCount})` : ""}
+          </Link>
+        </div>
+
+        <section className="mt-3 rounded-3xl bg-white p-5 shadow sm:p-8">
           {inboxRows.length === 0 ? (
             <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
-              No messages yet.
+              {needsReplyOnly ? "Everyone has been answered." : "No messages yet."}
             </p>
           ) : (
             <div className="space-y-3">
@@ -393,6 +442,12 @@ export default async function MessagesInboxPage() {
                         <span className="rounded-full bg-[#faf4e3] px-3 py-1 text-xs font-bold text-[#9c7a20]">
                           {row.openRequestCount} open request
                           {row.openRequestCount === 1 ? "" : "s"}
+                        </span>
+                      ) : null}
+
+                      {row.waitingSince ? (
+                        <span className="rounded-full bg-[#faf4e3] px-3 py-1 text-xs font-bold text-[#9c7a20]">
+                          Waiting {formatWaiting(row.waitingSince, now)}
                         </span>
                       ) : null}
 

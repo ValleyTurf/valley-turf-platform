@@ -8,22 +8,36 @@
 // which of the two bound server actions (page.tsx passes both) actually
 // gets called -- same onSubmit shape either way, so this component
 // doesn't need to know anything about how each channel sends.
-import { useRef, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { createSavedReply, deleteSavedReply } from "./replyActions";
+
+export type SavedReply = { id: string; title: string; body: string };
+
+// {first_name} becomes the customer's first name, so one saved reply
+// works for everyone. Falls back to "there" when there is no name.
+function fillSavedReply(body: string, firstName: string | null): string {
+  return body.replace(/\{first_name\}/gi, firstName || "there");
+}
 
 type ReplyChannel = "email" | "sms";
 
 export function ReplyForm({
   onSubmitEmail,
   onSubmitSms,
+  savedReplies = [],
+  firstName = null,
 }: {
   // Both already bound to jobberClientId via .bind() in page.tsx -- this
   // component only ever supplies the FormData argument.
   onSubmitEmail: (formData: FormData) => Promise<{ error: string | null }>;
   onSubmitSms: (formData: FormData) => Promise<{ error: string | null }>;
+  savedReplies?: SavedReply[];
+  firstName?: string | null;
 }) {
   const router = useRouter();
-  const formRef = useRef<HTMLFormElement>(null);
+  const [body, setBody] = useState("");
+  const [managing, setManaging] = useState(false);
   const [channel, setChannel] = useState<ReplyChannel>("email");
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState<ReplyChannel | null>(null);
@@ -43,7 +57,7 @@ export function ReplyForm({
         return;
       }
 
-      formRef.current?.reset();
+      setBody("");
       setSent(channel);
       router.refresh();
     });
@@ -78,10 +92,76 @@ export function ReplyForm({
         </button>
       </div>
 
-      <form ref={formRef} action={handleSubmit} className="mt-2 flex gap-3">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {savedReplies.map((reply) => (
+          <span
+            key={reply.id}
+            className="inline-flex items-center overflow-hidden rounded-full border border-[#d8d3c6] bg-white text-xs font-semibold text-[#174734]"
+          >
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={() => setBody(fillSavedReply(reply.body, firstName))}
+              title={reply.body}
+              className="px-3 py-1 transition hover:bg-[#f7f6f1]"
+            >
+              {reply.title}
+            </button>
+            {managing && (
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() => {
+                  if (!window.confirm(`Delete the saved reply "${reply.title}"?`)) return;
+                  startTransition(async () => {
+                    const result = await deleteSavedReply(reply.id);
+                    if (result.error) setError(result.error);
+                    else router.refresh();
+                  });
+                }}
+                className="border-l border-[#d8d3c6] px-2 py-1 text-red-600 hover:bg-red-50"
+                aria-label={`Delete ${reply.title}`}
+              >
+                ×
+              </button>
+            )}
+          </span>
+        ))}
+        {body.trim() && (
+          <button
+            type="button"
+            disabled={isPending}
+            onClick={() => {
+              const title = window.prompt("Name this saved reply:");
+              if (!title?.trim()) return;
+              startTransition(async () => {
+                const result = await createSavedReply(title, body);
+                if (result.error) setError(result.error);
+                else router.refresh();
+              });
+            }}
+            className="rounded-full border border-dashed border-[#9c7a20] px-3 py-1 text-xs font-semibold text-[#9c7a20] hover:bg-[#faf4e3]"
+          >
+            + Save this as a reply
+          </button>
+        )}
+        {savedReplies.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setManaging((value) => !value)}
+            className="text-xs font-semibold text-[#6b705c] hover:underline"
+          >
+            {managing ? "Done" : "Edit list"}
+          </button>
+        )}
+      </div>
+
+      <form action={handleSubmit} className="mt-2 flex gap-3">
         <textarea
           name="body"
-          rows={2}
+          rows={3}
+          value={body}
+          onChange={(event) => setBody(event.target.value)}
           required
           placeholder={channel === "email" ? "Type a reply..." : "Type a text..."}
           disabled={isPending}

@@ -12,7 +12,10 @@ import {
   updateServiceRequestStatus,
 } from "./actions";
 import { StatusSelect } from "./StatusSelect";
-import { ReplyForm } from "./ReplyForm";
+import { ReplyForm, type SavedReply } from "./ReplyForm";
+import { markThreadHandled } from "./replyActions";
+import { loadNeedsReply } from "@/lib/needsReply";
+import { formatWaiting } from "@/lib/needsReplyLogic";
 
 type PortalMessage = {
   id: string;
@@ -115,6 +118,7 @@ export default async function CustomerMessageThreadPage({
 
   const [
     customerResult,
+    savedRepliesResult,
     messagesResult,
     requestsResult,
     emailsResult,
@@ -127,6 +131,11 @@ export default async function CustomerMessageThreadPage({
         .select("full_name, email, phone")
         .eq("jobber_client_id", jobberClientId)
         .maybeSingle(),
+
+      supabaseServer
+        .from("saved_replies")
+        .select("id, title, body")
+        .order("created_at", { ascending: true }),
 
       supabaseServer
         .from("portal_messages")
@@ -192,6 +201,11 @@ export default async function CustomerMessageThreadPage({
         .order("created_at", { ascending: true })
         .limit(200),
     ]);
+
+  const savedReplies = (savedRepliesResult.data ?? []) as SavedReply[];
+  const waiting = (await loadNeedsReply()).find(
+    (thread) => thread.clientId === jobberClientId
+  );
 
   const customer = customerResult.data as
     | { full_name: string | null; email: string | null; phone: string | null }
@@ -294,6 +308,11 @@ export default async function CustomerMessageThreadPage({
 
   const replyToCustomerByEmailWithId = replyToCustomerByEmail.bind(null, jobberClientId);
   const replyToCustomerBySmsWithId = replyToCustomerBySms.bind(null, jobberClientId);
+
+  async function markHandledWithId() {
+    "use server";
+    await markThreadHandled(jobberClientId);
+  }
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
@@ -401,9 +420,27 @@ export default async function CustomerMessageThreadPage({
             )}
           </div>
 
+          {waiting && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-[#faf4e3] px-4 py-3">
+              <p className="text-sm font-semibold text-[#9c7a20]">
+                Waiting on a reply for {formatWaiting(waiting.since, new Date())}
+              </p>
+              <form action={markHandledWithId}>
+                <button
+                  type="submit"
+                  className="rounded-lg border border-[#9c7a20] px-3 py-1 text-xs font-bold text-[#9c7a20] transition hover:bg-white"
+                >
+                  No reply needed
+                </button>
+              </form>
+            </div>
+          )}
+
           <ReplyForm
             onSubmitEmail={replyToCustomerByEmailWithId}
             onSubmitSms={replyToCustomerBySmsWithId}
+            savedReplies={savedReplies}
+            firstName={customer?.full_name?.trim().split(/\s+/)[0] ?? null}
           />
           <p className="mt-2 text-xs text-[#9c9887]">
             Sends a real email or text to the customer and logs here.

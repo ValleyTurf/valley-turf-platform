@@ -11,6 +11,8 @@
 // sendDailyDigestEmail() owns the actual HTML rendering, same split as
 // every other automated send in this app.
 import { describeTwilioError } from "@/lib/textDeliveryStatus";
+import { loadNeedsReply } from "@/lib/needsReply";
+import { formatWaiting } from "@/lib/needsReplyLogic";
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
@@ -642,6 +644,48 @@ async function countFailedTexts(): Promise<{ count: number; sample: string[] }> 
   }
 }
 
+// Customers who wrote to us more than a day ago and are still waiting on
+// an answer (lib/needsReply.ts).
+async function countWaitingReplies(): Promise<{ count: number; sample: string[] }> {
+  try {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const waiting = (await loadNeedsReply()).filter((thread) => thread.since <= cutoff);
+
+    if (waiting.length === 0) return { count: 0, sample: [] };
+
+    const { data } = await supabaseServer
+      .from("customers")
+      .select("jobber_client_id, full_name")
+      .in(
+        "jobber_client_id",
+        waiting.slice(0, SAMPLE_LIMIT).map((thread) => thread.clientId)
+      );
+
+    const nameById = new Map(
+      ((data ?? []) as { jobber_client_id: string; full_name: string | null }[]).map(
+        (row) => [row.jobber_client_id, row.full_name || "Unnamed customer"]
+      )
+    );
+    const now = new Date();
+
+    return {
+      count: waiting.length,
+      sample: waiting
+        .slice(0, SAMPLE_LIMIT)
+        .map(
+          (thread) =>
+            `${nameById.get(thread.clientId) ?? "Unnamed customer"} -- waiting ${formatWaiting(
+              thread.since,
+              now
+            )}`
+        ),
+    };
+  } catch (error) {
+    console.error("Waiting replies lookup failed:", error);
+    return { count: 0, sample: [] };
+  }
+}
+
 // Pay-ahead customers whose card is charged tomorrow, with the amount
 // (lib/autopayPrepay.ts) -- the day-before heads-up Ryan asked for when
 // he chose to have these charged automatically.
@@ -706,6 +750,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     pageErrors,
     failedAutopayCharges,
     failedTexts,
+    waitingReplies,
     monthAheadChargesTomorrow,
     skippedInvoicedVisits,
   ] = await Promise.all([
@@ -720,6 +765,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     countPageErrors(),
     countFailedAutopayCharges(),
     countFailedTexts(),
+    countWaitingReplies(),
     countMonthAheadChargesTomorrow(),
     countSkippedInvoicedVisits(),
   ]);
@@ -737,6 +783,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     pageErrors,
     failedAutopayCharges,
     failedTexts,
+    waitingReplies,
     monthAheadChargesTomorrow,
     skippedInvoicedVisits,
   };
@@ -757,6 +804,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     data.pageErrors.count +
     data.failedAutopayCharges.count +
     data.failedTexts.count +
+    data.waitingReplies.count +
     data.monthAheadChargesTomorrow.count +
     data.skippedInvoicedVisits.count;
 

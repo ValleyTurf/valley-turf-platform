@@ -286,6 +286,7 @@ export type DailyDigestData = {
   // (lib/autopaySchedule.ts).
   failedAutopayCharges: DailyDigestSection;
   failedTexts: DailyDigestSection;
+  waitingReplies: DailyDigestSection;
   // Pay-ahead customers being charged tomorrow, with amounts, and
   // already-invoiced visits that were skipped/cancelled in the last 7
   // days (lib/autopayPrepay.ts).
@@ -370,6 +371,11 @@ export async function sendDailyDigestEmail(
         "Autopay charges that failed (last 24h)",
         data.failedAutopayCharges,
         "No failed charges."
+      )}
+      ${digestSectionHtml(
+        "Customers waiting on a reply for over a day (Messages > Needs reply)",
+        data.waitingReplies,
+        "Everyone has been answered."
       )}
       ${digestSectionHtml(
         "Texts that were not delivered (last 24h) -- an email copy goes out automatically where we have an address",
