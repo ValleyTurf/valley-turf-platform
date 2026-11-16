@@ -269,12 +269,20 @@ export default async function ProfitAndLossPage() {
             </p>
           </div>
 
-          <Link
-            href="/expenses"
-            className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
-          >
-            Log an Expense
-          </Link>
+          <div className="flex flex-wrap gap-3">
+            <Link
+              href="/revenue/tax-package"
+              className="rounded-xl border border-[#174734] px-5 py-3 text-center text-sm font-bold text-[#174734] transition hover:bg-white"
+            >
+              Tax Package
+            </Link>
+            <Link
+              href="/expenses"
+              className="rounded-xl bg-[#174734] px-5 py-3 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
+            >
+              Log an Expense
+            </Link>
+          </div>
         </header>
 
         <section className="mt-6 rounded-2xl border border-[#d4af37]/40 bg-white p-5 shadow">
