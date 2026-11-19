@@ -14,6 +14,7 @@ import "server-only";
 // drifting between a list view and a detail view.
 import { supabaseServer } from "@/lib/supabase-server";
 import { toNumber } from "@/lib/format";
+import { isLoanAccount, loanRowEffect } from "@/lib/loanPayments";
 
 export type TrackedAccountBalance = {
   id: string;
@@ -27,6 +28,9 @@ export type TrackedAccountBalance = {
   inAppBalance: number | null;
   reviewCount: number;
   difference: number | null;
+  // Loan accounts move by the principal part of each payment only
+  // (lib/loanPayments.ts).
+  isLoan: boolean;
 };
 
 // Every tracked (include_in_expense_sync) account, with its computed
@@ -57,7 +61,7 @@ export async function getTrackedAccountsWithBalances(): Promise<
   const { data: accounts } = await supabaseServer
     .from("bank_accounts")
     .select(
-      "id, bank_connection_id, name, mask, starting_balance, starting_balance_date, live_balance, live_balance_as_of"
+      "id, bank_connection_id, name, mask, subtype, starting_balance, starting_balance_date, live_balance, live_balance_as_of"
     )
     .in("bank_connection_id", connectionIds)
     .eq("include_in_expense_sync", true)
@@ -75,10 +79,16 @@ export async function getTrackedAccountsWithBalances(): Promise<
       startingBalance !== null
         ? supabaseServer
             .from("expenses")
-            .select("amount")
+            .select("amount, description, vendor")
             .eq("bank_account_id", account.id)
             .gte("expense_date", account.starting_balance_date)
-        : Promise.resolve({ data: [] as { amount: number | string }[] }),
+        : Promise.resolve({
+            data: [] as {
+              amount: number | string;
+              description: string | null;
+              vendor: string | null;
+            }[],
+          }),
 
       supabaseServer
         .from("expenses")
@@ -87,11 +97,21 @@ export async function getTrackedAccountsWithBalances(): Promise<
         .eq("status", "needs_review"),
     ]);
 
-    const inAppBalance =
-      startingBalance !== null
-        ? startingBalance -
-          (ledgerResult.data ?? []).reduce((sum, row) => sum + toNumber(row.amount), 0)
-        : null;
+    const isLoan = isLoanAccount({ name: account.name, subtype: account.subtype });
+
+    // A loan moves by the principal of each payment (read from the
+    // description), not the whole payment -- interest does not reduce
+    // what is owed.
+    const movement = (ledgerResult.data ?? []).reduce(
+      (sum, row) =>
+        sum +
+        (isLoan
+          ? loanRowEffect(toNumber(row.amount), [row.description, row.vendor]).effect
+          : toNumber(row.amount)),
+      0
+    );
+
+    const inAppBalance = startingBalance !== null ? startingBalance - movement : null;
 
     const liveBalance = account.live_balance !== null ? toNumber(account.live_balance) : null;
 
@@ -112,6 +132,7 @@ export async function getTrackedAccountsWithBalances(): Promise<
       inAppBalance,
       reviewCount: (reviewResult as { count: number | null }).count ?? 0,
       difference,
+      isLoan,
     });
   }
 

@@ -17,6 +17,7 @@ import { getTrackedAccountsWithBalances } from "@/lib/bankReconciliation";
 import { toNumber, formatCurrencyPrecise as formatCurrency } from "@/lib/format";
 import ExpenseRowItem, { type ExpenseRow } from "../../expenses/ExpenseRowItem";
 import StartingBalanceForm from "../StartingBalanceForm";
+import { loanRowEffect } from "@/lib/loanPayments";
 
 type PageProps = {
   params: Promise<{ accountId: string }>;
@@ -84,7 +85,10 @@ export default async function ReconciliationAccountPage({
     { row: ExpenseRow; balance: number }[]
   >((acc, row) => {
     const previousBalance = acc.length > 0 ? acc[acc.length - 1].balance : account.startingBalance ?? 0;
-    acc.push({ row, balance: previousBalance - toNumber(row.amount) });
+    const movement = account.isLoan
+      ? loanRowEffect(toNumber(row.amount), [row.description, row.vendor]).effect
+      : toNumber(row.amount);
+    acc.push({ row, balance: previousBalance - movement });
     return acc;
   }, []);
 
@@ -201,6 +205,24 @@ export default async function ReconciliationAccountPage({
             />
           </div>
         </section>
+
+        {account.isLoan ? (
+          <section
+            style={{
+              background: "#e0f2fe",
+              border: "1px solid #bae6fd",
+              borderRadius: "12px",
+              padding: "14px 16px",
+              marginBottom: "20px",
+              color: "#075985",
+              fontSize: "13px",
+            }}
+          >
+            This is a loan. Each payment lowers the balance by its principal
+            only, read from the PRINCIPAL figure in the payment description;
+            the interest part does not change what is owed.
+          </section>
+        ) : null}
 
         {account.startingBalance === null ? (
           <section
