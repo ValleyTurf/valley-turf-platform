@@ -65,7 +65,7 @@ import {
   marginPercent,
 } from "@/lib/profitTracking";
 import { allocateInvoices } from "@/lib/visitInvoiceMatch";
-import { buildServiceMonths, servicePattern } from "@/lib/serviceMonths";
+import { buildServiceMonths } from "@/lib/serviceMonths";
 import {
   getClientInvoiceRows,
   getClientVisitLinks,
@@ -2358,12 +2358,10 @@ export default async function CustomerDetailPage({
     })),
     todayPhoenix
   );
-  const servicePatternLabel = servicePattern(serviceMonths);
 
   const planRows: { k: string; v: string }[] = [
     { k: "Service", v: nextVisit?.title ?? pastVisits[0]?.title ?? "Not set" },
     { k: "Plan", v: profile?.subscription_plan?.trim() || "Not set" },
-    { k: "Visit pattern", v: servicePatternLabel ?? "Not enough history" },
     {
       k: "Price",
       v: lastBilled !== null ? `${formatCurrencyPrecise(lastBilled)} per visit` : "Not set",
@@ -2926,8 +2924,7 @@ export default async function CustomerDetailPage({
                       })}
                     </div>
                     <p className="mt-2 text-[11px] text-[#6b705c]">
-                      Filled means serviced, outlined means scheduled, gray means no visit. Read
-                      from visit history, so a quarterly customer shows only their service months.
+                      Filled means serviced, outlined means scheduled, gray means no visit.
                     </p>
                     <Link
                       href={customerTabHref(decodedId, currentSearchParams, "property")}
@@ -3139,7 +3136,7 @@ export default async function CustomerDetailPage({
                    <details> keeps this simple: fields inside stay in the
                    DOM and still submit with the rest of the form even
                    while collapsed, so Save Profile needs no changes. */}
-                <details className="rounded-xl border border-[#e7e2d5] px-3 py-2">
+                <details open className="rounded-xl border border-[#e7e2d5] px-3 py-2">
                   <summary className="cursor-pointer text-xs font-bold text-[#9c7a20]">
                     More property details
                   </summary>

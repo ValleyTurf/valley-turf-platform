@@ -58,26 +58,3 @@ export function buildServiceMonths(
   }
   return months;
 }
-
-// A plain-words pattern read from the months that have service.
-export function servicePattern(months: ServiceMonth[]): string | null {
-  const active = months
-    .map((month, index) => ({ index, total: month.done + month.scheduled }))
-    .filter((entry) => entry.total > 0);
-
-  if (active.length < 2) return null;
-
-  const gaps: number[] = [];
-  for (let i = 1; i < active.length; i += 1) {
-    gaps.push(active[i].index - active[i - 1].index);
-  }
-  gaps.sort((a, b) => a - b);
-  const gap = gaps[Math.floor(gaps.length / 2)];
-  const perMonth = active.reduce((sum, entry) => sum + entry.total, 0) / active.length;
-
-  if (gap === 1) return perMonth >= 1.5 ? "Twice a month" : "Monthly";
-  if (gap === 2) return "Every 2 months";
-  if (gap === 3) return "Quarterly";
-  if (gap === 6) return "Twice a year";
-  return `Every ${gap} months`;
-}
