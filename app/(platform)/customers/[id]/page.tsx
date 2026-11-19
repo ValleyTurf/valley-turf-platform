@@ -59,7 +59,20 @@ import {
   formatNumber,
 } from "@/lib/format";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
-import { PROFIT_TRACKING_START_DATE } from "@/lib/profitTracking";
+import { PROFIT_TRACKING_START_DATE, PROFIT_TRACKING_START_LABEL } from "@/lib/profitTracking";
+import {
+  getClientInvoiceRows,
+  getClientVisitLinks,
+  linkVisitsToInvoices,
+} from "@/lib/visitDetail";
+import { isCollectedPayment } from "@/lib/visitDetailLogic";
+import {
+  buildVisitRows,
+  filterRows,
+  isVisitFilter,
+  type VisitFilter,
+  type VisitRowInput,
+} from "@/lib/visitTableRows";
 import { getCustomerJobCostingSummary } from "@/lib/jobCostingSummary";
 import { isQuoteStatus, computeDisplayStatus } from "@/lib/quotes";
 import {
@@ -235,6 +248,8 @@ type CustomerDetailPageProps = {
     invoicesPage?: string;
     jobsPage?: string;
     quotesPage?: string;
+    tab?: string;
+    show?: string;
   }>;
 };
 
@@ -1740,6 +1755,77 @@ function VisitCostBreakdownSection({
   );
 }
 
+function KpiCard({
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "good" | "warn";
+}) {
+  const color =
+    tone === "good"
+      ? "text-green-700"
+      : tone === "warn"
+        ? "text-red-600"
+        : "text-[#174734]";
+
+  return (
+    <div className="rounded-2xl bg-white p-4 shadow">
+      <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-[#9c7a20]">
+        {label}
+      </p>
+      <p className={`mt-1 text-2xl font-extrabold ${color}`}>{value}</p>
+      {sub && <p className="mt-0.5 text-xs text-[#6b705c]">{sub}</p>}
+    </div>
+  );
+}
+
+function formatMinutesShort(minutes: number | null): string {
+  if (!minutes || minutes <= 0) return "-";
+  const total = Math.round(minutes);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (h === 0) return `${m}m`;
+  return `${h}h ${String(m).padStart(2, "0")}m`;
+}
+
+const CUSTOMER_TABS = [
+  { key: "overview", label: "Overview" },
+  { key: "visits", label: "Visits" },
+  { key: "invoices", label: "Invoices and payments" },
+  { key: "messages", label: "Messages" },
+  { key: "property", label: "Property and notes" },
+  { key: "jobs", label: "Jobs and quotes" },
+  { key: "settings", label: "Settings" },
+] as const;
+
+type CustomerTab = (typeof CUSTOMER_TABS)[number]["key"];
+
+function isCustomerTab(value: string | undefined): value is CustomerTab {
+  return CUSTOMER_TABS.some((tab) => tab.key === value);
+}
+
+// Keeps every other query param (profit range, page numbers, filters) so
+// switching tabs does not reset what the person was looking at.
+function customerTabHref(
+  customerId: string,
+  params: Record<string, string | undefined>,
+  tab: CustomerTab
+): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (key === "tab" || key === "show" || !value) continue;
+    query.set(key, value);
+  }
+  if (tab !== "overview") query.set("tab", tab);
+  const text = query.toString();
+  return `/customers/${encodeURIComponent(customerId)}${text ? `?${text}` : ""}`;
+}
+
 export default async function CustomerDetailPage({
   params,
   searchParams,
@@ -1756,7 +1842,11 @@ export default async function CustomerDetailPage({
     invoicesPage,
     jobsPage,
     quotesPage,
+    tab: tabParam,
+    show: showParam,
   } = await searchParams;
+  const tab: CustomerTab = isCustomerTab(tabParam) ? tabParam : "overview";
+  const visitFilter: VisitFilter = isVisitFilter(showParam) ? showParam : "all";
   const profitTimeframe: ProfitTimeframe = isProfitTimeframe(profitRange)
     ? profitRange
     : "since-tracking";
@@ -1781,6 +1871,8 @@ export default async function CustomerDetailPage({
     invoicesPage,
     jobsPage,
     quotesPage,
+    tab: tabParam,
+    show: showParam,
   };
 
   const [
@@ -2041,6 +2133,120 @@ export default async function CustomerDetailPage({
   const meetsProfitTarget =
     profitMarginPct !== null && profitMarginPct >= targetMarginPct;
 
+  // ---- KPI strip, tabs and Visits tab (customer page redesign) ----
+  // Profit and margin figures only count visits since Aug 2026, when cost
+  // tracking began, regardless of what the Profitability picker shows.
+  const todayPhoenix =
+    toPhoenixDateString(new Date().toISOString()) ?? PROFIT_TRACKING_START_DATE;
+  const trackingSummary =
+    profitTimeframe === "since-tracking"
+      ? profitSummary
+      : await getCustomerJobCostingSummary(
+          decodedId,
+          PROFIT_TRACKING_START_DATE,
+          todayPhoenix
+        );
+
+  const [clientVisitLinks, clientInvoiceRows] = await Promise.all([
+    getClientVisitLinks(decodedId),
+    getClientInvoiceRows(decodedId),
+  ]);
+  const visitInvoiceMatches = linkVisitsToInvoices(clientVisitLinks, clientInvoiceRows);
+  const invoiceRowById = new Map(
+    clientInvoiceRows.map((row) => [row.jobber_invoice_id, row])
+  );
+
+  const collectedByInvoice = new Map<string, number>();
+  for (const payment of payments) {
+    if (!isCollectedPayment(payment.transaction_status)) continue;
+    collectedByInvoice.set(
+      payment.jobber_invoice_id,
+      (collectedByInvoice.get(payment.jobber_invoice_id) ?? 0) + toNumber(payment.amount)
+    );
+  }
+
+  const photoCountByVisit = new Map<string, number>();
+  for (const group of visitNoteGroups) {
+    for (const note of group.notes) {
+      photoCountByVisit.set(
+        group.jobberVisitId,
+        (photoCountByVisit.get(group.jobberVisitId) ?? 0) + note.photoUrls.length
+      );
+    }
+  }
+
+  const visitRowInputs: VisitRowInput[] = pastVisits.map((visit) => {
+    const match = visitInvoiceMatches.get(visit.jobber_visit_id);
+    const invoiceRow = match?.invoiceId ? invoiceRowById.get(match.invoiceId) ?? null : null;
+    return {
+      visitId: visit.jobber_visit_id,
+      startAt: visit.start_at,
+      title: visit.title,
+      completed:
+        (visit.visit_status ?? "").toUpperCase() === "COMPLETED" || !!visit.completed_at,
+      crew: visitAssignedNamesMap.get(visit.jobber_visit_id) ?? [],
+      minutes: visitDisplayDurationMap.get(visit.jobber_visit_id)?.minutes ?? null,
+      invoiceId: invoiceRow ? invoiceRow.jobber_invoice_id : null,
+      invoiceNumber: invoiceRow?.invoice_number ?? null,
+      billed: invoiceRow ? toNumber(invoiceRow.total) : null,
+      collected: invoiceRow ? collectedByInvoice.get(invoiceRow.jobber_invoice_id) ?? 0 : 0,
+      cost: visitDisplayTotalMap.get(visit.jobber_visit_id) ?? 0,
+      photoCount: photoCountByVisit.get(visit.jobber_visit_id) ?? 0,
+    };
+  });
+  const { rows: visitTableRows, totals: visitTotals } = buildVisitRows(
+    visitRowInputs,
+    targetMarginPct
+  );
+  const shownVisitRows = filterRows(visitTableRows, visitFilter).slice(0, 100);
+  const attentionRows = visitTableRows.filter((row) => row.flags.length > 0);
+  const visitHref = (visitId: string) =>
+    `/customers/${encodeURIComponent(decodedId)}/visits/${encodeURIComponent(visitId)}`;
+
+  const marginChartRows = visitTableRows
+    .filter((row) => row.margin !== null)
+    .slice(0, 12)
+    .reverse();
+
+  const latestContact = contactHistory.reduce<ContactHistoryEntry | null>(
+    (latest, entry) =>
+      !latest || entry.createdAt > latest.createdAt ? entry : latest,
+    null
+  );
+
+  type ActivityItem = { at: string; label: string; detail: string; href?: string };
+  const activity: ActivityItem[] = [];
+  for (const row of visitTableRows.slice(0, 5)) {
+    if (!row.startAt) continue;
+    activity.push({
+      at: row.startAt,
+      label: `${row.completed ? "Visit completed" : "Visit"}${row.title ? `: ${row.title}` : ""}`,
+      detail: row.billed !== null ? formatCurrencyPrecise(row.billed) : "No invoice linked",
+      href: visitHref(row.visitId),
+    });
+  }
+  for (const payment of payments.slice(0, 4)) {
+    if (!payment.payment_date || !isCollectedPayment(payment.transaction_status)) continue;
+    activity.push({
+      at: payment.payment_date,
+      label: "Payment received",
+      detail: formatCurrencyPrecise(toNumber(payment.amount)),
+    });
+  }
+  for (const entry of contactHistory.slice(0, 4)) {
+    activity.push({
+      at: entry.createdAt,
+      label: `${contactChannelLabel(entry.channel)} ${entry.direction === "inbound" ? "from customer" : "to customer"}`,
+      detail: entry.subject ?? entry.summary ?? "",
+    });
+  }
+  activity.sort((a, b) => b.at.localeCompare(a.at));
+  const recentActivity = activity.slice(0, 8);
+
+  const balanceDue = toNumber(financials?.outstanding_balance ?? client.balance);
+  const firstInvoiceDate = financials?.first_invoice_date ?? null;
+  const trackedMarginPct = trackingSummary.marginPct;
+
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
       <div className="mx-auto max-w-7xl">
@@ -2075,6 +2281,7 @@ export default async function CustomerDetailPage({
             </div>
           </div>
 
+          {tab === "overview" && (
           <div className="w-full rounded-2xl bg-white p-4 shadow sm:p-5 lg:flex-1">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -2186,10 +2393,191 @@ export default async function CustomerDetailPage({
               </div>
             </div>
           </div>
+          )}
         </header>
 
-        <div className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
-          <div className="space-y-6">
+        <section
+          aria-label="Customer summary"
+          className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-6"
+        >
+          <KpiCard
+            label="Lifetime revenue"
+            value={formatCurrency(lifetimeCollected)}
+            sub={
+              firstInvoiceDate
+                ? `Since ${formatDate(firstInvoiceDate)}`
+                : "No invoices yet"
+            }
+          />
+          <KpiCard
+            label={`Profit since ${PROFIT_TRACKING_START_LABEL}`}
+            value={trackingSummary.invoiceCount > 0 ? formatCurrency(trackingSummary.profit) : "-"}
+            sub={
+              trackingSummary.invoiceCount > 0
+                ? `${trackingSummary.invoiceCount} invoice${trackingSummary.invoiceCount === 1 ? "" : "s"}`
+                : "No tracked invoices yet"
+            }
+            tone={trackingSummary.invoiceCount > 0 ? (trackingSummary.profit >= 0 ? "good" : "warn") : undefined}
+          />
+          <KpiCard
+            label="Avg profit margin"
+            value={trackedMarginPct !== null ? `${trackedMarginPct.toFixed(0)}%` : "-"}
+            sub={`Since ${PROFIT_TRACKING_START_LABEL}, target ${targetMarginPct}%`}
+            tone={
+              trackedMarginPct === null
+                ? undefined
+                : trackedMarginPct >= targetMarginPct
+                  ? "good"
+                  : "warn"
+            }
+          />
+          <KpiCard
+            label="Balance due"
+            value={formatCurrencyPrecise(balanceDue)}
+            sub={balanceDue > 0 ? "Open on invoices" : "Nothing owed"}
+            tone={balanceDue > 0 ? "warn" : undefined}
+          />
+          <KpiCard
+            label="Next visit"
+            value={nextVisit?.start_at ? formatVisitDateTime(nextVisit.start_at) : "None booked"}
+            sub={nextVisit?.title ?? undefined}
+          />
+          <KpiCard
+            label="Last contact"
+            value={latestContact ? formatContactHistoryTimestamp(latestContact.createdAt).replace(/, \d{4}/, "") : "None yet"}
+            sub={
+              latestContact
+                ? `${contactChannelLabel(latestContact.channel)} ${latestContact.direction === "inbound" ? "from customer" : "to customer"}`
+                : undefined
+            }
+          />
+        </section>
+
+        <nav
+          aria-label="Customer sections"
+          className="mb-6 flex flex-wrap gap-1 border-b-2 border-[#e4dfd0]"
+        >
+          {CUSTOMER_TABS.map((item) => {
+            const active = item.key === tab;
+            return (
+              <Link
+                key={item.key}
+                href={customerTabHref(decodedId, currentSearchParams, item.key)}
+                aria-current={active ? "page" : undefined}
+                className={`-mb-0.5 border-b-[3px] px-4 py-3 text-sm font-bold ${
+                  active
+                    ? "border-[#174734] text-[#174734]"
+                    : "border-transparent text-[#6b705c] hover:text-[#174734]"
+                }`}
+              >
+                {item.key === "visits" ? `Visits (${pastVisits.length})` : item.label}
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div className="space-y-6">
+          <>
+            {tab === "overview" && (
+              <div className="grid gap-6 lg:grid-cols-2">
+                <section className="rounded-2xl bg-white p-5 shadow">
+                  <h2 className="text-lg font-bold">Needs attention</h2>
+                  {attentionRows.length === 0 && visitTotals.unpaidCount === 0 ? (
+                    <p className="mt-3 text-sm text-[#6b705c]">
+                      Nothing needs attention right now.
+                    </p>
+                  ) : (
+                    <ul className="mt-3 divide-y divide-[#f0eee6] text-sm">
+                      {visitTotals.unpaidCount > 0 && (
+                        <li className="py-2 font-semibold text-amber-800">
+                          {visitTotals.unpaidCount} unpaid visit
+                          {visitTotals.unpaidCount === 1 ? "" : "s"},{" "}
+                          {formatCurrencyPrecise(visitTotals.unpaidAmount)} due
+                        </li>
+                      )}
+                      {attentionRows.slice(0, 5).map((row) => (
+                        <li key={row.visitId} className="flex flex-wrap justify-between gap-2 py-2">
+                          <Link href={visitHref(row.visitId)} className="font-bold underline">
+                            {formatDate(row.startAt)}
+                          </Link>
+                          <span className="text-xs font-semibold text-amber-800">
+                            {row.flags.join(", ")}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {attentionRows.length > 5 && (
+                    <Link
+                      href={`${customerTabHref(decodedId, currentSearchParams, "visits")}&show=attention`}
+                      className="mt-3 inline-block text-sm font-semibold text-[#7a5f12]"
+                    >
+                      See all {attentionRows.length}
+                    </Link>
+                  )}
+                </section>
+
+                <section className="rounded-2xl bg-white p-5 shadow">
+                  <h2 className="text-lg font-bold">Recent activity</h2>
+                  {recentActivity.length === 0 ? (
+                    <p className="mt-3 text-sm text-[#6b705c]">Nothing yet.</p>
+                  ) : (
+                    <ul className="mt-3 divide-y divide-[#f0eee6] text-sm">
+                      {recentActivity.map((item, index) => (
+                        <li key={index} className="flex flex-wrap justify-between gap-2 py-2">
+                          <span>
+                            {item.href ? (
+                              <Link href={item.href} className="font-semibold underline">
+                                {item.label}
+                              </Link>
+                            ) : (
+                              <span className="font-semibold">{item.label}</span>
+                            )}
+                            {item.detail && (
+                              <span className="ml-2 text-xs text-[#6b705c]">{item.detail}</span>
+                            )}
+                          </span>
+                          <span className="text-xs text-[#6b705c]">{formatDate(item.at)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                {marginChartRows.length > 1 && (
+                  <section className="rounded-2xl bg-white p-5 shadow lg:col-span-2">
+                    <h2 className="text-lg font-bold">
+                      Profit margin by visit since {PROFIT_TRACKING_START_LABEL}
+                    </h2>
+                    <div className="mt-4 flex h-32 items-end gap-2">
+                      {marginChartRows.map((row) => {
+                        const margin = Math.max(0, Math.min(100, row.margin ?? 0));
+                        const good = (row.margin ?? 0) >= targetMarginPct;
+                        return (
+                          <Link
+                            key={row.visitId}
+                            href={visitHref(row.visitId)}
+                            title={`${formatDate(row.startAt)}: ${row.margin}%`}
+                            className="flex h-full flex-1 flex-col items-center justify-end gap-1"
+                          >
+                            <span className="text-[10px] font-bold">{row.margin}%</span>
+                            <span
+                              className={`w-full rounded-t ${good ? "bg-[#174734]" : "bg-[#d9a441]"}`}
+                              style={{ height: `${Math.max(4, margin)}%` }}
+                            />
+                          </Link>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-2 text-xs text-[#6b705c]">
+                      Dark bars meet the {targetMarginPct}% target. Oldest on the left.
+                    </p>
+                  </section>
+                )}
+              </div>
+            )}
+
+            {tab === "overview" && (
             <CustomerContactsSection
               jobberClientId={decodedId}
               email={email}
@@ -2200,7 +2588,9 @@ export default async function CustomerDetailPage({
               contacts={additionalContacts}
               addresses={additionalAddresses}
             />
+            )}
 
+            {tab === "overview" && (
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">Next Visit</h2>
 
@@ -2248,7 +2638,9 @@ export default async function CustomerDetailPage({
                 </p>
               )}
             </section>
+            )}
 
+            {tab === "jobs" && (
             <section className="rounded-2xl bg-white p-5 shadow">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-lg font-bold">Open Jobs</h2>
@@ -2321,7 +2713,9 @@ export default async function CustomerDetailPage({
                 )}
               </div>
             </section>
+            )}
 
+            {tab === "property" && (
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">
                 Property Profile
@@ -2552,7 +2946,9 @@ export default async function CustomerDetailPage({
                 </button>
               </form>
             </section>
+            )}
 
+            {tab === "property" && (
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">Notes</h2>
 
@@ -2688,7 +3084,9 @@ export default async function CustomerDetailPage({
                 </details>
               )}
             </section>
+            )}
 
+            {tab === "messages" && (
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">Contact History</h2>
 
@@ -2759,7 +3157,9 @@ export default async function CustomerDetailPage({
                 )}
               </div>
             </section>
+            )}
 
+            {tab === "settings" && (
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">
                 Marketing Attribution
@@ -2799,9 +3199,175 @@ export default async function CustomerDetailPage({
                 </div>
               )}
             </section>
-          </div>
+            )}
+          </>
 
-          <div className="space-y-4">
+          <>
+            {tab === "visits" && (
+              <section className="rounded-2xl bg-white p-5 shadow">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-lg font-bold">All visits</h2>
+                  <div className="flex flex-wrap gap-2 text-sm">
+                    {(
+                      [
+                        ["all", "All visits"],
+                        ["attention", "Needs attention"],
+                        ["unpaid", "Unpaid"],
+                        ["low-margin", "Low margin"],
+                      ] as const
+                    ).map(([key, label]) => {
+                      const base = customerTabHref(decodedId, currentSearchParams, "visits");
+                      const href = key === "all" ? base : `${base}&show=${key}`;
+                      return (
+                        <Link
+                          key={key}
+                          href={href}
+                          className={`rounded-full px-3 py-1.5 text-xs font-bold ${
+                            visitFilter === key
+                              ? "bg-[#174734] text-white"
+                              : "border border-[#d8d3c6] text-[#174734]"
+                          }`}
+                        >
+                          {label}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {shownVisitRows.length === 0 ? (
+                  <p className="mt-4 text-sm text-[#6b705c]">No visits match this filter.</p>
+                ) : (
+                  <div className="mt-4 overflow-x-auto">
+                    <table className="w-full min-w-[980px] border-collapse text-sm">
+                      <thead>
+                        <tr className="text-left text-[11px] uppercase tracking-wide text-[#6b705c]">
+                          <th className="border-b-2 border-[#e4dfd0] px-2.5 py-2">Date</th>
+                          <th className="border-b-2 border-[#e4dfd0] px-2.5 py-2">Service</th>
+                          <th className="border-b-2 border-[#e4dfd0] px-2.5 py-2">Crew</th>
+                          <th className="border-b-2 border-[#e4dfd0] px-2.5 py-2">On site</th>
+                          <th className="border-b-2 border-[#e4dfd0] px-2.5 py-2">Invoice</th>
+                          <th className="border-b-2 border-[#e4dfd0] px-2.5 py-2">Payment</th>
+                          <th className="border-b-2 border-[#e4dfd0] px-2.5 py-2 text-right">Billed</th>
+                          <th className="border-b-2 border-[#e4dfd0] px-2.5 py-2 text-right">Cost</th>
+                          <th className="border-b-2 border-[#e4dfd0] px-2.5 py-2 text-right">Profit</th>
+                          <th className="border-b-2 border-[#e4dfd0] px-2.5 py-2 text-right">Margin</th>
+                          <th className="border-b-2 border-[#e4dfd0] px-2.5 py-2">Flags</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {shownVisitRows.map((row) => {
+                          const profitColor =
+                            row.margin === null
+                              ? "text-[#6b705c]"
+                              : row.margin >= targetMarginPct
+                                ? "text-green-700"
+                                : "text-amber-700";
+                          const payLabel =
+                            row.state === "paid"
+                              ? "Paid"
+                              : row.state === "partial"
+                                ? "Partly paid"
+                                : row.state === "unpaid"
+                                  ? "Unpaid"
+                                  : "-";
+                          const payClass =
+                            row.state === "paid"
+                              ? "bg-green-100 text-green-800"
+                              : "bg-amber-100 text-amber-800";
+                          return (
+                            <tr key={row.visitId} className="border-b border-[#f0eee6]">
+                              <td className="whitespace-nowrap px-2.5 py-3">
+                                <Link href={visitHref(row.visitId)} className="font-bold underline">
+                                  {formatDate(row.startAt)}
+                                </Link>
+                              </td>
+                              <td className="px-2.5 py-3">
+                                {row.title ?? "Visit"}
+                                {!row.completed && (
+                                  <span className="ml-2 text-xs text-[#6b705c]">not completed</span>
+                                )}
+                              </td>
+                              <td className="px-2.5 py-3 text-[#4d5242]">
+                                {row.crew.length > 0 ? row.crew.join(", ") : "-"}
+                              </td>
+                              <td className="whitespace-nowrap px-2.5 py-3">
+                                {formatMinutesShort(row.minutes)}
+                              </td>
+                              <td className="whitespace-nowrap px-2.5 py-3">
+                                {row.invoiceNumber ?? (row.hasInvoice ? "Linked" : "Not linked")}
+                              </td>
+                              <td className="px-2.5 py-3">
+                                {payLabel !== "-" ? (
+                                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${payClass}`}>
+                                    {payLabel}
+                                  </span>
+                                ) : (
+                                  "-"
+                                )}
+                              </td>
+                              <td className="px-2.5 py-3 text-right">
+                                {row.billed !== null ? formatCurrencyPrecise(row.billed) : "-"}
+                              </td>
+                              <td className="px-2.5 py-3 text-right">
+                                {row.cost !== null && row.cost > 0
+                                  ? formatCurrencyPrecise(row.cost)
+                                  : row.tracked
+                                    ? "-"
+                                    : "Not tracked"}
+                              </td>
+                              <td className={`px-2.5 py-3 text-right font-extrabold ${profitColor}`}>
+                                {row.profit !== null ? formatCurrencyPrecise(row.profit) : "-"}
+                              </td>
+                              <td className={`px-2.5 py-3 text-right font-bold ${profitColor}`}>
+                                {row.margin !== null ? `${row.margin}%` : "-"}
+                              </td>
+                              <td className="px-2.5 py-3 text-xs text-amber-800">
+                                {row.flags.join(", ")}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      {visitFilter === "all" && (
+                        <tfoot>
+                          <tr className="bg-[#f7f6f1] font-extrabold">
+                            <td className="px-2.5 py-3" colSpan={6}>
+                              Totals (billed for {visitTotals.visitCount} completed visits; cost,
+                              profit and margin for the {visitTotals.trackedCount} tracked since{" "}
+                              {PROFIT_TRACKING_START_LABEL})
+                            </td>
+                            <td className="px-2.5 py-3 text-right">
+                              {formatCurrencyPrecise(visitTotals.billedAll)}
+                            </td>
+                            <td className="px-2.5 py-3 text-right">
+                              {formatCurrencyPrecise(visitTotals.trackedCost)}
+                            </td>
+                            <td className="px-2.5 py-3 text-right text-green-700">
+                              {formatCurrencyPrecise(visitTotals.trackedProfit)}
+                            </td>
+                            <td className="px-2.5 py-3 text-right text-green-700">
+                              {visitTotals.trackedMargin !== null ? `${visitTotals.trackedMargin}%` : "-"}
+                            </td>
+                            <td />
+                          </tr>
+                        </tfoot>
+                      )}
+                    </table>
+                  </div>
+                )}
+
+                <p className="mt-3 text-sm text-[#6b705c]">
+                  Cost and profit tracking started in {PROFIT_TRACKING_START_LABEL}, so earlier
+                  visits show billing only. Visits with no costs logged are left out of profit
+                  and margin. Click a date to open that visit with its invoice, payment, costs,
+                  crew, photos and messages in one place. Edit materials and equipment in the
+                  list below.
+                </p>
+              </section>
+            )}
+
+            {tab === "visits" && (
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">Past Visits</h2>
 
@@ -2906,7 +3472,9 @@ export default async function CustomerDetailPage({
                 itemLabel="visit"
               />
             </section>
+            )}
 
+            {tab === "visits" && (
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">Upcoming Visits</h2>
 
@@ -2950,7 +3518,9 @@ export default async function CustomerDetailPage({
                 itemLabel="visit"
               />
             </section>
+            )}
 
+            {tab === "invoices" && (
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">Payment History</h2>
 
@@ -3047,7 +3617,9 @@ export default async function CustomerDetailPage({
                 itemLabel="payment"
               />
             </section>
+            )}
 
+            {tab === "invoices" && (
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">Autopay</h2>
 
@@ -3126,7 +3698,9 @@ export default async function CustomerDetailPage({
                 )}
               </div>
             </section>
+            )}
 
+            {tab === "invoices" && (
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">
                 Past Invoices
@@ -3364,7 +3938,9 @@ export default async function CustomerDetailPage({
                 itemLabel="invoice"
               />
             </section>
+            )}
 
+            {tab === "jobs" && (
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">
                 Past Jobs
@@ -3442,7 +4018,9 @@ export default async function CustomerDetailPage({
                 itemLabel="job"
               />
             </section>
+            )}
 
+            {tab === "jobs" && (
             <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">
                 Past Quotes
@@ -3524,7 +4102,8 @@ export default async function CustomerDetailPage({
                 itemLabel="quote"
               />
             </section>
-          </div>
+            )}
+          </>
         </div>
       </div>
     </main>
