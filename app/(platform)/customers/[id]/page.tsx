@@ -59,6 +59,7 @@ import {
   formatNumber,
 } from "@/lib/format";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
+import { PROFIT_TRACKING_START_DATE } from "@/lib/profitTracking";
 import { getCustomerJobCostingSummary } from "@/lib/jobCostingSummary";
 import { isQuoteStatus, computeDisplayStatus } from "@/lib/quotes";
 import {
@@ -92,7 +93,6 @@ type ProfitTimeframe =
   | "ytd"
   | "all-time";
 
-const PROFIT_TRACKING_START_DATE = "2026-08-01";
 
 // Ryan's call, 2026-09-20: 60% is the target for a lot of customers, but
 // not a one-size-fits-all number -- some plans/customers are reasonably
