@@ -58,12 +58,13 @@ import {
   formatDateOnly as formatDate,
   formatNumber,
 } from "@/lib/format";
-import { toPhoenixDateString } from "@/lib/phoenixDate";
+import { toDateOnly, toPhoenixDateString } from "@/lib/phoenixDate";
 import {
   PROFIT_TRACKING_START_DATE,
   PROFIT_TRACKING_START_LABEL,
   marginPercent,
 } from "@/lib/profitTracking";
+import { allocateInvoices } from "@/lib/visitInvoiceMatch";
 import {
   getClientInvoiceRows,
   getClientVisitLinks,
@@ -2180,9 +2181,16 @@ export default async function CustomerDetailPage({
     }
   }
 
+  const invoiceTotalById = new Map<string, number>(
+    clientInvoiceRows.map((row) => [row.jobber_invoice_id, toNumber(row.total)])
+  );
+
   const visitRowInputs: VisitRowInput[] = pastVisits.map((visit) => {
     const match = visitInvoiceMatches.get(visit.jobber_visit_id);
-    const invoiceRow = match?.invoiceId ? invoiceRowById.get(match.invoiceId) ?? null : null;
+    const allocation = allocateInvoices(match, invoiceTotalById, collectedByInvoice);
+    const numbers = (match?.invoiceIds ?? [])
+      .map((invoiceId) => invoiceRowById.get(invoiceId)?.invoice_number)
+      .filter((value): value is string => !!value);
     return {
       visitId: visit.jobber_visit_id,
       startAt: visit.start_at,
@@ -2191,17 +2199,27 @@ export default async function CustomerDetailPage({
         (visit.visit_status ?? "").toUpperCase() === "COMPLETED" || !!visit.completed_at,
       crew: visitAssignedNamesMap.get(visit.jobber_visit_id) ?? [],
       minutes: visitDisplayDurationMap.get(visit.jobber_visit_id)?.minutes ?? null,
-      invoiceId: invoiceRow ? invoiceRow.jobber_invoice_id : null,
-      invoiceNumber: invoiceRow?.invoice_number ?? null,
-      billed: invoiceRow ? toNumber(invoiceRow.total) : null,
-      collected: invoiceRow ? collectedByInvoice.get(invoiceRow.jobber_invoice_id) ?? 0 : 0,
+      invoiceNumber: numbers.length > 0 ? numbers.join(", ") : null,
+      hasInvoice: allocation.hasInvoice,
+      billed: allocation.hasInvoice ? allocation.billed : null,
+      collected: allocation.collected,
+      invoiceTotal: allocation.hasInvoice ? allocation.invoiceTotal : null,
+      invoiceCollected: allocation.invoiceCollected,
+      invoiceDue:
+        (match?.invoiceIds ?? [])
+          .map((invoiceId) => toDateOnly(invoiceRowById.get(invoiceId)?.due_date ?? null))
+          .filter((value): value is string => !!value)
+          .sort()
+          .pop() ?? null,
+      shared: allocation.shared,
       cost: visitDisplayTotalMap.get(visit.jobber_visit_id) ?? 0,
       photoCount: photoCountByVisit.get(visit.jobber_visit_id) ?? 0,
     };
   });
   const { rows: visitTableRows, totals: visitTotals } = buildVisitRows(
     visitRowInputs,
-    targetMarginPct
+    targetMarginPct,
+    todayPhoenix
   );
   const shownVisitRows = filterRows(visitTableRows, visitFilter).slice(0, 100);
   const attentionRows = visitTableRows.filter((row) => row.flags.length > 0);
@@ -2314,7 +2332,7 @@ export default async function CustomerDetailPage({
     .filter(
       (payment) =>
         isCollectedPayment(payment.transaction_status) &&
-        (toPhoenixDateString(payment.payment_date) ?? "").startsWith(phoenixYear)
+        (toDateOnly(payment.payment_date) ?? "").startsWith(phoenixYear)
     )
     .reduce((sum, payment) => sum + toNumber(payment.amount), 0);
   const failedCharges = payments.filter(
@@ -2344,7 +2362,7 @@ export default async function CustomerDetailPage({
         ? `${Number(profile.turf_size_sqft).toLocaleString("en-US")} sq ft`
         : (profile?.turf_size_range ?? "Not set"),
     },
-    { k: "Gate code", v: profile?.gate_code ? "On file" : "Not set" },
+    { k: "Gate code", v: profile?.gate_code?.trim() || "Not set" },
   ];
   const moneyRows: { k: string; v: string }[] = [
     { k: "Open invoices", v: String(openInvoices.length) },
@@ -2393,7 +2411,12 @@ export default async function CustomerDetailPage({
     "No invoice linked": "This visit is not matched to an invoice yet.",
   };
   const alerts: AttentionItem[] = [];
-  for (const entry of openInvoices.slice(0, 3)) {
+  for (const entry of openInvoices
+    .filter(
+      (entry) =>
+        (toDateOnly(entry.invoice.due_date ?? entry.invoice.issue_date) ?? "") <= todayPhoenix
+    )
+    .slice(0, 3)) {
     alerts.push({
       title: `Invoice ${entry.invoice.invoice_number ?? ""} is unpaid.`.replace("  ", " "),
       detail: `${formatCurrencyPrecise(entry.due)} due.`,
@@ -3654,8 +3677,11 @@ export default async function CustomerDetailPage({
                               : row.margin >= targetMarginPct
                                 ? "text-green-700"
                                 : "text-amber-700";
-                          const payLabel =
-                            row.state === "paid"
+                          const notDueYet =
+                            (row.state === "unpaid" || row.state === "partial") && !row.overdue;
+                          const payLabel = notDueYet
+                            ? "Not due yet"
+                            : row.state === "paid"
                               ? "Paid"
                               : row.state === "partial"
                                 ? "Partly paid"
@@ -3665,7 +3691,9 @@ export default async function CustomerDetailPage({
                           const payClass =
                             row.state === "paid"
                               ? "bg-green-100 text-green-800"
-                              : "bg-amber-100 text-amber-800";
+                              : notDueYet
+                                ? "bg-slate-100 text-slate-700"
+                                : "bg-amber-100 text-amber-800";
                           return (
                             <tr key={row.visitId} className="border-b border-[#f0eee6]">
                               <td className="whitespace-nowrap px-2.5 py-3">
@@ -3686,7 +3714,10 @@ export default async function CustomerDetailPage({
                                 {formatMinutesShort(row.minutes)}
                               </td>
                               <td className="whitespace-nowrap px-2.5 py-3">
-                                {row.invoiceNumber ?? (row.hasInvoice ? "Linked" : "Not linked")}
+                                {row.invoiceNumber ?? (row.hasInvoice ? "Linked" : "None this month")}
+                                {row.shared && (
+                                  <span className="ml-1 text-[11px] text-[#6b705c]">(split)</span>
+                                )}
                               </td>
                               <td className="px-2.5 py-3">
                                 {payLabel !== "-" ? (

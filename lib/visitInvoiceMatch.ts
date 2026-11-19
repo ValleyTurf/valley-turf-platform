@@ -1,28 +1,33 @@
 // Visits and invoices are not reliably linked in the data:
-// jobber_visits.jobber_invoice_id is only sometimes populated. This
-// decides which invoice belongs to a visit, as safely as it can.
+// jobber_visits.jobber_invoice_id is only sometimes populated, and many
+// customers pay one invoice in advance for the whole month (paid on the
+// 1st, 10th or 15th) that covers every visit in that month.
 //
 // Order of trust:
 //   1. The visit's own jobber_invoice_id, when set.
-//   2. Otherwise the single invoice dated in the same month, but only if
-//      exactly one visit and one invoice in that month are still
-//      unclaimed (the monthly-invoice convention). Anything ambiguous
-//      stays unlinked rather than guessing.
+//   2. Otherwise every invoice dated in the same month as the visit.
+//
+// When one invoice covers several visits its amount is split evenly
+// across them, so a $350 monthly invoice over two visits is $175 per
+// visit. Visits with no invoice in their month stay unlinked.
 
 export type MatchVisit = {
   visitId: string;
-  startAt: string | null;
   invoiceId: string | null;
+  // Phoenix month of the visit, YYYY-MM.
+  month: string | null;
 };
 
 export type MatchInvoice = {
   invoiceId: string;
-  // YYYY-MM-DD, already in Phoenix time (issue date, falling back to due date).
+  // YYYY-MM-DD, already a Phoenix calendar date.
   date: string | null;
 };
 
 export type VisitInvoiceMatch = {
-  invoiceId: string | null;
+  invoiceIds: string[];
+  // Parallel to invoiceIds: how many visits share that invoice (this one included).
+  visitCounts: number[];
   method: "direct" | "month" | "none";
 };
 
@@ -32,54 +37,103 @@ function monthOf(value: string | null): string | null {
   return /^\d{4}-\d{2}$/.test(month) ? month : null;
 }
 
-// visitMonth must be the visit's Phoenix month (YYYY-MM); callers pass
-// startAt already converted, so this stays a pure string function.
 export function matchVisitsToInvoices(
-  visits: (MatchVisit & { month: string | null })[],
+  visits: MatchVisit[],
   invoices: MatchInvoice[]
 ): Map<string, VisitInvoiceMatch> {
-  const result = new Map<string, VisitInvoiceMatch>();
-  const claimed = new Set<string>();
-
-  for (const visit of visits) {
-    if (visit.invoiceId) {
-      result.set(visit.visitId, { invoiceId: visit.invoiceId, method: "direct" });
-      claimed.add(visit.invoiceId);
-    }
-  }
-
-  const unlinkedByMonth = new Map<string, string[]>();
-  for (const visit of visits) {
-    if (result.has(visit.visitId)) continue;
-    if (!visit.month) {
-      result.set(visit.visitId, { invoiceId: null, method: "none" });
-      continue;
-    }
-    const list = unlinkedByMonth.get(visit.month) ?? [];
-    list.push(visit.visitId);
-    unlinkedByMonth.set(visit.month, list);
-  }
-
-  const freeInvoicesByMonth = new Map<string, string[]>();
+  const invoicesByMonth = new Map<string, string[]>();
   for (const invoice of invoices) {
-    if (claimed.has(invoice.invoiceId)) continue;
     const month = monthOf(invoice.date);
     if (!month) continue;
-    const list = freeInvoicesByMonth.get(month) ?? [];
+    const list = invoicesByMonth.get(month) ?? [];
     list.push(invoice.invoiceId);
-    freeInvoicesByMonth.set(month, list);
+    invoicesByMonth.set(month, list);
   }
 
-  for (const [month, visitIds] of unlinkedByMonth) {
-    const free = freeInvoicesByMonth.get(month) ?? [];
-    if (visitIds.length === 1 && free.length === 1) {
-      result.set(visitIds[0], { invoiceId: free[0], method: "month" });
-    } else {
-      for (const visitId of visitIds) {
-        result.set(visitId, { invoiceId: null, method: "none" });
-      }
+  const attached = new Map<string, string[]>();
+  const picks = new Map<string, { ids: string[]; method: "direct" | "month" | "none" }>();
+
+  for (const visit of visits) {
+    let ids: string[] = [];
+    let method: "direct" | "month" | "none" = "none";
+
+    if (visit.invoiceId) {
+      ids = [visit.invoiceId];
+      method = "direct";
+    } else if (visit.month) {
+      ids = invoicesByMonth.get(visit.month) ?? [];
+      method = ids.length > 0 ? "month" : "none";
+    }
+
+    picks.set(visit.visitId, { ids, method });
+    for (const id of ids) {
+      const list = attached.get(id) ?? [];
+      list.push(visit.visitId);
+      attached.set(id, list);
     }
   }
 
+  const result = new Map<string, VisitInvoiceMatch>();
+  for (const [visitId, pick] of picks) {
+    result.set(visitId, {
+      invoiceIds: pick.ids,
+      visitCounts: pick.ids.map((id) => attached.get(id)?.length ?? 1),
+      method: pick.method,
+    });
+  }
   return result;
+}
+
+export type InvoiceAllocation = {
+  hasInvoice: boolean;
+  // This visit's share of the linked invoices.
+  billed: number;
+  collected: number;
+  // Whole linked invoices, not split, for deciding paid or unpaid.
+  invoiceTotal: number;
+  invoiceCollected: number;
+  shared: boolean;
+};
+
+export function allocateInvoices(
+  match: VisitInvoiceMatch | undefined,
+  totalById: Map<string, number>,
+  collectedById: Map<string, number>
+): InvoiceAllocation {
+  const empty: InvoiceAllocation = {
+    hasInvoice: false,
+    billed: 0,
+    collected: 0,
+    invoiceTotal: 0,
+    invoiceCollected: 0,
+    shared: false,
+  };
+  if (!match) return empty;
+
+  const known = match.invoiceIds
+    .map((id, index) => ({ id, count: Math.max(1, match.visitCounts[index] ?? 1) }))
+    .filter((entry) => totalById.has(entry.id));
+  if (known.length === 0) return empty;
+
+  let billed = 0;
+  let collected = 0;
+  let invoiceTotal = 0;
+  let invoiceCollected = 0;
+  for (const entry of known) {
+    const total = totalById.get(entry.id) ?? 0;
+    const paid = collectedById.get(entry.id) ?? 0;
+    billed += total / entry.count;
+    collected += paid / entry.count;
+    invoiceTotal += total;
+    invoiceCollected += paid;
+  }
+
+  return {
+    hasInvoice: true,
+    billed,
+    collected,
+    invoiceTotal,
+    invoiceCollected,
+    shared: known.some((entry) => entry.count > 1),
+  };
 }

@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { matchVisitsToInvoices } from "./visitInvoiceMatch";
+import { matchVisitsToInvoices, allocateInvoices } from "./visitInvoiceMatch";
 import { isProfitTracked, marginPercent } from "./profitTracking";
+import { toDateOnly } from "./phoenixDate";
 
 const v = (visitId: string, month: string | null, invoiceId: string | null = null) => ({
   visitId,
-  startAt: month ? `${month}-10T16:00:00Z` : null,
   invoiceId,
   month,
 });
@@ -14,44 +14,68 @@ describe("matchVisitsToInvoices", () => {
     const m = matchVisitsToInvoices([v("a", "2026-09", "inv1")], [
       { invoiceId: "inv1", date: "2026-09-12" },
     ]);
-    expect(m.get("a")).toEqual({ invoiceId: "inv1", method: "direct" });
+    expect(m.get("a")).toEqual({ invoiceIds: ["inv1"], visitCounts: [1], method: "direct" });
   });
 
-  it("matches the lone same-month invoice", () => {
-    const m = matchVisitsToInvoices([v("a", "2026-09")], [
-      { invoiceId: "inv1", date: "2026-09-28" },
+  it("matches the same-month invoice", () => {
+    const m = matchVisitsToInvoices([v("a", "2026-11")], [
+      { invoiceId: "inv1", date: "2026-11-01" },
     ]);
-    expect(m.get("a")).toEqual({ invoiceId: "inv1", method: "month" });
+    expect(m.get("a")?.invoiceIds).toEqual(["inv1"]);
+    expect(m.get("a")?.method).toBe("month");
   });
 
-  it("does not guess with two visits in one month", () => {
-    const m = matchVisitsToInvoices([v("a", "2026-09"), v("b", "2026-09")], [
-      { invoiceId: "inv1", date: "2026-09-28" },
+  it("shares one monthly invoice across both visits that month", () => {
+    const m = matchVisitsToInvoices([v("a", "2026-11"), v("b", "2026-11")], [
+      { invoiceId: "inv1", date: "2026-11-01" },
+    ]);
+    expect(m.get("a")?.visitCounts).toEqual([2]);
+    expect(m.get("b")?.visitCounts).toEqual([2]);
+  });
+
+  it("does not pull in another month's invoice", () => {
+    const m = matchVisitsToInvoices([v("a", "2026-11")], [
+      { invoiceId: "oct", date: "2026-10-31" },
     ]);
     expect(m.get("a")?.method).toBe("none");
-    expect(m.get("b")?.method).toBe("none");
-  });
-
-  it("does not reuse an invoice already claimed directly", () => {
-    const m = matchVisitsToInvoices([v("a", "2026-09", "inv1"), v("b", "2026-09")], [
-      { invoiceId: "inv1", date: "2026-09-12" },
-    ]);
-    expect(m.get("a")?.method).toBe("direct");
-    expect(m.get("b")?.method).toBe("none");
   });
 
   it("leaves visits without a date unlinked", () => {
-    const m = matchVisitsToInvoices([v("a", null)], [
-      { invoiceId: "inv1", date: "2026-09-12" },
-    ]);
+    const m = matchVisitsToInvoices([v("a", null)], [{ invoiceId: "inv1", date: "2026-09-12" }]);
     expect(m.get("a")?.method).toBe("none");
+  });
+});
+
+describe("allocateInvoices", () => {
+  it("splits a monthly invoice and keeps payment status at invoice level", () => {
+    const m = matchVisitsToInvoices([v("a", "2026-11"), v("b", "2026-11")], [
+      { invoiceId: "inv1", date: "2026-11-01" },
+    ]);
+    const a = allocateInvoices(m.get("a"), new Map([["inv1", 350]]), new Map([["inv1", 350]]));
+    expect(a.billed).toBe(175);
+    expect(a.collected).toBe(175);
+    expect(a.invoiceTotal).toBe(350);
+    expect(a.invoiceCollected).toBe(350);
+    expect(a.shared).toBe(true);
+  });
+
+  it("returns an empty allocation without a match", () => {
+    expect(allocateInvoices(undefined, new Map(), new Map()).hasInvoice).toBe(false);
+  });
+});
+
+describe("date helpers", () => {
+  it("leaves a plain date alone instead of shifting it back a day", () => {
+    expect(toDateOnly("2026-11-01")).toBe("2026-11-01");
+    expect(toDateOnly("2026-11-01T07:00:00Z")).toBe("2026-11-01");
+    expect(toDateOnly("2026-11-01T01:26:22Z")).toBe("2026-10-31");
+    expect(toDateOnly(null)).toBeNull();
   });
 });
 
 describe("profit tracking helpers", () => {
   it("applies the Aug 2026 cutoff in Phoenix time", () => {
     expect(isProfitTracked("2026-08-01T10:00:00Z")).toBe(true);
-    // 6:26pm Phoenix on Jul 31 is still July
     expect(isProfitTracked("2026-08-01T01:26:22Z")).toBe(false);
     expect(isProfitTracked("2026-07-31T16:00:00Z")).toBe(false);
     expect(isProfitTracked(null)).toBe(false);

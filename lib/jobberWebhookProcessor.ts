@@ -9,6 +9,7 @@
 // now" button.
 import { jobberGraphQL } from "@/lib/jobber";
 import { supabaseServer } from "@/lib/supabase-server";
+import { toPhoenixDateString } from "@/lib/phoenixDate";
 import { isMergedAway, resolveCustomerId } from "@/lib/customerAliases";
 
 type WebhookEvent = {
@@ -584,8 +585,10 @@ async function syncSingleInvoice(jobberInvoiceId: string): Promise<void> {
     customer_name: cleanText(invoice.client?.name),
     subject: cleanText(invoice.subject),
     status: cleanText(invoice.invoiceStatus),
-    issue_date: invoice.issuedDate ?? null,
-    due_date: invoice.dueDate ?? null,
+    // Same Phoenix calendar-day conversion the sync routes use; a raw
+    // timestamp here lands on the UTC date, a day off for evening issues.
+    issue_date: toPhoenixDateString(invoice.issuedDate),
+    due_date: toPhoenixDateString(invoice.dueDate),
     total: Number.isNaN(total) ? 0 : total,
     updated_at: new Date().toISOString(),
   };

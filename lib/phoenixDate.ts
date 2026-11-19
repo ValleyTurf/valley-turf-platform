@@ -48,3 +48,21 @@ export function toPhoenixDateString(
 
   return `${year}-${month}-${day}`;
 }
+
+// Date columns (issue_date, due_date, payment_date) are stored as plain
+// "YYYY-MM-DD" strings that are already the Phoenix calendar day. Running
+// those through toPhoenixDateString treats them as UTC midnight, which is
+// the previous evening in Phoenix, and shifts them back one day (an
+// invoice issued Nov 1 showed as Oct 31). This leaves a plain date alone
+// and only converts real timestamps.
+export function toDateOnly(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  return toPhoenixDateString(value);
+}

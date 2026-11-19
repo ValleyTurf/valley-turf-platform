@@ -12,7 +12,8 @@ import {
   getMaterialsList,
   loadVisitFinancials,
 } from "@/lib/customerVisitData";
-import { formatCurrencyPrecise, toNumber } from "@/lib/format";
+import { formatCurrencyPrecise, formatDateOnly, toNumber } from "@/lib/format";
+import { allocateInvoices } from "@/lib/visitInvoiceMatch";
 import {
   PROFIT_TRACKING_START_LABEL,
   isProfitTracked,
@@ -163,10 +164,15 @@ export default async function VisitDetailPage({ params }: PageProps) {
   ]);
 
   const matches = linkVisitsToInvoices(visitLinks, invoiceRows);
-  const match = matches.get(decodedVisitId) ?? { invoiceId: null, method: "none" as const };
-  const invoice = match.invoiceId
-    ? invoiceRows.find((row) => row.jobber_invoice_id === match.invoiceId) ?? null
-    : null;
+  const match = matches.get(decodedVisitId) ?? {
+    invoiceIds: [] as string[],
+    visitCounts: [] as number[],
+    method: "none" as const,
+  };
+  const linkedInvoices = match.invoiceIds
+    .map((invoiceId) => invoiceRows.find((row) => row.jobber_invoice_id === invoiceId))
+    .filter((row): row is NonNullable<typeof row> => !!row);
+  const linkedInvoiceIds = linkedInvoices.map((row) => row.jobber_invoice_id);
 
   const asCustomerVisit: CustomerVisit = {
     jobber_visit_id: visitRow.jobber_visit_id,
@@ -176,28 +182,51 @@ export default async function VisitDetailPage({ params }: PageProps) {
     completed_at: visitRow.completed_at,
   };
 
-  const [financials, paymentsByInvoice, invoiceExtras] = await Promise.all([
+  const [financials, paymentsByInvoice, extrasList] = await Promise.all([
     loadVisitFinancials({
       visits: [asCustomerVisit],
       customerId: clientId,
       materialsList,
       equipmentList,
     }),
-    getPaymentsForInvoices(invoice ? [invoice.jobber_invoice_id] : []),
-    invoice
-      ? getNativeInvoiceExtras(invoice.jobber_invoice_id)
-      : Promise.resolve({ lines: [], rating: null }),
+    getPaymentsForInvoices(linkedInvoiceIds),
+    Promise.all(linkedInvoiceIds.map((invoiceId) => getNativeInvoiceExtras(invoiceId))),
   ]);
+  const extrasById = new Map(linkedInvoiceIds.map((invoiceId, i) => [invoiceId, extrasList[i]]));
+  const rating = extrasList.find((extras) => extras.rating !== null)?.rating ?? null;
 
   const breakdown = financials.breakdownMap.get(decodedVisitId);
   const completed = (visitRow.visit_status ?? "").toUpperCase() === "COMPLETED" || !!visitRow.completed_at;
   const tracked = isProfitTracked(visitRow.start_at);
 
-  const billed = invoice ? toNumber(invoice.total) : null;
-  const payments = invoice ? paymentsByInvoice.get(invoice.jobber_invoice_id) ?? [] : [];
-  const collected = payments.filter((p) => p.collected).reduce((sum, p) => sum + p.amount, 0);
+  const payments = linkedInvoiceIds
+    .flatMap((invoiceId) => paymentsByInvoice.get(invoiceId) ?? [])
+    .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
+  const collectedById = new Map<string, number>();
+  for (const invoiceId of linkedInvoiceIds) {
+    collectedById.set(
+      invoiceId,
+      (paymentsByInvoice.get(invoiceId) ?? [])
+        .filter((p) => p.collected)
+        .reduce((sum, p) => sum + p.amount, 0)
+    );
+  }
+  const totalById = new Map(linkedInvoices.map((row) => [row.jobber_invoice_id, toNumber(row.total)]));
+  const allocation = allocateInvoices(match, totalById, collectedById);
+  const hasInvoice = allocation.hasInvoice;
+  const billed = hasInvoice ? allocation.billed : null;
+  const collected = allocation.collected;
   const tips = payments.filter((p) => p.collected).reduce((sum, p) => sum + p.tip, 0);
-  const state = paymentState(billed, collected, !!invoice);
+  const state = paymentState(
+    hasInvoice ? allocation.invoiceTotal : null,
+    allocation.invoiceCollected,
+    hasInvoice
+  );
+  const invoiceNumbers = linkedInvoices
+    .map((row) => row.invoice_number)
+    .filter((value): value is string => !!value)
+    .join(", ");
+  const maxShare = Math.max(1, ...match.visitCounts);
 
   const costs = {
     labor: breakdown?.laborTotal ?? 0,
@@ -222,7 +251,7 @@ export default async function VisitDetailPage({ params }: PageProps) {
     margin: split.margin,
     marginTarget: MARGIN_TARGET_PCT,
     state,
-    hasInvoice: !!invoice,
+    hasInvoice,
   });
 
   // Previous / next visit for this customer (links list is newest first).
@@ -243,7 +272,7 @@ export default async function VisitDetailPage({ params }: PageProps) {
           return ms >= startMs - 5 * 86_400_000 && ms <= startMs + 3 * 86_400_000;
         });
 
-  type TimelineEvent = { at: string; label: string; detail?: string };
+  type TimelineEvent = { at: string; label: string; detail?: string; dateOnly?: boolean };
   const timeline: TimelineEvent[] = [];
   if (visitRow.start_at) timeline.push({ at: visitRow.start_at, label: "Scheduled start" });
   for (const log of timeLogs) {
@@ -251,17 +280,20 @@ export default async function VisitDetailPage({ params }: PageProps) {
     if (log.stoppedAt) timeline.push({ at: log.stoppedAt, label: `${log.userName} stopped the timer` });
   }
   if (visitRow.completed_at) timeline.push({ at: visitRow.completed_at, label: "Marked complete" });
-  if (invoice?.issue_date) {
+  for (const invoice of linkedInvoices) {
+    if (!invoice.issue_date) continue;
     timeline.push({
       at: invoice.issue_date,
+      dateOnly: true,
       label: `Invoice ${invoice.invoice_number ?? ""} issued`.replace("  ", " "),
-      detail: billed !== null ? formatCurrencyPrecise(billed) : undefined,
+      detail: formatCurrencyPrecise(toNumber(invoice.total)),
     });
   }
   for (const payment of payments) {
     if (payment.date) {
       timeline.push({
         at: payment.date,
+        dateOnly: true,
         label: payment.collected ? "Payment received" : "Payment attempt did not go through",
         detail: formatCurrencyPrecise(payment.amount),
       });
@@ -339,16 +371,22 @@ export default async function VisitDetailPage({ params }: PageProps) {
           <Kpi
             label="Billed"
             value={billed !== null ? formatCurrencyPrecise(billed) : "-"}
-            sub={invoice ? `Invoice ${invoice.invoice_number ?? ""}`.trim() : "No invoice linked yet"}
+            sub={
+              hasInvoice
+                ? allocation.shared
+                  ? `Share of invoice ${invoiceNumbers} (${formatCurrencyPrecise(allocation.invoiceTotal)} over ${maxShare} visits)`.replace("invoice  ", "invoice ")
+                  : `Invoice ${invoiceNumbers}`.trim()
+                : "No invoice for this month"
+            }
           />
           <Kpi
             label="Collected"
-            value={invoice ? formatCurrencyPrecise(collected) : "-"}
+            value={hasInvoice ? formatCurrencyPrecise(collected) : "-"}
             sub={
               state === "paid"
                 ? "Paid in full"
-                : invoice && billed !== null
-                  ? `${formatCurrencyPrecise(Math.max(0, billed - collected))} still due`
+                : hasInvoice
+                  ? `${formatCurrencyPrecise(Math.max(0, allocation.invoiceTotal - allocation.invoiceCollected))} still due on the invoice`
                   : undefined
             }
             tone={state === "paid" ? "good" : state === "no-invoice" ? undefined : "warn"}
@@ -460,40 +498,54 @@ export default async function VisitDetailPage({ params }: PageProps) {
         <div className="grid gap-6 lg:grid-cols-2">
           <section className="rounded-2xl bg-white p-5 shadow">
             <h2 className="text-lg font-bold">Invoice</h2>
-            {invoice ? (
-              <div className="mt-3 space-y-2 text-sm">
-                <p className="font-semibold">
-                  Invoice {invoice.invoice_number ?? ""}{" "}
-                  <span className={`ml-1 rounded-full px-2 py-0.5 text-xs font-bold ${chip.className}`}>
-                    {statusLabel(invoice.status)}
-                  </span>
-                </p>
-                {invoice.subject && <p className="text-[#6b705c]">{invoice.subject}</p>}
-                <p>
-                  Issued {formatDay(invoice.issue_date)} | Due {formatDay(invoice.due_date)}
-                </p>
-                <p className="text-lg font-extrabold">{formatCurrencyPrecise(billed ?? 0)}</p>
-                {invoiceExtras.lines.length > 0 && (
-                  <ul className="divide-y divide-[#f0eee6] text-xs">
-                    {invoiceExtras.lines.map((line, i) => (
-                      <li key={i} className="flex justify-between gap-3 py-1.5">
-                        <span>{line.description}</span>
-                        <span>{formatCurrencyPrecise(line.lineTotal)}</span>
-                      </li>
-                    ))}
-                  </ul>
+            {linkedInvoices.length > 0 ? (
+              <div className="mt-3 space-y-4 text-sm">
+                {linkedInvoices.map((invoice) => {
+                  const extras = extrasById.get(invoice.jobber_invoice_id);
+                  const total = toNumber(invoice.total);
+                  const paid = collectedById.get(invoice.jobber_invoice_id) ?? 0;
+                  const invoiceChip = stateChip(paymentState(total, paid, true));
+                  return (
+                    <div key={invoice.jobber_invoice_id} className="space-y-2">
+                      <p className="font-semibold">
+                        Invoice {invoice.invoice_number ?? ""}{" "}
+                        <span className={`ml-1 rounded-full px-2 py-0.5 text-xs font-bold ${invoiceChip.className}`}>
+                          {invoiceChip.label}
+                        </span>
+                      </p>
+                      {invoice.subject && <p className="text-[#6b705c]">{invoice.subject}</p>}
+                      <p>
+                        Issued {formatDateOnly(invoice.issue_date)} | Due {formatDateOnly(invoice.due_date)}
+                      </p>
+                      <p className="text-lg font-extrabold">{formatCurrencyPrecise(total)}</p>
+                      {extras && extras.lines.length > 0 && (
+                        <ul className="divide-y divide-[#f0eee6] text-xs">
+                          {extras.lines.map((line, i) => (
+                            <li key={i} className="flex justify-between gap-3 py-1.5">
+                              <span>{line.description}</span>
+                              <span>{formatCurrencyPrecise(line.lineTotal)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })}
+                {allocation.shared && (
+                  <p className="text-xs text-[#6b705c]">
+                    This invoice covers {maxShare} visits that month, so each visit counts an
+                    equal share of it.
+                  </p>
                 )}
                 {match.method === "month" && (
                   <p className="text-xs text-[#6b705c]">
-                    Matched by month, since this visit is the only one and this the only
-                    invoice that month.
+                    Matched by month, since this invoice is dated in the same month as the visit.
                   </p>
                 )}
               </div>
             ) : (
               <p className="mt-3 text-sm text-[#6b705c]">
-                No invoice is linked to this visit yet. When a month has more than one visit
-                or invoice, the app does not guess which belongs to which.
+                No invoice is dated in this visit&apos;s month, and none is linked directly.
               </p>
             )}
           </section>
@@ -505,7 +557,7 @@ export default async function VisitDetailPage({ params }: PageProps) {
                 {payments.map((payment) => (
                   <li key={payment.id} className="flex items-center justify-between gap-3 py-2">
                     <span>
-                      {formatDay(payment.date)}
+                      {formatDateOnly(payment.date)}
                       <span className="ml-2 text-xs text-[#6b705c]">
                         {payment.method ? statusLabel(payment.method) : "Payment"}
                         {!payment.collected ? " (did not go through)" : ""}
@@ -517,7 +569,7 @@ export default async function VisitDetailPage({ params }: PageProps) {
               </ul>
             ) : (
               <p className="mt-3 text-sm text-[#6b705c]">
-                {invoice ? "No payment recorded for this invoice yet." : "Nothing to pay until an invoice is linked."}
+                {hasInvoice ? "No payment recorded for this invoice yet." : "Nothing to pay until an invoice is linked."}
               </p>
             )}
             {tips > 0 && (
@@ -525,9 +577,9 @@ export default async function VisitDetailPage({ params }: PageProps) {
                 Tips included: {formatCurrencyPrecise(tips)}
               </p>
             )}
-            {invoiceExtras.rating !== null && (
+            {rating !== null && (
               <p className="mt-3 text-sm">
-                Customer rating: <span className="font-bold">{invoiceExtras.rating} of 5 stars</span>
+                Customer rating: <span className="font-bold">{rating} of 5 stars</span>
               </p>
             )}
           </section>
@@ -584,7 +636,9 @@ export default async function VisitDetailPage({ params }: PageProps) {
                       {event.detail ? ` | ${event.detail}` : ""}
                     </p>
                     <p className="text-xs text-[#6b705c]">
-                      {formatDay(event.at)} {formatTime(event.at)}
+                      {event.dateOnly
+                        ? formatDateOnly(event.at)
+                        : `${formatDay(event.at)} ${formatTime(event.at)}`}
                     </p>
                   </li>
                 ))}

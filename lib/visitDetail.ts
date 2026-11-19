@@ -1,6 +1,6 @@
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
-import { toPhoenixDateString } from "@/lib/phoenixDate";
+import { toDateOnly, toPhoenixDateString } from "@/lib/phoenixDate";
 import { ACTIVE_JOB_VISIT_FILTER } from "@/lib/customerVisitData";
 import {
   matchVisitsToInvoices,
@@ -107,13 +107,13 @@ export function linkVisitsToInvoices(
   return matchVisitsToInvoices(
     visits.map((visit) => ({
       visitId: visit.jobber_visit_id,
-      startAt: visit.start_at,
       invoiceId: visit.jobber_invoice_id,
       month: visitMonth(visit.start_at),
     })),
     invoices.map((invoice) => ({
       invoiceId: invoice.jobber_invoice_id,
-      date: toPhoenixDateString(invoice.issue_date ?? invoice.due_date),
+      // issue_date and due_date are already plain Phoenix dates.
+      date: toDateOnly(invoice.issue_date ?? invoice.due_date),
     }))
   );
 }

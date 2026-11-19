@@ -15,10 +15,20 @@ export type VisitRowInput = {
   completed: boolean;
   crew: string[];
   minutes: number | null;
-  invoiceId: string | null;
   invoiceNumber: string | null;
+  hasInvoice: boolean;
+  // This visit's share of its invoice(s); a monthly invoice over two
+  // visits gives each half.
   billed: number | null;
   collected: number;
+  // Whole invoice(s), used for paid or unpaid.
+  invoiceTotal: number | null;
+  invoiceCollected: number;
+  // Latest due date among the invoices, YYYY-MM-DD. An unpaid invoice that
+  // is not due yet (prepaid months are often paid on the 10th or 15th) is
+  // not flagged.
+  invoiceDue: string | null;
+  shared: boolean;
   // Total cost from the visit's cost breakdown; 0 when nothing was logged.
   cost: number;
   photoCount: number;
@@ -33,8 +43,10 @@ export type VisitTableRow = {
   minutes: number | null;
   invoiceNumber: string | null;
   hasInvoice: boolean;
+  shared: boolean;
   billed: number | null;
   state: VisitPaymentState;
+  overdue: boolean;
   tracked: boolean;
   cost: number | null;
   profit: number | null;
@@ -62,11 +74,15 @@ export function isVisitFilter(value: string | undefined): value is VisitFilter {
 
 export function buildVisitRows(
   inputs: VisitRowInput[],
-  marginTarget: number
+  marginTarget: number,
+  today: string
 ): { rows: VisitTableRow[]; totals: VisitTableTotals } {
   const rows: VisitTableRow[] = inputs.map((input) => {
-    const hasInvoice = input.invoiceId !== null && input.billed !== null;
-    const state = paymentState(input.billed, input.collected, hasInvoice);
+    const hasInvoice = input.hasInvoice && input.billed !== null;
+    const state = paymentState(input.invoiceTotal, input.invoiceCollected, hasInvoice);
+    const overdue =
+      (state === "unpaid" || state === "partial") &&
+      (input.invoiceDue === null || input.invoiceDue <= today);
     const tracked = input.completed && isProfitTracked(input.startAt);
     const costLogged = input.cost > 0;
     const showProfit = tracked && hasInvoice && costLogged && (input.billed ?? 0) > 0;
@@ -78,7 +94,7 @@ export function buildVisitRows(
       photoCount: input.photoCount,
       margin,
       marginTarget,
-      state,
+      state: overdue || state === "no-invoice" ? state : "paid",
       hasInvoice,
     });
     if (tracked && !costLogged) flags.push("No costs logged");
@@ -92,8 +108,10 @@ export function buildVisitRows(
       minutes: input.minutes,
       invoiceNumber: input.invoiceNumber,
       hasInvoice,
+      shared: input.shared,
       billed: input.billed,
       state,
+      overdue,
       tracked,
       cost: tracked || costLogged ? input.cost : null,
       profit,
@@ -113,7 +131,7 @@ export function buildVisitRows(
   for (const row of rows) {
     if (!row.completed) continue;
     if (row.billed !== null) billedAll += row.billed;
-    if (row.state === "unpaid" || row.state === "partial") {
+    if (row.overdue) {
       unpaidCount += 1;
       const input = byId.get(row.visitId);
       unpaidAmount += Math.max(0, (row.billed ?? 0) - (input?.collected ?? 0));
@@ -151,7 +169,7 @@ export function filterRows(
     case "attention":
       return rows.filter((row) => row.flags.length > 0);
     case "unpaid":
-      return rows.filter((row) => row.state === "unpaid" || row.state === "partial");
+      return rows.filter((row) => row.overdue);
     case "low-margin":
       return rows.filter((row) => row.flags.includes("Low margin"));
     default:
