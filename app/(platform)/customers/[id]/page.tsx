@@ -2350,12 +2350,11 @@ export default async function CustomerDetailPage({
     : null;
   const autopayOn = !!autopayPaymentMethod?.autopayEnabled && !!cardLabel;
 
-  const nowMs = Date.now();
   const serviceMonths = buildServiceMonths(
     clientVisitLinks.map((visit) => ({
       month: toPhoenixDateString(visit.start_at)?.slice(0, 7) ?? null,
       completed: (visit.visit_status ?? "").toUpperCase() === "COMPLETED",
-      upcoming: visit.start_at ? new Date(visit.start_at).getTime() > nowMs : false,
+      upcoming: (toPhoenixDateString(visit.start_at) ?? "") >= todayPhoenix,
     })),
     todayPhoenix
   );
