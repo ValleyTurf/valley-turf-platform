@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildCostSplit, paymentState, visitFlags, isCollectedPayment } from "./visitDetailLogic";
+import { buildCostSplit, paymentState, visitFlags, isCollectedPayment, nextReminder } from "./visitDetailLogic";
 
 const costs = { labor: 40, materials: 10, equipment: 5, overhead: 12, cardFee: 4.4 };
 
@@ -43,5 +43,23 @@ describe("visitFlags", () => {
     const base = { photoCount: 0, margin: 40, marginTarget: 60, state: "unpaid" as const, hasInvoice: true };
     expect(visitFlags({ ...base, completed: true })).toEqual(["No photos", "Low margin", "Unpaid"]);
     expect(visitFlags({ ...base, completed: false })).toEqual([]);
+  });
+});
+
+describe("nextReminder", () => {
+  it("finds the next unsent reminder that is still ahead", () => {
+    expect(nextReminder({ visitDay: "2026-11-20", today: "2026-11-16", ruleDays: [4, 2], sentDays: [] }))
+      .toEqual({ state: "due", daysBefore: 4, dueDay: "2026-11-16" });
+    expect(nextReminder({ visitDay: "2026-11-20", today: "2026-11-17", ruleDays: [4, 2], sentDays: [4] }))
+      .toEqual({ state: "due", daysBefore: 2, dueDay: "2026-11-18" });
+  });
+
+  it("reports sent when nothing is left to send", () => {
+    expect(nextReminder({ visitDay: "2026-11-20", today: "2026-11-19", ruleDays: [4, 2], sentDays: [4, 2] }).state).toBe("sent");
+  });
+
+  it("ignores passed unsent rules and reports none without rules", () => {
+    expect(nextReminder({ visitDay: "2026-11-20", today: "2026-11-19", ruleDays: [4, 2], sentDays: [] }).state).toBe("none");
+    expect(nextReminder({ visitDay: "2026-11-20", today: "2026-11-16", ruleDays: [], sentDays: [] }).state).toBe("none");
   });
 });

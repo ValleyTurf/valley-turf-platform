@@ -59,13 +59,18 @@ import {
   formatNumber,
 } from "@/lib/format";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
-import { PROFIT_TRACKING_START_DATE, PROFIT_TRACKING_START_LABEL } from "@/lib/profitTracking";
+import {
+  PROFIT_TRACKING_START_DATE,
+  PROFIT_TRACKING_START_LABEL,
+  marginPercent,
+} from "@/lib/profitTracking";
 import {
   getClientInvoiceRows,
   getClientVisitLinks,
   linkVisitsToInvoices,
 } from "@/lib/visitDetail";
-import { isCollectedPayment } from "@/lib/visitDetailLogic";
+import { isCollectedPayment, nextReminder } from "@/lib/visitDetailLogic";
+import { describeAutopaySchedule } from "@/lib/autopayTiming";
 import {
   buildVisitRows,
   filterRows,
@@ -2214,186 +2219,337 @@ export default async function CustomerDetailPage({
     null
   );
 
-  type ActivityItem = { at: string; label: string; detail: string; href?: string };
-  const activity: ActivityItem[] = [];
-  for (const row of visitTableRows.slice(0, 5)) {
-    if (!row.startAt) continue;
-    activity.push({
-      at: row.startAt,
-      label: `${row.completed ? "Visit completed" : "Visit"}${row.title ? `: ${row.title}` : ""}`,
-      detail: row.billed !== null ? formatCurrencyPrecise(row.billed) : "No invoice linked",
-      href: visitHref(row.visitId),
-    });
-  }
-  for (const payment of payments.slice(0, 4)) {
-    if (!payment.payment_date || !isCollectedPayment(payment.transaction_status)) continue;
-    activity.push({
-      at: payment.payment_date,
-      label: "Payment received",
-      detail: formatCurrencyPrecise(toNumber(payment.amount)),
-    });
-  }
-  for (const entry of contactHistory.slice(0, 4)) {
-    activity.push({
-      at: entry.createdAt,
-      label: `${contactChannelLabel(entry.channel)} ${entry.direction === "inbound" ? "from customer" : "to customer"}`,
-      detail: entry.subject ?? entry.summary ?? "",
-    });
-  }
-  activity.sort((a, b) => b.at.localeCompare(a.at));
-  const recentActivity = activity.slice(0, 8);
 
   const balanceDue = toNumber(financials?.outstanding_balance ?? client.balance);
   const firstInvoiceDate = financials?.first_invoice_date ?? null;
   const trackedMarginPct = trackingSummary.marginPct;
 
+  // ---- Overview, header and money details (rebuilt to match the mockup) ----
+  const phoenixYear = todayPhoenix.slice(0, 4);
+  const currentProperty =
+    properties.find((property) => property.id === profile?.current_property_id) ??
+    properties[0] ??
+    null;
+  const propertyAddress = currentProperty?.address ?? null;
+  const streetLine = [propertyAddress?.street1, propertyAddress?.street2]
+    .filter(Boolean)
+    .join(" ");
+  const cityLine = [
+    [propertyAddress?.city, propertyAddress?.province].filter(Boolean).join(", "),
+    propertyAddress?.postalCode,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const headerAddress = [streetLine, cityLine].filter(Boolean).join(", ");
+  const headerLine = [headerAddress, phone, email].filter(Boolean).join(" | ");
+
+  const getSentReminderDays = async (): Promise<number[]> => {
+    if (!nextVisit) return [];
+    const { data } = await supabaseServer
+      .from("visit_reminders_sent")
+      .select("days_before")
+      .eq("jobber_visit_id", nextVisit.jobber_visit_id);
+    return (data ?? []).map((row) => Number(row.days_before));
+  };
+
+  const [{ data: reminderRuleRows }, sentReminderDays, { data: ratingRows }] =
+    await Promise.all([
+      supabaseServer
+        .from("visit_reminder_rules")
+        .select("days_before")
+        .eq("enabled", true),
+      getSentReminderDays(),
+      supabaseServer
+        .from("invoice_ratings")
+        .select("score, invoice_number, created_at")
+        .eq("jobber_client_id", decodedId)
+        .order("created_at", { ascending: false })
+        .limit(3),
+    ]);
+
+  const nextVisitDay = toPhoenixDateString(nextVisit?.start_at ?? null);
+  const reminder = nextVisitDay
+    ? nextReminder({
+        visitDay: nextVisitDay,
+        today: todayPhoenix,
+        ruleDays: (reminderRuleRows ?? []).map((row) => Number(row.days_before)),
+        sentDays: sentReminderDays,
+      })
+    : ({ state: "none" } as const);
+  const monthDay = (ymd: string) =>
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "UTC",
+      month: "short",
+      day: "numeric",
+    }).format(new Date(`${ymd}T00:00:00Z`));
+  const reminderText =
+    reminder.state === "due"
+      ? `Goes out ${monthDay(reminder.dueDay)}`
+      : reminder.state === "sent"
+        ? "Already sent"
+        : "None scheduled";
+
+  const lastBilled =
+    visitTableRows.find((row) => row.completed && row.billed !== null)?.billed ?? null;
+  const averageTrackedCost =
+    visitTotals.trackedCount > 0 ? visitTotals.trackedCost / visitTotals.trackedCount : null;
+  const expectedProfit =
+    lastBilled !== null && averageTrackedCost !== null ? lastBilled - averageTrackedCost : null;
+  const expectedMargin =
+    lastBilled !== null && expectedProfit !== null
+      ? marginPercent(lastBilled, expectedProfit)
+      : null;
+  const nextVisitCrew = nextVisit
+    ? visitAssignedNamesMap.get(nextVisit.jobber_visit_id) ?? []
+    : [];
+
+  const openInvoices = clientInvoiceRows
+    .filter((invoice) => !/draft|void|cancel|bad/i.test(invoice.status ?? ""))
+    .map((invoice) => ({
+      invoice,
+      due: toNumber(invoice.total) - (collectedByInvoice.get(invoice.jobber_invoice_id) ?? 0),
+    }))
+    .filter((entry) => entry.due > 0.005);
+  const paidThisYear = payments
+    .filter(
+      (payment) =>
+        isCollectedPayment(payment.transaction_status) &&
+        (toPhoenixDateString(payment.payment_date) ?? "").startsWith(phoenixYear)
+    )
+    .reduce((sum, payment) => sum + toNumber(payment.amount), 0);
+  const failedCharges = payments.filter(
+    (payment) => !isCollectedPayment(payment.transaction_status)
+  ).length;
+
+  const cardLabel = autopayPaymentMethod?.stripePaymentMethodId
+    ? `${
+        autopayPaymentMethod.cardBrand
+          ? autopayPaymentMethod.cardBrand.charAt(0).toUpperCase() +
+            autopayPaymentMethod.cardBrand.slice(1)
+          : "Card"
+      } ending ${autopayPaymentMethod.cardLast4 ?? "----"}`
+    : null;
+  const autopayOn = !!autopayPaymentMethod?.autopayEnabled && !!cardLabel;
+
+  const planRows: { k: string; v: string }[] = [
+    { k: "Service", v: nextVisit?.title ?? pastVisits[0]?.title ?? "Not set" },
+    { k: "Plan", v: profile?.subscription_plan?.trim() || "Not set" },
+    {
+      k: "Price",
+      v: lastBilled !== null ? `${formatCurrencyPrecise(lastBilled)} per visit` : "Not set",
+    },
+    {
+      k: "Turf size",
+      v: profile?.turf_size_sqft
+        ? `${Number(profile.turf_size_sqft).toLocaleString("en-US")} sq ft`
+        : (profile?.turf_size_range ?? "Not set"),
+    },
+    { k: "Gate code", v: profile?.gate_code ? "On file" : "Not set" },
+  ];
+  const moneyRows: { k: string; v: string }[] = [
+    { k: "Open invoices", v: String(openInvoices.length) },
+    { k: "Paid this year", v: formatCurrencyPrecise(paidThisYear) },
+    { k: "Card on file", v: cardLabel ?? "None" },
+    {
+      k: "Autopay",
+      v: autopayOn && autopayPaymentMethod
+        ? `On, ${describeAutopaySchedule(autopayPaymentMethod.schedule)}`
+        : "Off",
+    },
+    { k: "Failed charges", v: failedCharges > 0 ? String(failedCharges) : "None" },
+  ];
+
+  const statusChips: { label: string; className: string }[] = [];
+  if (cancellationStatus.permanentlyCanceledAt) {
+    statusChips.push({ label: "Permanently canceled", className: "bg-red-100 text-red-800" });
+  }
+  if (profile?.subscription_plan?.trim()) {
+    statusChips.push({
+      label: profile.subscription_plan.trim(),
+      className: "bg-green-100 text-green-800",
+    });
+  }
+  statusChips.push(
+    autopayOn && cardLabel
+      ? { label: `Autopay on (${cardLabel})`, className: "bg-green-100 text-green-800" }
+      : cardLabel
+        ? { label: "Autopay off", className: "bg-slate-100 text-slate-700" }
+        : { label: "No card on file", className: "bg-slate-100 text-slate-700" }
+  );
+  statusChips.push({
+    label: isNativeId(decodedId) || nativeInvoices.length > 0 ? "Native invoicing" : "Jobber invoicing",
+    className: "bg-slate-100 text-slate-700",
+  });
+  statusChips.push(
+    profile?.notifications_opted_out
+      ? { label: "Opted out of messages", className: "bg-amber-100 text-amber-800" }
+      : { label: "Texts allowed", className: "bg-slate-100 text-slate-700" }
+  );
+
+  type AttentionItem = { title: string; detail: string; action: string; href: string };
+  const FLAG_DETAIL: Record<string, string> = {
+    "No photos": "Crew did not upload before and after pictures.",
+    "No costs logged": "Profit is not shown until materials and labor are entered.",
+    "No invoice linked": "This visit is not matched to an invoice yet.",
+  };
+  const alerts: AttentionItem[] = [];
+  for (const entry of openInvoices.slice(0, 3)) {
+    alerts.push({
+      title: `Invoice ${entry.invoice.invoice_number ?? ""} is unpaid.`.replace("  ", " "),
+      detail: `${formatCurrencyPrecise(entry.due)} due.`,
+      action: "See invoices",
+      href: customerTabHref(decodedId, currentSearchParams, "invoices"),
+    });
+  }
+  for (const row of attentionRows) {
+    for (const flag of row.flags) {
+      if (flag === "Unpaid") continue;
+      alerts.push({
+        title: `Visit on ${formatDate(row.startAt)}: ${flag.toLowerCase()}.`,
+        detail:
+          flag === "Low margin"
+            ? `Margin ${row.margin}% is under the ${targetMarginPct}% target.`
+            : (FLAG_DETAIL[flag] ?? ""),
+        action: flag === "No costs logged" ? "Log costs" : "Open visit",
+        href: visitHref(row.visitId),
+      });
+    }
+  }
+  const shownAlerts = alerts.slice(0, 6);
+
+  type ActivityItem = {
+    at: string;
+    title: string;
+    detail: string;
+    tag: "Visit" | "Payment" | "Invoice" | "Message" | "Rating";
+    href?: string;
+  };
+  const activity: ActivityItem[] = [];
+  for (const row of visitTableRows.slice(0, 5)) {
+    if (!row.startAt) continue;
+    const parts = [
+      row.minutes ? `${formatMinutesShort(row.minutes)} on site` : null,
+      row.crew.length > 0 ? row.crew.join(", ") : null,
+      row.profit !== null ? `Profit ${formatCurrencyPrecise(row.profit)}` : null,
+    ].filter(Boolean);
+    activity.push({
+      at: row.startAt,
+      title: row.completed ? "Visit completed" : "Visit not completed",
+      detail: parts.join(". "),
+      tag: "Visit",
+      href: visitHref(row.visitId),
+    });
+  }
+  for (const invoice of [...clientInvoiceRows]
+    .sort((a, b) => (b.issue_date ?? "").localeCompare(a.issue_date ?? ""))
+    .slice(0, 4)) {
+    if (!invoice.issue_date) continue;
+    activity.push({
+      at: invoice.issue_date,
+      title: `Invoice ${invoice.invoice_number ?? ""} issued`.replace("  ", " "),
+      detail: formatCurrencyPrecise(toNumber(invoice.total)),
+      tag: "Invoice",
+    });
+  }
+  for (const payment of payments.slice(0, 4)) {
+    if (!payment.payment_date) continue;
+    const ok = isCollectedPayment(payment.transaction_status);
+    activity.push({
+      at: payment.payment_date,
+      title: ok
+        ? `Payment received ${formatCurrencyPrecise(toNumber(payment.amount))}`
+        : `Payment attempt did not go through (${formatCurrencyPrecise(toNumber(payment.amount))})`,
+      detail: payment.payment_method ? formatStatus(payment.payment_method) : "",
+      tag: "Payment",
+    });
+  }
+  for (const entry of contactHistory.slice(0, 4)) {
+    const inbound = entry.direction === "inbound";
+    const channel = contactChannelLabel(entry.channel);
+    const text = (entry.subject ?? entry.summary ?? "").slice(0, 110);
+    activity.push({
+      at: entry.createdAt,
+      title: inbound ? `Customer ${entry.channel === "sms" ? "texted" : entry.channel === "call" ? "called" : "wrote"}` : `${channel} sent to customer`,
+      detail: text,
+      tag: "Message",
+    });
+  }
+  for (const rating of ratingRows ?? []) {
+    activity.push({
+      at: rating.created_at as string,
+      title: `${rating.score} star rating received`,
+      detail: rating.invoice_number ? `Invoice ${rating.invoice_number}` : "",
+      tag: "Rating",
+    });
+  }
+  activity.sort((a, b) => b.at.localeCompare(a.at));
+  const recentActivity = activity.slice(0, 8);
+  const ACTIVITY_TAG_CLASS: Record<ActivityItem["tag"], string> = {
+    Visit: "bg-green-100 text-green-800",
+    Payment: "bg-green-100 text-green-800",
+    Invoice: "bg-amber-100 text-amber-800",
+    Message: "bg-slate-100 text-slate-700",
+    Rating: "bg-amber-100 text-amber-800",
+  };
+
+
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
       <div className="mx-auto max-w-7xl">
-        <header className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
-              Customer Intelligence
-            </p>
+        <div className="mb-3">
+          <Link href="/customers" className="text-sm font-semibold text-[#7a5f12]">
+            Customers / {client.name || "Unnamed Customer"}
+          </Link>
+        </div>
 
-            <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
+        <header className="mb-6 flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 flex-col gap-2">
+            <h1 className="text-3xl font-bold sm:text-4xl">
               {client.name || "Unnamed Customer"}
             </h1>
 
             {client.companyName && (
-              <p className="mt-2 text-lg text-[#6b705c]">
-                {client.companyName}
-              </p>
+              <p className="text-lg text-[#6b705c]">{client.companyName}</p>
             )}
 
-            <p className="mt-2 text-sm text-[#6b705c]">
-              Customer Since {formatDate(client.createdAt)}
+            <p className="text-sm text-[#4d5242]">
+              {headerLine || "No contact details on file"}
             </p>
 
-            <div className="mt-3">
-              <PermanentlyCanceledForm
-                jobberClientId={decodedId}
-                isCanceled={cancellationStatus.permanentlyCanceledAt !== null}
-                canceledAt={cancellationStatus.permanentlyCanceledAt}
-                canceledReason={cancellationStatus.permanentlyCanceledReason}
-                reasons={CHURN_REASONS}
-              />
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              {statusChips.map((chip) => (
+                <span
+                  key={chip.label}
+                  className={`rounded-full px-2.5 py-1 text-xs font-bold ${chip.className}`}
+                >
+                  {chip.label}
+                </span>
+              ))}
+              <span className="text-xs text-[#6b705c]">
+                Customer since {formatDate(client.createdAt)}
+              </span>
             </div>
           </div>
 
-          {tab === "overview" && (
-          <div className="w-full rounded-2xl bg-white p-4 shadow sm:p-5 lg:flex-1">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <p className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
-                  Profitability · {profitTimeframeLabel}
-                </p>
-
-                {profitSummary.invoiceCount > 0 && (
-                  <p className="text-[11px] text-[#6b705c]">
-                    Based on {profitSummary.invoiceCount} invoice
-                    {profitSummary.invoiceCount === 1 ? "" : "s"}
-                  </p>
-                )}
-              </div>
-
-              <ProfitTimeframePicker
-                current={profitTimeframe}
-                options={PROFIT_TIMEFRAME_OPTIONS}
-                paramName="profitRange"
-              />
-            </div>
-
-            {/* Ryan (2026-09-20): the desktop 4-across grid was reused
-                as-is below `sm` (a 2-col grid, 4th tile spanning both
-                columns) and it made every number cramped -- two ~24px
-                bold currency values squeezed into ~140px-wide phone
-                columns, plus an orphaned empty cell next to Profit
-                Margin. Mobile gets its own single-column stack instead
-                (full-width rows, no leftover gaps) with a bump up to
-                text-3xl since each value now has the whole row to
-                itself; sm: and up keeps the original 4-column layout
-                and text-2xl sizing untouched -- that's the one Ryan
-                confirmed looks right on desktop. */}
-            <div className="mt-4 grid grid-cols-1 gap-4 divide-y divide-[#f0eee6] sm:grid-cols-4 sm:gap-x-6 sm:gap-y-4 sm:divide-y-0">
-              <div className="pt-4 first:pt-0 sm:pt-0">
-                <p className="text-xs font-bold text-[#9c7a20]">
-                  Amount Collected
-                </p>
-                <p className="mt-0.5 text-3xl font-bold sm:text-2xl">
-                  {formatCurrency(amountCollectedForTimeframe)}
-                </p>
-              </div>
-
-              <div className="pt-4 first:pt-0 sm:pt-0">
-                <p className="text-xs font-bold text-[#9c7a20]">
-                  Estimated Profit
-                </p>
-                <p
-                  className={`mt-0.5 text-3xl font-bold sm:text-2xl ${
-                    estimatedProfit >= 0 ? "text-green-700" : "text-red-600"
-                  }`}
-                >
-                  {formatCurrency(estimatedProfit)}
-                </p>
-              </div>
-
-              <div className="pt-4 first:pt-0 sm:pt-0">
-                <p className="text-xs font-bold text-[#9c7a20]">
-                  Profit Margin
-                </p>
-                <p
-                  className={`mt-0.5 text-3xl font-bold sm:text-2xl ${
-                    profitMarginPct === null
-                      ? "text-[#6b705c]"
-                      : meetsProfitTarget
-                        ? "text-green-700"
-                        : "text-red-600"
-                  }`}
-                >
-                  {profitMarginPct !== null
-                    ? `${profitMarginPct.toFixed(1)}%`
-                    : "—"}
-                </p>
-              </div>
-
-              <div className="pt-4 first:pt-0 sm:pt-0">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <p className="text-xs font-bold text-[#9c7a20]">
-                    Price Needed for
-                  </p>
-                  <ProfitTimeframePicker
-                    current={String(targetMarginPct)}
-                    options={MARGIN_TARGET_OPTIONS}
-                    paramName="marginTarget"
-                  />
-                </div>
-
-                {profitMarginPct === null ? (
-                  <p className="mt-1 text-xs text-[#6b705c]">
-                    No invoices {profitTimeframeLabel.toLowerCase()}.
-                  </p>
-                ) : meetsProfitTarget ? (
-                  <p className="mt-0.5 text-3xl font-bold text-green-700 sm:text-2xl">
-                    Already met
-                  </p>
-                ) : targetPricePerInvoice !== null ? (
-                  <p className="mt-0.5 text-3xl font-bold sm:text-2xl">
-                    {formatCurrencyPrecise(targetPricePerInvoice)}
-                    <span className="text-xs font-normal text-[#6b705c]">
-                      {" "}
-                      / visit
-                    </span>
-                  </p>
-                ) : (
-                  <p className="mt-1 text-xs text-[#6b705c]">
-                    Not enough cost data logged yet.
-                  </p>
-                )}
-              </div>
-            </div>
+          <div className="flex flex-wrap items-start gap-2 lg:max-w-md lg:justify-end">
+            <ComposeSmsForm
+              jobberClientId={decodedId}
+              buttonClassName="min-h-[44px] whitespace-nowrap rounded-xl border border-[#174734] bg-white px-4 py-2 text-sm font-bold text-[#174734] transition hover:bg-[#174734] hover:text-white"
+            />
+            <ComposeEmailForm
+              jobberClientId={decodedId}
+              buttonClassName="min-h-[44px] whitespace-nowrap rounded-xl border border-[#174734] bg-white px-4 py-2 text-sm font-bold text-[#174734] transition hover:bg-[#174734] hover:text-white"
+            />
+            <LogCallForm
+              jobberClientId={decodedId}
+              buttonClassName="min-h-[44px] whitespace-nowrap rounded-xl border border-[#174734] bg-white px-4 py-2 text-sm font-bold text-[#174734] transition hover:bg-[#174734] hover:text-white"
+            />
+            <AddJobModal
+              presetCustomer={{ id: decodedId, name: client.name || "Unnamed Customer" }}
+              triggerLabel="+ Add job"
+              triggerClassName="min-h-[44px] whitespace-nowrap rounded-xl bg-[#174734] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#226246]"
+            />
           </div>
-          )}
         </header>
 
         <section
@@ -2405,7 +2561,7 @@ export default async function CustomerDetailPage({
             value={formatCurrency(lifetimeCollected)}
             sub={
               firstInvoiceDate
-                ? `Since ${formatDate(firstInvoiceDate)}`
+                ? `${visitTotals.visitCount} visits since ${formatDate(firstInvoiceDate)}`
                 : "No invoices yet"
             }
           />
@@ -2414,7 +2570,7 @@ export default async function CustomerDetailPage({
             value={trackingSummary.invoiceCount > 0 ? formatCurrency(trackingSummary.profit) : "-"}
             sub={
               trackingSummary.invoiceCount > 0
-                ? `${trackingSummary.invoiceCount} invoice${trackingSummary.invoiceCount === 1 ? "" : "s"}`
+                ? `${trackingSummary.invoiceCount} invoice${trackingSummary.invoiceCount === 1 ? "" : "s"} with costs tracked`
                 : "No tracked invoices yet"
             }
             tone={trackingSummary.invoiceCount > 0 ? (trackingSummary.profit >= 0 ? "good" : "warn") : undefined}
@@ -2439,8 +2595,25 @@ export default async function CustomerDetailPage({
           />
           <KpiCard
             label="Next visit"
-            value={nextVisit?.start_at ? formatVisitDateTime(nextVisit.start_at) : "None booked"}
-            sub={nextVisit?.title ?? undefined}
+            value={
+              nextVisit?.start_at
+                ? new Intl.DateTimeFormat("en-US", {
+                    timeZone: "America/Phoenix",
+                    month: "short",
+                    day: "numeric",
+                  }).format(new Date(nextVisit.start_at))
+                : "None booked"
+            }
+            sub={
+              nextVisit?.start_at
+                ? new Intl.DateTimeFormat("en-US", {
+                    timeZone: "America/Phoenix",
+                    weekday: "long",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  }).format(new Date(nextVisit.start_at))
+                : undefined
+            }
           />
           <KpiCard
             label="Last contact"
@@ -2479,105 +2652,240 @@ export default async function CustomerDetailPage({
         <div className="space-y-6">
           <>
             {tab === "overview" && (
-              <div className="grid gap-6 lg:grid-cols-2">
-                <section className="rounded-2xl bg-white p-5 shadow">
-                  <h2 className="text-lg font-bold">Needs attention</h2>
-                  {attentionRows.length === 0 && visitTotals.unpaidCount === 0 ? (
-                    <p className="mt-3 text-sm text-[#6b705c]">
-                      Nothing needs attention right now.
-                    </p>
-                  ) : (
-                    <ul className="mt-3 divide-y divide-[#f0eee6] text-sm">
-                      {visitTotals.unpaidCount > 0 && (
-                        <li className="py-2 font-semibold text-amber-800">
-                          {visitTotals.unpaidCount} unpaid visit
-                          {visitTotals.unpaidCount === 1 ? "" : "s"},{" "}
-                          {formatCurrencyPrecise(visitTotals.unpaidAmount)} due
-                        </li>
+              <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
+                <div className="space-y-6">
+                  <section className="rounded-2xl bg-white p-5 shadow">
+                    <div className="flex items-center justify-between gap-3">
+                      <h2 className="text-lg font-bold">Needs attention</h2>
+                      {alerts.length > 0 && (
+                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">
+                          {alerts.length} item{alerts.length === 1 ? "" : "s"}
+                        </span>
                       )}
-                      {attentionRows.slice(0, 5).map((row) => (
-                        <li key={row.visitId} className="flex flex-wrap justify-between gap-2 py-2">
-                          <Link href={visitHref(row.visitId)} className="font-bold underline">
-                            {formatDate(row.startAt)}
-                          </Link>
-                          <span className="text-xs font-semibold text-amber-800">
-                            {row.flags.join(", ")}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {attentionRows.length > 5 && (
-                    <Link
-                      href={`${customerTabHref(decodedId, currentSearchParams, "visits")}&show=attention`}
-                      className="mt-3 inline-block text-sm font-semibold text-[#7a5f12]"
-                    >
-                      See all {attentionRows.length}
-                    </Link>
-                  )}
-                </section>
-
-                <section className="rounded-2xl bg-white p-5 shadow">
-                  <h2 className="text-lg font-bold">Recent activity</h2>
-                  {recentActivity.length === 0 ? (
-                    <p className="mt-3 text-sm text-[#6b705c]">Nothing yet.</p>
-                  ) : (
-                    <ul className="mt-3 divide-y divide-[#f0eee6] text-sm">
-                      {recentActivity.map((item, index) => (
-                        <li key={index} className="flex flex-wrap justify-between gap-2 py-2">
-                          <span>
-                            {item.href ? (
-                              <Link href={item.href} className="font-semibold underline">
-                                {item.label}
-                              </Link>
-                            ) : (
-                              <span className="font-semibold">{item.label}</span>
-                            )}
-                            {item.detail && (
-                              <span className="ml-2 text-xs text-[#6b705c]">{item.detail}</span>
-                            )}
-                          </span>
-                          <span className="text-xs text-[#6b705c]">{formatDate(item.at)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </section>
-
-                {marginChartRows.length > 1 && (
-                  <section className="rounded-2xl bg-white p-5 shadow lg:col-span-2">
-                    <h2 className="text-lg font-bold">
-                      Profit margin by visit since {PROFIT_TRACKING_START_LABEL}
-                    </h2>
-                    <div className="mt-4 flex h-32 items-end gap-2">
-                      {marginChartRows.map((row) => {
-                        const margin = Math.max(0, Math.min(100, row.margin ?? 0));
-                        const good = (row.margin ?? 0) >= targetMarginPct;
-                        return (
-                          <Link
-                            key={row.visitId}
-                            href={visitHref(row.visitId)}
-                            title={`${formatDate(row.startAt)}: ${row.margin}%`}
-                            className="flex h-full flex-1 flex-col items-center justify-end gap-1"
-                          >
-                            <span className="text-[10px] font-bold">{row.margin}%</span>
-                            <span
-                              className={`w-full rounded-t ${good ? "bg-[#174734]" : "bg-[#d9a441]"}`}
-                              style={{ height: `${Math.max(4, margin)}%` }}
-                            />
-                          </Link>
-                        );
-                      })}
                     </div>
-                    <p className="mt-2 text-xs text-[#6b705c]">
-                      Dark bars meet the {targetMarginPct}% target. Oldest on the left.
-                    </p>
+                    {shownAlerts.length === 0 ? (
+                      <p className="mt-3 text-sm text-[#6b705c]">
+                        Nothing needs attention right now.
+                      </p>
+                    ) : (
+                      <div className="mt-3 space-y-2">
+                        {shownAlerts.map((alert, index) => (
+                          <div
+                            key={index}
+                            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#f0d9b0] bg-[#fffaf0] px-3.5 py-2.5"
+                          >
+                            <p className="text-sm">
+                              <strong>{alert.title}</strong>
+                              {alert.detail && (
+                                <span className="text-[#5c614f]"> {alert.detail}</span>
+                              )}
+                            </p>
+                            <Link
+                              href={alert.href}
+                              className="whitespace-nowrap text-sm font-bold underline"
+                            >
+                              {alert.action}
+                            </Link>
+                          </div>
+                        ))}
+                        {alerts.length > shownAlerts.length && (
+                          <Link
+                            href={`${customerTabHref(decodedId, currentSearchParams, "visits")}&show=attention`}
+                            className="inline-block text-sm font-semibold text-[#7a5f12]"
+                          >
+                            See all {alerts.length}
+                          </Link>
+                        )}
+                      </div>
+                    )}
                   </section>
-                )}
+
+                  <section className="rounded-2xl bg-white p-5 shadow">
+                    <div className="flex items-center justify-between gap-3">
+                      <h2 className="text-lg font-bold">Next visit</h2>
+                      {nextVisit && (
+                        <Link
+                          href={visitHref(nextVisit.jobber_visit_id)}
+                          className="text-sm font-bold underline"
+                        >
+                          Open visit
+                        </Link>
+                      )}
+                    </div>
+                    {nextVisit ? (
+                      <div className="mt-3 flex flex-wrap gap-x-8 gap-y-4">
+                        <div>
+                          <p className="text-xl font-extrabold">
+                            {formatVisitDateTime(nextVisit.start_at)}
+                          </p>
+                          <p className="mt-0.5 text-sm text-[#4d5242]">
+                            {nextVisit.title ?? "Visit"}
+                            {" | "}
+                            {nextVisitCrew.length > 0
+                              ? `Crew: ${nextVisitCrew.join(", ")}`
+                              : "Crew not assigned yet"}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-x-6 gap-y-3 text-sm">
+                          <div>
+                            <p className="text-[#5c614f]">Expected price</p>
+                            <p className="text-base font-extrabold">
+                              {lastBilled !== null ? formatCurrencyPrecise(lastBilled) : "-"}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[#5c614f]">Expected profit</p>
+                            <p className="text-base font-extrabold text-green-700">
+                              {expectedProfit !== null
+                                ? `${formatCurrency(expectedProfit)}${expectedMargin !== null ? ` (${expectedMargin}%)` : ""}`
+                                : "-"}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[#5c614f]">Reminder</p>
+                            <p className="text-base font-extrabold">{reminderText}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="mt-3 rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                        No upcoming visit scheduled.
+                      </p>
+                    )}
+                    {nextVisit && (
+                      <p className="mt-3 text-xs text-[#6b705c]">
+                        Expected price is the last invoice. Expected profit uses the average cost of
+                        visits tracked since {PROFIT_TRACKING_START_LABEL}. Edit materials and
+                        equipment for this visit on the Visits tab.
+                      </p>
+                    )}
+                  </section>
+
+                  <section className="rounded-2xl bg-white p-5 shadow">
+                    <h2 className="text-lg font-bold">Recent activity</h2>
+                    {recentActivity.length === 0 ? (
+                      <p className="mt-3 text-sm text-[#6b705c]">Nothing yet.</p>
+                    ) : (
+                      <div className="mt-3 flex flex-col">
+                        {recentActivity.map((item, index) => (
+                          <div
+                            key={index}
+                            className="flex gap-3.5 border-t border-[#f0eee6] py-3 first:border-t-0"
+                          >
+                            <p className="w-20 shrink-0 pt-0.5 text-xs text-[#5c614f]">
+                              {formatDate(item.at)}
+                            </p>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-bold">
+                                {item.href ? (
+                                  <Link href={item.href} className="underline">
+                                    {item.title}
+                                  </Link>
+                                ) : (
+                                  item.title
+                                )}
+                              </p>
+                              {item.detail && (
+                                <p className="text-[13px] text-[#5c614f]">{item.detail}</p>
+                              )}
+                            </div>
+                            <span
+                              className={`h-fit rounded-full px-2 py-0.5 text-[11px] font-bold ${ACTIVITY_TAG_CLASS[item.tag]}`}
+                            >
+                              {item.tag}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                </div>
+
+                <div className="space-y-6">
+                  <section className="rounded-2xl bg-white p-5 shadow">
+                    <h2 className="text-lg font-bold">Profit margin by visit</h2>
+                    <p className="mt-0.5 text-xs text-[#5c614f]">
+                      Margin per visit since {PROFIT_TRACKING_START_LABEL}
+                    </p>
+                    {marginChartRows.length === 0 ? (
+                      <p className="mt-4 text-sm text-[#6b705c]">
+                        No visits with costs and an invoice yet.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="mt-4 flex h-[110px] items-end gap-1.5">
+                          {marginChartRows.map((row) => {
+                            const margin = Math.max(0, Math.min(100, row.margin ?? 0));
+                            const good = (row.margin ?? 0) >= targetMarginPct;
+                            return (
+                              <Link
+                                key={row.visitId}
+                                href={visitHref(row.visitId)}
+                                title={`${formatDate(row.startAt)}: ${row.margin}%`}
+                                className="flex h-full flex-1 flex-col justify-end"
+                              >
+                                <span
+                                  className={`w-full rounded-t ${good ? "bg-[#226246]" : "bg-[#b45309]"}`}
+                                  style={{ height: `${Math.max(4, (margin / 100) * 110)}px` }}
+                                />
+                              </Link>
+                            );
+                          })}
+                        </div>
+                        <div className="mt-1.5 flex justify-between text-xs text-[#5c614f]">
+                          <span>{formatDate(marginChartRows[0].startAt)}</span>
+                          <span>
+                            {formatDate(marginChartRows[marginChartRows.length - 1].startAt)}
+                          </span>
+                        </div>
+                        <p className="mt-3 text-[13px] text-[#4d5242]">
+                          {visitTotals.trackedMargin !== null
+                            ? `Average margin ${visitTotals.trackedMargin}%. `
+                            : ""}
+                          {marginChartRows.filter((row) => (row.margin ?? 0) < targetMarginPct).length > 0
+                            ? `${marginChartRows.filter((row) => (row.margin ?? 0) < targetMarginPct).length} visit${marginChartRows.filter((row) => (row.margin ?? 0) < targetMarginPct).length === 1 ? "" : "s"} under the ${targetMarginPct}% target (orange). `
+                            : `Every visit meets the ${targetMarginPct}% target. `}
+                          Costs were not tracked before {PROFIT_TRACKING_START_LABEL}, so earlier
+                          visits show revenue only.
+                        </p>
+                      </>
+                    )}
+                  </section>
+
+                  <section className="rounded-2xl bg-white p-5 shadow">
+                    <h2 className="text-lg font-bold">Service plan</h2>
+                    <dl className="mt-3 grid grid-cols-[1fr_auto] gap-x-3 gap-y-2 text-sm">
+                      {planRows.map((row) => (
+                        <div key={row.k} className="contents">
+                          <dt className="text-[#5c614f]">{row.k}</dt>
+                          <dd className="text-right font-bold">{row.v}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </section>
+
+                  <section className="rounded-2xl bg-white p-5 shadow">
+                    <h2 className="text-lg font-bold">Money snapshot</h2>
+                    <dl className="mt-3 grid grid-cols-[1fr_auto] gap-x-3 gap-y-2 text-sm">
+                      {moneyRows.map((row) => (
+                        <div key={row.k} className="contents">
+                          <dt className="text-[#5c614f]">{row.k}</dt>
+                          <dd className="text-right font-bold">{row.v}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <Link
+                      href={customerTabHref(decodedId, currentSearchParams, "invoices")}
+                      className="mt-4 inline-block text-[13px] font-bold underline"
+                    >
+                      See every invoice and payment
+                    </Link>
+                  </section>
+                </div>
               </div>
             )}
 
-            {tab === "overview" && (
+            {tab === "property" && (
             <CustomerContactsSection
               jobberClientId={decodedId}
               email={email}
@@ -2590,55 +2898,6 @@ export default async function CustomerDetailPage({
             />
             )}
 
-            {tab === "overview" && (
-            <section className="rounded-2xl bg-white p-5 shadow">
-              <h2 className="text-lg font-bold">Next Visit</h2>
-
-              {nextVisit ? (
-                <details className="mt-3 rounded-xl border border-[#e7e2d5] px-3 py-2">
-                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-bold">
-                        {formatVisitDateTime(nextVisit.start_at)}
-                        {nextVisit.title ? ` — ${nextVisit.title}` : ""}
-                      </p>
-                    </div>
-
-                    <div className="flex shrink-0 items-center gap-2">
-                      <span
-                        className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${visitStatusBadge(
-                          nextVisit.visit_status
-                        )}`}
-                      >
-                        {nextVisit.visit_status || "Unknown"}
-                      </span>
-
-                      <p className="text-sm font-bold">
-                        {formatCurrencyPrecise(
-                          visitDisplayTotalMap.get(nextVisit.jobber_visit_id) ?? 0
-                        )}
-                      </p>
-                    </div>
-                  </summary>
-
-                  <div className="mt-4 border-t border-[#f0eee6] pt-4">
-                    <VisitCostForm
-                      visit={nextVisit}
-                      materialsList={materialsList}
-                      equipmentList={equipmentList}
-                      visitUsageMap={visitUsageMap}
-                      visitEquipmentUsageSet={visitEquipmentUsageSet}
-                      pageEquipmentIds={pageEquipmentIds}
-                    />
-                  </div>
-                </details>
-              ) : (
-                <p className="mt-3 rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
-                  No upcoming visit scheduled.
-                </p>
-              )}
-            </section>
-            )}
 
             {tab === "jobs" && (
             <section className="rounded-2xl bg-white p-5 shadow">
@@ -3161,6 +3420,21 @@ export default async function CustomerDetailPage({
 
             {tab === "settings" && (
             <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">Customer status</h2>
+            <div className="mt-3">
+              <PermanentlyCanceledForm
+                jobberClientId={decodedId}
+                isCanceled={cancellationStatus.permanentlyCanceledAt !== null}
+                canceledAt={cancellationStatus.permanentlyCanceledAt}
+                canceledReason={cancellationStatus.permanentlyCanceledReason}
+                reasons={CHURN_REASONS}
+              />
+            </div>
+            </section>
+            )}
+
+            {tab === "settings" && (
+            <section className="rounded-2xl bg-white p-5 shadow">
               <h2 className="text-lg font-bold">
                 Marketing Attribution
               </h2>
@@ -3203,6 +3477,123 @@ export default async function CustomerDetailPage({
           </>
 
           <>
+            {tab === "visits" && (
+              <div>
+          <div className="w-full rounded-2xl bg-white p-4 shadow sm:p-5 lg:flex-1">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <p className="text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
+                  Profitability · {profitTimeframeLabel}
+                </p>
+
+                {profitSummary.invoiceCount > 0 && (
+                  <p className="text-[11px] text-[#6b705c]">
+                    Based on {profitSummary.invoiceCount} invoice
+                    {profitSummary.invoiceCount === 1 ? "" : "s"}
+                  </p>
+                )}
+              </div>
+
+              <ProfitTimeframePicker
+                current={profitTimeframe}
+                options={PROFIT_TIMEFRAME_OPTIONS}
+                paramName="profitRange"
+              />
+            </div>
+
+            {/* Ryan (2026-09-20): the desktop 4-across grid was reused
+                as-is below `sm` (a 2-col grid, 4th tile spanning both
+                columns) and it made every number cramped -- two ~24px
+                bold currency values squeezed into ~140px-wide phone
+                columns, plus an orphaned empty cell next to Profit
+                Margin. Mobile gets its own single-column stack instead
+                (full-width rows, no leftover gaps) with a bump up to
+                text-3xl since each value now has the whole row to
+                itself; sm: and up keeps the original 4-column layout
+                and text-2xl sizing untouched -- that's the one Ryan
+                confirmed looks right on desktop. */}
+            <div className="mt-4 grid grid-cols-1 gap-4 divide-y divide-[#f0eee6] sm:grid-cols-4 sm:gap-x-6 sm:gap-y-4 sm:divide-y-0">
+              <div className="pt-4 first:pt-0 sm:pt-0">
+                <p className="text-xs font-bold text-[#9c7a20]">
+                  Amount Collected
+                </p>
+                <p className="mt-0.5 text-3xl font-bold sm:text-2xl">
+                  {formatCurrency(amountCollectedForTimeframe)}
+                </p>
+              </div>
+
+              <div className="pt-4 first:pt-0 sm:pt-0">
+                <p className="text-xs font-bold text-[#9c7a20]">
+                  Estimated Profit
+                </p>
+                <p
+                  className={`mt-0.5 text-3xl font-bold sm:text-2xl ${
+                    estimatedProfit >= 0 ? "text-green-700" : "text-red-600"
+                  }`}
+                >
+                  {formatCurrency(estimatedProfit)}
+                </p>
+              </div>
+
+              <div className="pt-4 first:pt-0 sm:pt-0">
+                <p className="text-xs font-bold text-[#9c7a20]">
+                  Profit Margin
+                </p>
+                <p
+                  className={`mt-0.5 text-3xl font-bold sm:text-2xl ${
+                    profitMarginPct === null
+                      ? "text-[#6b705c]"
+                      : meetsProfitTarget
+                        ? "text-green-700"
+                        : "text-red-600"
+                  }`}
+                >
+                  {profitMarginPct !== null
+                    ? `${profitMarginPct.toFixed(1)}%`
+                    : "—"}
+                </p>
+              </div>
+
+              <div className="pt-4 first:pt-0 sm:pt-0">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <p className="text-xs font-bold text-[#9c7a20]">
+                    Price Needed for
+                  </p>
+                  <ProfitTimeframePicker
+                    current={String(targetMarginPct)}
+                    options={MARGIN_TARGET_OPTIONS}
+                    paramName="marginTarget"
+                  />
+                </div>
+
+                {profitMarginPct === null ? (
+                  <p className="mt-1 text-xs text-[#6b705c]">
+                    No invoices {profitTimeframeLabel.toLowerCase()}.
+                  </p>
+                ) : meetsProfitTarget ? (
+                  <p className="mt-0.5 text-3xl font-bold text-green-700 sm:text-2xl">
+                    Already met
+                  </p>
+                ) : targetPricePerInvoice !== null ? (
+                  <p className="mt-0.5 text-3xl font-bold sm:text-2xl">
+                    {formatCurrencyPrecise(targetPricePerInvoice)}
+                    <span className="text-xs font-normal text-[#6b705c]">
+                      {" "}
+                      / visit
+                    </span>
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-[#6b705c]">
+                    Not enough cost data logged yet.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+              </div>
+            )}
+
             {tab === "visits" && (
               <section className="rounded-2xl bg-white p-5 shadow">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -3356,6 +3747,56 @@ export default async function CustomerDetailPage({
                     </table>
                   </div>
                 )}
+
+            {tab === "visits" && (
+            <section className="rounded-2xl bg-white p-5 shadow">
+              <h2 className="text-lg font-bold">Next Visit</h2>
+
+              {nextVisit ? (
+                <details className="mt-3 rounded-xl border border-[#e7e2d5] px-3 py-2">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold">
+                        {formatVisitDateTime(nextVisit.start_at)}
+                        {nextVisit.title ? ` — ${nextVisit.title}` : ""}
+                      </p>
+                    </div>
+
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span
+                        className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-bold ${visitStatusBadge(
+                          nextVisit.visit_status
+                        )}`}
+                      >
+                        {nextVisit.visit_status || "Unknown"}
+                      </span>
+
+                      <p className="text-sm font-bold">
+                        {formatCurrencyPrecise(
+                          visitDisplayTotalMap.get(nextVisit.jobber_visit_id) ?? 0
+                        )}
+                      </p>
+                    </div>
+                  </summary>
+
+                  <div className="mt-4 border-t border-[#f0eee6] pt-4">
+                    <VisitCostForm
+                      visit={nextVisit}
+                      materialsList={materialsList}
+                      equipmentList={equipmentList}
+                      visitUsageMap={visitUsageMap}
+                      visitEquipmentUsageSet={visitEquipmentUsageSet}
+                      pageEquipmentIds={pageEquipmentIds}
+                    />
+                  </div>
+                </details>
+              ) : (
+                <p className="mt-3 rounded-xl bg-[#f7f6f1] px-3 py-2 text-sm text-[#6b705c]">
+                  No upcoming visit scheduled.
+                </p>
+              )}
+            </section>
+            )}
 
                 <p className="mt-3 text-sm text-[#6b705c]">
                   Cost and profit tracking started in {PROFIT_TRACKING_START_LABEL}, so earlier

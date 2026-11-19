@@ -91,3 +91,35 @@ export function visitFlags(input: {
   if (input.state === "unpaid" || input.state === "partial") flags.push("Unpaid");
   return flags;
 }
+
+// Which reminder is next for an upcoming visit. Rules are "days before the
+// visit" (for example 4 and 2). A rule whose send day has already passed
+// without being sent (visit booked late) is ignored rather than shown as due.
+export type NextReminder =
+  | { state: "due"; daysBefore: number; dueDay: string }
+  | { state: "sent" }
+  | { state: "none" };
+
+function minusDays(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d - days)).toISOString().slice(0, 10);
+}
+
+export function nextReminder(input: {
+  visitDay: string;
+  today: string;
+  ruleDays: number[];
+  sentDays: number[];
+}): NextReminder {
+  const sent = new Set(input.sentDays);
+  const rules = [...input.ruleDays].sort((a, b) => b - a);
+
+  for (const days of rules) {
+    if (sent.has(days)) continue;
+    const dueDay = minusDays(input.visitDay, days);
+    if (dueDay >= input.today) return { state: "due", daysBefore: days, dueDay };
+  }
+
+  if (rules.some((days) => sent.has(days))) return { state: "sent" };
+  return { state: "none" };
+}
