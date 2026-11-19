@@ -18,6 +18,8 @@ import { toNumber, formatCurrencyPrecise as formatCurrency } from "@/lib/format"
 import ExpenseRowItem, { type ExpenseRow } from "../../expenses/ExpenseRowItem";
 import StartingBalanceForm from "../StartingBalanceForm";
 import { loanRowEffect } from "@/lib/loanPayments";
+import { syncLoanInterestExpenses } from "@/lib/loanInterest";
+import { recordLoanInterest } from "../actions";
 
 type PageProps = {
   params: Promise<{ accountId: string }>;
@@ -93,6 +95,10 @@ export default async function ReconciliationAccountPage({
   }, []);
 
   const rowsNewestFirst = [...rowsWithBalance].reverse();
+
+  const interestStatus = account.isLoan
+    ? await syncLoanInterestExpenses({ accountId })
+    : null;
 
   const isBalanced =
     account.difference !== null && Math.abs(account.difference) < 1;
@@ -221,6 +227,49 @@ export default async function ReconciliationAccountPage({
             This is a loan. Each payment lowers the balance by its principal
             only, read from the PRINCIPAL figure in the payment description;
             the interest part does not change what is owed.
+            {interestStatus ? (
+              <div style={{ marginTop: "10px" }}>
+                <div>
+                  Interest recorded as expenses:{" "}
+                  <strong>
+                    {formatCurrency(interestStatus.recordedTotal)} across{" "}
+                    {interestStatus.recordedCount}{" "}
+                    {interestStatus.recordedCount === 1 ? "payment" : "payments"}
+                  </strong>
+                  {interestStatus.pendingCount > 0
+                    ? `, ${formatCurrency(interestStatus.pendingTotal)} from ${interestStatus.pendingCount} more not yet recorded`
+                    : ""}
+                  .
+                </div>
+                {interestStatus.filedAsExpenseCount > 0 ? (
+                  <div style={{ marginTop: "4px" }}>
+                    {interestStatus.filedAsExpenseCount} payment
+                    {interestStatus.filedAsExpenseCount === 1 ? " is" : "s are"}{" "}
+                    filed as a regular expense, so no separate interest row is
+                    added for {interestStatus.filedAsExpenseCount === 1 ? "it" : "them"}.
+                  </div>
+                ) : null}
+                {interestStatus.pendingCount > 0 ? (
+                  <form action={recordLoanInterest.bind(null, account.id)} style={{ marginTop: "10px" }}>
+                    <button
+                      type="submit"
+                      style={{
+                        border: "1px solid #075985",
+                        background: "#075985",
+                        color: "#ffffff",
+                        padding: "8px 14px",
+                        borderRadius: "10px",
+                        fontWeight: 700,
+                        fontSize: "13px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Record interest as expenses
+                    </button>
+                  </form>
+                ) : null}
+              </div>
+            ) : null}
           </section>
         ) : null}
 

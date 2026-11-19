@@ -88,3 +88,25 @@ export function loanRowEffect(
     split: true,
   };
 }
+
+// The interest to record as its own expense for a payment row, or null.
+// Only rows already filed as a money movement (ledger_type set, such as
+// "Paid to Loan") qualify: a payment someone categorized as a normal
+// expense is already counted in full, so adding interest would count it
+// twice.
+export function interestExpenseFor(row: {
+  amount: number;
+  description: string | null;
+  vendor: string | null;
+  ledgerType: string | null;
+}): number | null {
+  if (row.amount >= 0 || !row.ledgerType) return null;
+
+  const interest = parseInterest([row.description, row.vendor].filter(Boolean).join(" "));
+
+  if (interest === null) return null;
+
+  const value = Math.round(Math.abs(interest) * 100) / 100;
+
+  return value > 0 ? value : null;
+}

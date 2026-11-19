@@ -21,6 +21,7 @@ import { requireAdmin } from "@/lib/currentUser";
 import { supabaseServer } from "@/lib/supabase-server";
 import { recordAuditLog } from "@/lib/auditLog";
 import { describePlaidError, getAccountBalances } from "@/lib/plaid";
+import { syncLoanInterestExpenses } from "@/lib/loanInterest";
 import { syncTransactions } from "@/lib/plaidTransactions";
 import { mapPlaidCategory, mapPlaidDeposit } from "@/lib/plaidCategoryMap";
 import { expenseCategoryLabel } from "@/app/(platform)/expenses/constants";
@@ -528,6 +529,14 @@ export async function POST(request: NextRequest) {
 
   if (apply) {
     await recordRuleUse(ruleUse);
+
+    // The interest part of any loan payment becomes its own expense row
+    // (lib/loanInterest.ts). Non-fatal: the sync itself already succeeded.
+    try {
+      await syncLoanInterestExpenses({ apply: true });
+    } catch (error) {
+      console.error("Loan interest split failed:", error);
+    }
 
     await recordAuditLog({
       actor,

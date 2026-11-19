@@ -28,6 +28,7 @@ export type ExpenseCategory =
   | "bank_fees"
   | "rent_utilities"
   | "taxes_licenses"
+  | "interest"
   | "other";
 
 // "group" is for the P&L/job-costing wiring -- cogs rolls up under Cost
@@ -64,6 +65,7 @@ export const EXPENSE_CATEGORIES: {
   { value: "bank_fees", label: "Bank & Payment Processing Fees", group: "opex" },
   { value: "rent_utilities", label: "Rent & Utilities", group: "opex" },
   { value: "taxes_licenses", label: "Taxes & Licenses", group: "opex" },
+  { value: "interest", label: "Loan Interest", group: "opex" },
   { value: "other", label: "Other", group: "opex" },
 ];
 

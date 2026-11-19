@@ -77,3 +77,25 @@ describe("isLoanAccount", () => {
     expect(isLoanAccount({ name: "MONEY MARKET", subtype: "money market" })).toBe(false);
   });
 });
+
+import { interestExpenseFor } from "./loanPayments";
+
+describe("interestExpenseFor", () => {
+  const row = { amount: -950, description: D1, vendor: null, ledgerType: "loan_payment" };
+
+  it("returns the interest for a filed payment", () => {
+    expect(interestExpenseFor(row)).toBe(23.2);
+  });
+
+  it("returns null for principal-only payments", () => {
+    expect(interestExpenseFor({ ...row, amount: -18.11, description: D2 })).toBeNull();
+  });
+
+  it("skips payments categorized as real expenses", () => {
+    expect(interestExpenseFor({ ...row, ledgerType: null })).toBeNull();
+  });
+
+  it("skips money going out of the loan", () => {
+    expect(interestExpenseFor({ ...row, amount: 950 })).toBeNull();
+  });
+});

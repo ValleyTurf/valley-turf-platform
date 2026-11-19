@@ -9,6 +9,7 @@ import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/currentUser";
 import { supabaseServer } from "@/lib/supabase-server";
 import { recordAuditLog } from "@/lib/auditLog";
+import { syncLoanInterestExpenses } from "@/lib/loanInterest";
 
 // Ryan enters the true balance from his bank statement as of a chosen
 // date (defaulting to 10/1/2026, the bank feed's own cutover date) once
@@ -69,4 +70,25 @@ export async function updateStartingBalance(
 
   revalidatePath("/reconciliation");
   revalidatePath(`/reconciliation/${accountId}`);
+}
+
+// Loan accounts: record the interest part of each payment as its own
+// expense row (also runs automatically after every bank sync).
+export async function recordLoanInterest(accountId: string): Promise<void> {
+  const actor = await requireAdmin();
+
+  const result = await syncLoanInterestExpenses({ accountId, apply: true });
+
+  await recordAuditLog({
+    actor,
+    action: "create",
+    entityType: "loan_interest",
+    entityId: accountId,
+    entityLabel: "Loan interest expenses",
+    note: `Recorded ${result.created} interest expense row(s).`,
+  });
+
+  revalidatePath("/reconciliation");
+  revalidatePath(`/reconciliation/${accountId}`);
+  revalidatePath("/expenses");
 }
