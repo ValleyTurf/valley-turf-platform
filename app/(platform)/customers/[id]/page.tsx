@@ -65,6 +65,7 @@ import {
   marginPercent,
 } from "@/lib/profitTracking";
 import { allocateInvoices } from "@/lib/visitInvoiceMatch";
+import { buildServiceMonths, servicePattern } from "@/lib/serviceMonths";
 import {
   getClientInvoiceRows,
   getClientVisitLinks,
@@ -2349,9 +2350,21 @@ export default async function CustomerDetailPage({
     : null;
   const autopayOn = !!autopayPaymentMethod?.autopayEnabled && !!cardLabel;
 
+  const nowMs = Date.now();
+  const serviceMonths = buildServiceMonths(
+    clientVisitLinks.map((visit) => ({
+      month: toPhoenixDateString(visit.start_at)?.slice(0, 7) ?? null,
+      completed: (visit.visit_status ?? "").toUpperCase() === "COMPLETED",
+      upcoming: visit.start_at ? new Date(visit.start_at).getTime() > nowMs : false,
+    })),
+    todayPhoenix
+  );
+  const servicePatternLabel = servicePattern(serviceMonths);
+
   const planRows: { k: string; v: string }[] = [
     { k: "Service", v: nextVisit?.title ?? pastVisits[0]?.title ?? "Not set" },
     { k: "Plan", v: profile?.subscription_plan?.trim() || "Not set" },
+    { k: "Visit pattern", v: servicePatternLabel ?? "Not enough history" },
     {
       k: "Price",
       v: lastBilled !== null ? `${formatCurrencyPrecise(lastBilled)} per visit` : "Not set",
@@ -2885,6 +2898,44 @@ export default async function CustomerDetailPage({
                         </div>
                       ))}
                     </dl>
+                    <p className="mt-4 text-xs font-bold uppercase tracking-wide text-[#9c7a20]">
+                      Service months
+                    </p>
+                    <div className="mt-2 grid grid-cols-6 gap-1.5">
+                      {serviceMonths.map((month) => {
+                        const total = month.done + month.scheduled;
+                        const style =
+                          month.done > 0
+                            ? "bg-[#174734] text-white"
+                            : month.scheduled > 0
+                              ? "border-2 border-[#174734] text-[#174734]"
+                              : "bg-[#f0eee6] text-[#9a9a8a]";
+                        return (
+                          <div
+                            key={month.key}
+                            title={`${month.label} ${month.key.slice(0, 4)}: ${month.done} done, ${month.scheduled} scheduled`}
+                            className={`rounded-lg px-1 py-1.5 text-center text-xs font-bold ${style} ${
+                              month.isCurrent ? "ring-2 ring-[#d9a441] ring-offset-1" : ""
+                            }`}
+                          >
+                            <div>{month.label}</div>
+                            <div className="text-[10px] font-semibold opacity-80">
+                              {total > 0 ? `${total} visit${total === 1 ? "" : "s"}` : "none"}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-2 text-[11px] text-[#6b705c]">
+                      Filled means serviced, outlined means scheduled, gray means no visit. Read
+                      from visit history, so a quarterly customer shows only their service months.
+                    </p>
+                    <Link
+                      href={customerTabHref(decodedId, currentSearchParams, "property")}
+                      className="mt-3 inline-block text-[13px] font-bold underline"
+                    >
+                      Edit plan notes, turf size and gate code
+                    </Link>
                   </section>
 
                   <section className="rounded-2xl bg-white p-5 shadow">
