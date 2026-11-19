@@ -2158,7 +2158,7 @@ export default async function CustomerDetailPage({
     getClientVisitLinks(decodedId),
     getClientInvoiceRows(decodedId),
   ]);
-  const visitInvoiceMatches = linkVisitsToInvoices(clientVisitLinks, clientInvoiceRows);
+  const visitInvoiceMatches = linkVisitsToInvoices(clientVisitLinks, clientInvoiceRows, todayPhoenix);
   const invoiceRowById = new Map(
     clientInvoiceRows.map((row) => [row.jobber_invoice_id, row])
   );
@@ -2310,13 +2310,25 @@ export default async function CustomerDetailPage({
 
   const lastBilled =
     visitTableRows.find((row) => row.completed && row.billed !== null)?.billed ?? null;
+  // The open job's own price is the truest per-visit price (Jobber and
+  // native jobs both carry it). Falls back to the last invoice share when
+  // the customer has no open job or several jobs at different prices.
+  const openJobPrices = openJobs
+    .map((job) => toNumber(job.total))
+    .filter((amount) => amount > 0)
+    .map((amount) => amount.toFixed(2));
+  const jobPrice =
+    openJobPrices.length > 0 && new Set(openJobPrices).size === 1
+      ? Number(openJobPrices[0])
+      : null;
+  const visitPrice = jobPrice ?? lastBilled;
   const averageTrackedCost =
     visitTotals.trackedCount > 0 ? visitTotals.trackedCost / visitTotals.trackedCount : null;
   const expectedProfit =
-    lastBilled !== null && averageTrackedCost !== null ? lastBilled - averageTrackedCost : null;
+    visitPrice !== null && averageTrackedCost !== null ? visitPrice - averageTrackedCost : null;
   const expectedMargin =
-    lastBilled !== null && expectedProfit !== null
-      ? marginPercent(lastBilled, expectedProfit)
+    visitPrice !== null && expectedProfit !== null
+      ? marginPercent(visitPrice, expectedProfit)
       : null;
   const nextVisitCrew = nextVisit
     ? visitAssignedNamesMap.get(nextVisit.jobber_visit_id) ?? []
@@ -2364,7 +2376,7 @@ export default async function CustomerDetailPage({
     { k: "Plan", v: profile?.subscription_plan?.trim() || "Not set" },
     {
       k: "Price",
-      v: lastBilled !== null ? `${formatCurrencyPrecise(lastBilled)} per visit` : "Not set",
+      v: visitPrice !== null ? `${formatCurrencyPrecise(visitPrice)} per visit` : "Not set",
     },
     {
       k: "Turf size",
@@ -2763,7 +2775,7 @@ export default async function CustomerDetailPage({
                           <div>
                             <p className="text-[#5c614f]">Expected price</p>
                             <p className="text-base font-extrabold">
-                              {lastBilled !== null ? formatCurrencyPrecise(lastBilled) : "-"}
+                              {visitPrice !== null ? formatCurrencyPrecise(visitPrice) : "-"}
                             </p>
                           </div>
                           <div>
@@ -2787,7 +2799,7 @@ export default async function CustomerDetailPage({
                     )}
                     {nextVisit && (
                       <p className="mt-3 text-xs text-[#6b705c]">
-                        Expected price is the last invoice. Expected profit uses the average cost of
+                        Expected price is the price per visit on the open job, or the last invoice if there is none. Expected profit uses the average cost of
                         visits tracked since {PROFIT_TRACKING_START_LABEL}. Edit materials and
                         equipment for this visit on the Visits tab.
                       </p>

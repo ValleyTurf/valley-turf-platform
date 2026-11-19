@@ -40,6 +40,18 @@ describe("matchVisitsToInvoices", () => {
     expect(m.get("a")?.method).toBe("none");
   });
 
+  it("ignores a missed visit when splitting an invoice", () => {
+    const m = matchVisitsToInvoices(
+      [
+        { visitId: "a", invoiceId: null, month: "2026-11" },
+        { visitId: "missed", invoiceId: null, month: "2026-11", counts: false },
+      ],
+      [{ invoiceId: "inv1", date: "2026-11-01" }]
+    );
+    expect(m.get("a")?.visitCounts).toEqual([1]);
+    expect(m.get("missed")?.invoiceIds).toEqual(["inv1"]);
+  });
+
   it("leaves visits without a date unlinked", () => {
     const m = matchVisitsToInvoices([v("a", null)], [{ invoiceId: "inv1", date: "2026-09-12" }]);
     expect(m.get("a")?.method).toBe("none");

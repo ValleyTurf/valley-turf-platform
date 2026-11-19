@@ -43,6 +43,7 @@ export type ClientVisitLink = {
   jobber_visit_id: string;
   start_at: string | null;
   visit_status: string | null;
+  completed_at: string | null;
   jobber_invoice_id: string | null;
 };
 
@@ -54,7 +55,7 @@ export async function getClientVisitLinks(
 ): Promise<ClientVisitLink[]> {
   const { data, error } = await supabaseServer
     .from("jobber_visits")
-    .select("jobber_visit_id, start_at, visit_status, jobber_invoice_id")
+    .select("jobber_visit_id, start_at, visit_status, completed_at, jobber_invoice_id")
     .eq("jobber_client_id", jobberClientId)
     .not("start_at", "is", null)
     .or(ACTIVE_JOB_VISIT_FILTER)
@@ -102,14 +103,23 @@ export function visitMonth(startAt: string | null): string | null {
 // rules). Returned map is keyed by visit id.
 export function linkVisitsToInvoices(
   visits: ClientVisitLink[],
-  invoices: InvoiceRow[]
+  invoices: InvoiceRow[],
+  todayYmd: string
 ): Map<string, VisitInvoiceMatch> {
   return matchVisitsToInvoices(
-    visits.map((visit) => ({
-      visitId: visit.jobber_visit_id,
-      invoiceId: visit.jobber_invoice_id,
-      month: visitMonth(visit.start_at),
-    })),
+    visits.map((visit) => {
+      const completed =
+        (visit.visit_status ?? "").toUpperCase() === "COMPLETED" || !!visit.completed_at;
+      const day = toPhoenixDateString(visit.start_at) ?? "";
+      return {
+        visitId: visit.jobber_visit_id,
+        invoiceId: visit.jobber_invoice_id,
+        month: visitMonth(visit.start_at),
+        // Completed, or still ahead. A past visit that never happened
+        // does not take a share of the month's invoice.
+        counts: completed || day >= todayYmd,
+      };
+    }),
     invoices.map((invoice) => ({
       invoiceId: invoice.jobber_invoice_id,
       // issue_date and due_date are already plain Phoenix dates.

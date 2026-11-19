@@ -14,6 +14,10 @@
 export type MatchVisit = {
   visitId: string;
   invoiceId: string | null;
+  // False for a visit that was missed or canceled (in the past and never
+  // completed). It does not take a share of the invoice, so it cannot
+  // shrink the price of the visits that did happen. Defaults to true.
+  counts?: boolean;
   // Phoenix month of the visit, YYYY-MM.
   month: string | null;
 };
@@ -66,6 +70,7 @@ export function matchVisitsToInvoices(
     }
 
     picks.set(visit.visitId, { ids, method });
+    if (visit.counts === false) continue;
     for (const id of ids) {
       const list = attached.get(id) ?? [];
       list.push(visit.visitId);
@@ -77,7 +82,7 @@ export function matchVisitsToInvoices(
   for (const [visitId, pick] of picks) {
     result.set(visitId, {
       invoiceIds: pick.ids,
-      visitCounts: pick.ids.map((id) => attached.get(id)?.length ?? 1),
+      visitCounts: pick.ids.map((id) => Math.max(1, attached.get(id)?.length ?? 1)),
       method: pick.method,
     });
   }

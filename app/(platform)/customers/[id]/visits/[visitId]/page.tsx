@@ -13,6 +13,7 @@ import {
   loadVisitFinancials,
 } from "@/lib/customerVisitData";
 import { formatCurrencyPrecise, formatDateOnly, toNumber } from "@/lib/format";
+import { toPhoenixDateString } from "@/lib/phoenixDate";
 import { allocateInvoices } from "@/lib/visitInvoiceMatch";
 import {
   PROFIT_TRACKING_START_LABEL,
@@ -163,7 +164,8 @@ export default async function VisitDetailPage({ params }: PageProps) {
     getVisitAutomationEvents(decodedVisitId),
   ]);
 
-  const matches = linkVisitsToInvoices(visitLinks, invoiceRows);
+  const todayYmd = toPhoenixDateString(new Date().toISOString()) ?? "";
+  const matches = linkVisitsToInvoices(visitLinks, invoiceRows, todayYmd);
   const match = matches.get(decodedVisitId) ?? {
     invoiceIds: [] as string[],
     visitCounts: [] as number[],
