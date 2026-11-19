@@ -80,7 +80,11 @@ export function buildVisitRows(
   const rows: VisitTableRow[] = inputs.map((input) => {
     const hasInvoice = input.hasInvoice && input.billed !== null;
     const state = paymentState(input.invoiceTotal, input.invoiceCollected, hasInvoice);
+    // Nothing before Aug 2026 is flagged: that is when the new system
+    // started being used for real.
+    const inScope = isProfitTracked(input.startAt);
     const overdue =
+      inScope &&
       (state === "unpaid" || state === "partial") &&
       (input.invoiceDue === null || input.invoiceDue <= today);
     const tracked = input.completed && isProfitTracked(input.startAt);
@@ -90,7 +94,7 @@ export function buildVisitRows(
     const margin = showProfit && profit !== null ? marginPercent(input.billed as number, profit) : null;
 
     const flags = visitFlags({
-      completed: input.completed,
+      completed: input.completed && inScope,
       photoCount: input.photoCount,
       margin,
       marginTarget,

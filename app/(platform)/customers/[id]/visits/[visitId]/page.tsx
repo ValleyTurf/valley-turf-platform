@@ -16,8 +16,11 @@ import { formatCurrencyPrecise, formatDateOnly, toNumber } from "@/lib/format";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
 import { allocateInvoices } from "@/lib/visitInvoiceMatch";
 import {
+  GOOD_MARGIN_PCT,
+  LOW_MARGIN_PCT,
   PROFIT_TRACKING_START_LABEL,
   isProfitTracked,
+  marginTier,
 } from "@/lib/profitTracking";
 import {
   getClientInvoiceRows,
@@ -37,7 +40,6 @@ import {
 } from "@/lib/visitDetailLogic";
 import { getVisitNotesForClient } from "@/lib/visitNotes";
 
-const MARGIN_TARGET_PCT = 60;
 
 const SEGMENT_COLORS: Record<string, string> = {
   labor: "#174734",
@@ -251,7 +253,7 @@ export default async function VisitDetailPage({ params }: PageProps) {
     completed,
     photoCount: photos.length,
     margin: split.margin,
-    marginTarget: MARGIN_TARGET_PCT,
+    marginTarget: LOW_MARGIN_PCT,
     state,
     hasInvoice,
   });
@@ -403,12 +405,26 @@ export default async function VisitDetailPage({ params }: PageProps) {
             value={split.profit !== null ? formatCurrencyPrecise(split.profit) : "Not tracked"}
             sub={
               split.margin !== null
-                ? `${split.margin}% margin`
+                ? `${split.margin}% margin${
+                    marginTier(split.margin) === "good"
+                      ? `, good margin (above ${GOOD_MARGIN_PCT}%)`
+                      : marginTier(split.margin) === "low"
+                        ? `, low (under ${LOW_MARGIN_PCT}%)`
+                        : ""
+                  }`
                 : tracked
                   ? "Needs a linked invoice"
                   : `Before ${PROFIT_TRACKING_START_LABEL}`
             }
-            tone={split.margin === null ? undefined : split.margin >= MARGIN_TARGET_PCT ? "good" : "warn"}
+            tone={
+              split.margin === null
+                ? undefined
+                : marginTier(split.margin) === "good"
+                  ? "good"
+                  : marginTier(split.margin) === "low"
+                    ? "warn"
+                    : undefined
+            }
           />
         </div>
 

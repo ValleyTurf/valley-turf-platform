@@ -17,6 +17,18 @@ export function isProfitTracked(dateValue: string | null | undefined): boolean {
   return day >= PROFIT_TRACKING_START_DATE;
 }
 
+// Margin tiers (Ryan, 2026-11-19): below 30% is low, above 50% is good.
+export const LOW_MARGIN_PCT = 30;
+export const GOOD_MARGIN_PCT = 50;
+
+export type MarginTier = "low" | "ok" | "good";
+
+export function marginTier(margin: number): MarginTier {
+  if (margin < LOW_MARGIN_PCT) return "low";
+  if (margin > GOOD_MARGIN_PCT) return "good";
+  return "ok";
+}
+
 // Whole-percent margin, or null when there is nothing billed to divide by.
 export function marginPercent(billed: number, profit: number): number | null {
   if (!Number.isFinite(billed) || billed <= 0) return null;

@@ -62,7 +62,11 @@ import { toDateOnly, toPhoenixDateString } from "@/lib/phoenixDate";
 import {
   PROFIT_TRACKING_START_DATE,
   PROFIT_TRACKING_START_LABEL,
+  GOOD_MARGIN_PCT,
+  LOW_MARGIN_PCT,
+  isProfitTracked,
   marginPercent,
+  marginTier,
 } from "@/lib/profitTracking";
 import { allocateInvoices } from "@/lib/visitInvoiceMatch";
 import { buildServiceMonths } from "@/lib/serviceMonths";
@@ -2219,7 +2223,7 @@ export default async function CustomerDetailPage({
   });
   const { rows: visitTableRows, totals: visitTotals } = buildVisitRows(
     visitRowInputs,
-    targetMarginPct,
+    LOW_MARGIN_PCT,
     todayPhoenix
   );
   const shownVisitRows = filterRows(visitTableRows, visitFilter).slice(0, 100);
@@ -2426,41 +2430,87 @@ export default async function CustomerDetailPage({
       : { label: "Texts allowed", className: "bg-slate-100 text-slate-700" }
   );
 
-  type AttentionItem = { title: string; detail: string; action: string; href: string };
+  // Color coding (Ryan, 2026-11-19): red for money overdue, orange for low
+  // margin, blue for visit housekeeping (photos, costs, invoice link), green
+  // for a good margin. Nothing before Aug 2026 shows up here.
+  type AlertTone = "red" | "orange" | "blue" | "green";
+  type AttentionItem = {
+    title: string;
+    detail: string;
+    action: string;
+    href: string;
+    tone: AlertTone;
+    // Good news is shown but does not count toward the "items" pill.
+    counts: boolean;
+  };
   const FLAG_DETAIL: Record<string, string> = {
     "No photos": "Crew did not upload before and after pictures.",
     "No costs logged": "Profit is not shown until materials and labor are entered.",
-    "No invoice linked": "This visit is not matched to an invoice yet.",
+    "No invoice linked": "No invoice is dated in this visit's month.",
   };
   const alerts: AttentionItem[] = [];
   for (const entry of openInvoices
-    .filter(
-      (entry) =>
-        (toDateOnly(entry.invoice.due_date ?? entry.invoice.issue_date) ?? "") <= todayPhoenix
-    )
+    .filter((entry) => {
+      const day = toDateOnly(entry.invoice.due_date ?? entry.invoice.issue_date) ?? "";
+      return day >= PROFIT_TRACKING_START_DATE && day <= todayPhoenix;
+    })
     .slice(0, 3)) {
     alerts.push({
       title: `Invoice ${entry.invoice.invoice_number ?? ""} is unpaid.`.replace("  ", " "),
       detail: `${formatCurrencyPrecise(entry.due)} due.`,
       action: "See invoices",
       href: customerTabHref(decodedId, currentSearchParams, "invoices"),
+      tone: "red",
+      counts: true,
     });
   }
-  for (const row of attentionRows) {
+  for (const row of visitTableRows) {
+    if (!isProfitTracked(row.startAt)) continue;
     for (const flag of row.flags) {
       if (flag === "Unpaid") continue;
+      const low = flag === "Low margin";
       alerts.push({
-        title: `Visit on ${formatDate(row.startAt)}: ${flag.toLowerCase()}.`,
-        detail:
-          flag === "Low margin"
-            ? `Margin ${row.margin}% is under the ${targetMarginPct}% target.`
-            : (FLAG_DETAIL[flag] ?? ""),
+        title: low
+          ? `Low margin on ${formatDate(row.startAt)}: ${row.margin}%.`
+          : `Visit on ${formatDate(row.startAt)}: ${flag.toLowerCase()}.`,
+        detail: low ? `Under ${LOW_MARGIN_PCT}%.` : (FLAG_DETAIL[flag] ?? ""),
         action: flag === "No costs logged" ? "Log costs" : "Open visit",
         href: visitHref(row.visitId),
+        tone: low ? "orange" : "blue",
+        counts: true,
       });
     }
   }
-  const shownAlerts = alerts.slice(0, 6);
+  for (const row of visitTableRows
+    .filter((entry) => entry.margin !== null && isProfitTracked(entry.startAt))
+    .slice(0, 3)) {
+    if (row.margin !== null && marginTier(row.margin) === "good") {
+      alerts.push({
+        title: `Good margin on ${formatDate(row.startAt)}: ${row.margin}%.`,
+        detail: `Above ${GOOD_MARGIN_PCT}%.`,
+        action: "Open visit",
+        href: visitHref(row.visitId),
+        tone: "green",
+        counts: false,
+      });
+    }
+  }
+  const TONE_ORDER: Record<AlertTone, number> = { red: 0, orange: 1, blue: 2, green: 3 };
+  alerts.sort((a, b) => TONE_ORDER[a.tone] - TONE_ORDER[b.tone]);
+  const alertCount = alerts.filter((alert) => alert.counts).length;
+  const shownAlerts = alerts.slice(0, 8);
+  const ALERT_CARD_CLASS: Record<AlertTone, string> = {
+    red: "border-red-200 bg-red-50",
+    orange: "border-orange-200 bg-orange-50",
+    blue: "border-sky-200 bg-sky-50",
+    green: "border-green-200 bg-green-50",
+  };
+  const ALERT_TITLE_CLASS: Record<AlertTone, string> = {
+    red: "text-red-800",
+    orange: "text-orange-800",
+    blue: "text-sky-900",
+    green: "text-green-800",
+  };
 
   type ActivityItem = {
     at: string;
@@ -2623,13 +2673,15 @@ export default async function CustomerDetailPage({
           <KpiCard
             label="Avg profit margin"
             value={trackedMarginPct !== null ? `${trackedMarginPct.toFixed(0)}%` : "-"}
-            sub={`Since ${PROFIT_TRACKING_START_LABEL}, target ${targetMarginPct}%`}
+            sub={`Since ${PROFIT_TRACKING_START_LABEL}. Good above ${GOOD_MARGIN_PCT}%, low below ${LOW_MARGIN_PCT}%`}
             tone={
               trackedMarginPct === null
                 ? undefined
-                : trackedMarginPct >= targetMarginPct
+                : marginTier(trackedMarginPct) === "good"
                   ? "good"
-                  : "warn"
+                  : marginTier(trackedMarginPct) === "low"
+                    ? "warn"
+                    : undefined
             }
           />
           <KpiCard
@@ -2702,25 +2754,26 @@ export default async function CustomerDetailPage({
                   <section className="rounded-2xl bg-white p-5 shadow">
                     <div className="flex items-center justify-between gap-3">
                       <h2 className="text-lg font-bold">Needs attention</h2>
-                      {alerts.length > 0 && (
+                      {alertCount > 0 && (
                         <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">
-                          {alerts.length} item{alerts.length === 1 ? "" : "s"}
+                          {alertCount} item{alertCount === 1 ? "" : "s"}
                         </span>
                       )}
                     </div>
                     {shownAlerts.length === 0 ? (
                       <p className="mt-3 text-sm text-[#6b705c]">
-                        Nothing needs attention right now.
+                        Nothing needs attention right now. Only visits since{" "}
+                        {PROFIT_TRACKING_START_LABEL} are checked.
                       </p>
                     ) : (
                       <div className="mt-3 space-y-2">
                         {shownAlerts.map((alert, index) => (
                           <div
                             key={index}
-                            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#f0d9b0] bg-[#fffaf0] px-3.5 py-2.5"
+                            className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-3.5 py-2.5 ${ALERT_CARD_CLASS[alert.tone]}`}
                           >
                             <p className="text-sm">
-                              <strong>{alert.title}</strong>
+                              <strong className={ALERT_TITLE_CLASS[alert.tone]}>{alert.title}</strong>
                               {alert.detail && (
                                 <span className="text-[#5c614f]"> {alert.detail}</span>
                               )}
@@ -2733,12 +2786,12 @@ export default async function CustomerDetailPage({
                             </Link>
                           </div>
                         ))}
-                        {alerts.length > shownAlerts.length && (
+                        {attentionRows.length > 0 && alerts.length > shownAlerts.length && (
                           <Link
                             href={`${customerTabHref(decodedId, currentSearchParams, "visits")}&show=attention`}
                             className="inline-block text-sm font-semibold text-[#7a5f12]"
                           >
-                            See all {alerts.length}
+                            See all {attentionRows.length} flagged visits
                           </Link>
                         )}
                       </div>
@@ -2861,7 +2914,7 @@ export default async function CustomerDetailPage({
                         <div className="mt-4 flex h-[110px] items-end gap-1.5">
                           {marginChartRows.map((row) => {
                             const margin = Math.max(0, Math.min(100, row.margin ?? 0));
-                            const good = (row.margin ?? 0) >= targetMarginPct;
+                            const tier = marginTier(row.margin ?? 0);
                             return (
                               <Link
                                 key={row.visitId}
@@ -2870,7 +2923,13 @@ export default async function CustomerDetailPage({
                                 className="flex h-full flex-1 flex-col justify-end"
                               >
                                 <span
-                                  className={`w-full rounded-t ${good ? "bg-[#226246]" : "bg-[#b45309]"}`}
+                                  className={`w-full rounded-t ${
+                                    tier === "good"
+                                      ? "bg-[#226246]"
+                                      : tier === "low"
+                                        ? "bg-[#c2410c]"
+                                        : "bg-[#9aa79f]"
+                                  }`}
                                   style={{ height: `${Math.max(4, (margin / 100) * 110)}px` }}
                                 />
                               </Link>
@@ -2887,9 +2946,10 @@ export default async function CustomerDetailPage({
                           {visitTotals.trackedMargin !== null
                             ? `Average margin ${visitTotals.trackedMargin}%. `
                             : ""}
-                          {marginChartRows.filter((row) => (row.margin ?? 0) < targetMarginPct).length > 0
-                            ? `${marginChartRows.filter((row) => (row.margin ?? 0) < targetMarginPct).length} visit${marginChartRows.filter((row) => (row.margin ?? 0) < targetMarginPct).length === 1 ? "" : "s"} under the ${targetMarginPct}% target (orange). `
-                            : `Every visit meets the ${targetMarginPct}% target. `}
+                          {marginChartRows.filter((row) => marginTier(row.margin ?? 0) === "low").length > 0
+                            ? `${marginChartRows.filter((row) => marginTier(row.margin ?? 0) === "low").length} low visit${marginChartRows.filter((row) => marginTier(row.margin ?? 0) === "low").length === 1 ? "" : "s"} under ${LOW_MARGIN_PCT}% (orange). `
+                            : `No visits under ${LOW_MARGIN_PCT}%. `}
+                          Green is above {GOOD_MARGIN_PCT}%.{" "}
                           Costs were not tracked before {PROFIT_TRACKING_START_LABEL}, so earlier
                           visits show revenue only.
                         </p>
@@ -3730,12 +3790,15 @@ export default async function CustomerDetailPage({
                       </thead>
                       <tbody>
                         {shownVisitRows.map((row) => {
+                          const rowTier = row.margin === null ? null : marginTier(row.margin);
                           const profitColor =
-                            row.margin === null
+                            rowTier === null
                               ? "text-[#6b705c]"
-                              : row.margin >= targetMarginPct
+                              : rowTier === "good"
                                 ? "text-green-700"
-                                : "text-amber-700";
+                                : rowTier === "low"
+                                  ? "text-orange-700"
+                                  : "text-[#174734]";
                           const notDueYet =
                             (row.state === "unpaid" || row.state === "partial") && !row.overdue;
                           const payLabel = notDueYet
@@ -3802,6 +3865,11 @@ export default async function CustomerDetailPage({
                               </td>
                               <td className={`px-2.5 py-3 text-right font-bold ${profitColor}`}>
                                 {row.margin !== null ? `${row.margin}%` : "-"}
+                                {rowTier === "good" && (
+                                  <span className="ml-1.5 rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-bold text-green-800">
+                                    Good margin
+                                  </span>
+                                )}
                               </td>
                               <td className="px-2.5 py-3 text-xs text-amber-800">
                                 {row.flags.join(", ")}

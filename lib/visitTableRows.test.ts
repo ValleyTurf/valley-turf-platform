@@ -12,12 +12,12 @@ const base = {
 describe("buildVisitRows", () => {
   const inputs = [
     { ...base, visitId: "a", startAt: "2026-11-06T16:00:00Z", invoiceNumber: "1", hasInvoice: true, shared: false, billed: 175, collected: 175, invoiceTotal: 175, invoiceCollected: 175, invoiceDue: null, cost: 71.4 },
-    { ...base, visitId: "b", startAt: "2026-10-09T16:00:00Z", invoiceNumber: "2", hasInvoice: true, shared: false, billed: 225, collected: 0, invoiceTotal: 225, invoiceCollected: 0, invoiceDue: null, cost: 128.3 },
+    { ...base, visitId: "b", startAt: "2026-10-09T16:00:00Z", invoiceNumber: "2", hasInvoice: true, shared: false, billed: 225, collected: 0, invoiceTotal: 225, invoiceCollected: 0, invoiceDue: null, cost: 170 },
     { ...base, visitId: "c", startAt: "2026-07-31T16:00:00Z", invoiceNumber: "3", hasInvoice: true, shared: false, billed: 175, collected: 175, invoiceTotal: 175, invoiceCollected: 175, invoiceDue: null, cost: 0 },
     { ...base, visitId: "d", startAt: "2026-09-11T16:00:00Z", invoiceNumber: null, hasInvoice: false, shared: false, billed: null, collected: 0, invoiceTotal: null, invoiceCollected: 0, invoiceDue: null, cost: 60, photoCount: 0 },
     { ...base, visitId: "e", startAt: "2026-09-25T16:00:00Z", invoiceNumber: "5", hasInvoice: true, shared: false, billed: 175, collected: 175, invoiceTotal: 175, invoiceCollected: 175, invoiceDue: null, cost: 0 },
   ];
-  const { rows, totals } = buildVisitRows(inputs, 60, "2026-11-19");
+  const { rows, totals } = buildVisitRows(inputs, 30, "2026-11-19");
   const byId = Object.fromEntries(rows.map((r) => [r.visitId, r]));
 
   it("shows profit only for tracked visits with an invoice and costs", () => {
@@ -29,7 +29,7 @@ describe("buildVisitRows", () => {
   });
 
   it("flags problems", () => {
-    expect(byId.a.flags).toEqual(["Low margin"]);
+    expect(byId.a.flags).toEqual([]);
     expect(byId.b.flags).toEqual(["Low margin", "Unpaid"]);
     expect(byId.d.flags).toEqual(["No photos", "No invoice linked"]);
     expect(byId.e.flags).toEqual(["No costs logged"]);
@@ -60,7 +60,7 @@ describe("buildVisitRows", () => {
         { ...shared, visitId: "x", billed: 175, collected: 175 },
         { ...shared, visitId: "y", billed: 175, collected: 175 },
       ],
-      60,
+      30,
       "2026-11-19"
     );
     expect(out.rows[0].state).toBe("paid");
@@ -86,7 +86,7 @@ describe("buildVisitRows", () => {
           cost: 70,
         },
       ],
-      60,
+      30,
       "2026-11-19"
     );
     expect(out.rows[0].overdue).toBe(false);
@@ -94,9 +94,36 @@ describe("buildVisitRows", () => {
     expect(out.totals.unpaidCount).toBe(0);
   });
 
+  it("flags nothing before Aug 2026", () => {
+    const out = buildVisitRows(
+      [
+        {
+          ...base,
+          visitId: "old",
+          startAt: "2026-07-10T16:00:00Z",
+          invoiceNumber: "1",
+          hasInvoice: true,
+          shared: false,
+          billed: 175,
+          collected: 0,
+          invoiceTotal: 175,
+          invoiceCollected: 0,
+          invoiceDue: null,
+          cost: 0,
+          photoCount: 0,
+        },
+      ],
+      30,
+      "2026-11-19"
+    );
+    expect(out.rows[0].flags).toEqual([]);
+    expect(out.rows[0].overdue).toBe(false);
+    expect(out.totals.unpaidCount).toBe(0);
+  });
+
   it("filters", () => {
     expect(filterRows(rows, "unpaid").map((r) => r.visitId)).toEqual(["b"]);
-    expect(filterRows(rows, "low-margin").map((r) => r.visitId)).toEqual(["a", "b"]);
+    expect(filterRows(rows, "low-margin").map((r) => r.visitId)).toEqual(["b"]);
     expect(filterRows(rows, "all").length).toBe(5);
   });
 });
