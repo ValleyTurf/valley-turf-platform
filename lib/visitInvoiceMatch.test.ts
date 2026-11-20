@@ -17,6 +17,25 @@ describe("matchVisitsToInvoices", () => {
     expect(m.get("a")).toEqual({ invoiceIds: ["inv1"], visitCounts: [1], method: "direct" });
   });
 
+  it("ignores a direct link to an invoice from a different month (Brianna case)", () => {
+    const m = matchVisitsToInvoices(
+      [v("aug", "2026-08", "inv-nov"), v("nov", "2026-11")],
+      [
+        { invoiceId: "inv-aug", date: "2026-08-01" },
+        { invoiceId: "inv-nov", date: "2026-11-01" },
+      ]
+    );
+    expect(m.get("aug")).toEqual({ invoiceIds: ["inv-aug"], visitCounts: [1], method: "month" });
+    expect(m.get("nov")).toEqual({ invoiceIds: ["inv-nov"], visitCounts: [1], method: "month" });
+  });
+
+  it("keeps a direct link to an invoice issued just after the visit when the month has none", () => {
+    const m = matchVisitsToInvoices([v("a", "2026-09", "late")], [
+      { invoiceId: "late", date: "2026-10-02" },
+    ]);
+    expect(m.get("a")?.method).toBe("direct");
+  });
+
   it("matches the same-month invoice", () => {
     const m = matchVisitsToInvoices([v("a", "2026-11")], [
       { invoiceId: "inv1", date: "2026-11-01" },

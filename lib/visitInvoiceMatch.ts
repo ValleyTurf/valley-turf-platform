@@ -4,7 +4,12 @@
 // 1st, 10th or 15th) that covers every visit in that month.
 //
 // Order of trust:
-//   1. The visit's own jobber_invoice_id, when set.
+//   1. The visit's own jobber_invoice_id, when it makes sense. Jobber can
+//      list several visits on one invoice (an invoice for November showing
+//      the August visit too), so a direct link is only believed when the
+//      invoice is dated in the visit's month, or in the month right before
+//      or after it when the visit's own month has no invoice (issued a
+//      little early or late). Otherwise it is ignored.
 //   2. Otherwise every invoice dated in the same month as the visit.
 //
 // When one invoice covers several visits its amount is split evenly
@@ -54,6 +59,25 @@ export function matchVisitsToInvoices(
     invoicesByMonth.set(month, list);
   }
 
+  const invoiceMonthById = new Map<string, string | null>(
+    invoices.map((invoice) => [invoice.invoiceId, monthOf(invoice.date)])
+  );
+
+  function monthIndex(month: string): number {
+    const [year, mon] = month.split("-").map(Number);
+    return year * 12 + mon;
+  }
+
+  function believeDirectLink(visit: MatchVisit): boolean {
+    if (!visit.invoiceId) return false;
+    const invoiceMonth = invoiceMonthById.get(visit.invoiceId);
+    // No date to check against: keep what Jobber says.
+    if (invoiceMonth === undefined || invoiceMonth === null || !visit.month) return true;
+    if (invoiceMonth === visit.month) return true;
+    const adjacent = Math.abs(monthIndex(invoiceMonth) - monthIndex(visit.month)) === 1;
+    return adjacent && (invoicesByMonth.get(visit.month) ?? []).length === 0;
+  }
+
   const attached = new Map<string, string[]>();
   const picks = new Map<string, { ids: string[]; method: "direct" | "month" | "none" }>();
 
@@ -61,7 +85,7 @@ export function matchVisitsToInvoices(
     let ids: string[] = [];
     let method: "direct" | "month" | "none" = "none";
 
-    if (visit.invoiceId) {
+    if (visit.invoiceId && believeDirectLink(visit)) {
       ids = [visit.invoiceId];
       method = "direct";
     } else if (visit.month) {
