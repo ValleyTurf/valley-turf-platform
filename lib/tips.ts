@@ -41,6 +41,7 @@ export async function getTipsByUserAndDay(
     .from("jobber_payments")
     .select("jobber_invoice_id, tip_amount, payment_date")
     .gt("tip_amount", 0)
+    .or("transaction_status.is.null,transaction_status.not.ilike.%refund%")
     .gte("payment_date", periodStartDate)
     .lte("payment_date", periodEndDate);
 

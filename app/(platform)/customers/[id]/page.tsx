@@ -4151,6 +4151,7 @@ export default async function CustomerDetailPage({
                         )?.invoiceNumber;
 
                     const tip = toNumber(payment.tip_amount);
+                    const refunded = /refund/i.test(payment.transaction_status ?? "");
 
                     const rowContent = (
                       <>
@@ -4164,7 +4165,12 @@ export default async function CustomerDetailPage({
 
                           <p className="text-xs text-[#6b705c]">
                             {payment.payment_method || "Unknown method"}
-                            {tip > 0 && (
+                            {refunded && (
+                              <span className="ml-1 rounded-full bg-red-100 px-2 py-0.5 font-semibold text-red-700">
+                                Refunded
+                              </span>
+                            )}
+                            {tip > 0 && !refunded && (
                               <span className="text-green-700">
                                 {" "}
                                 · {formatCurrencyPrecise(tip)} tip
@@ -4173,7 +4179,11 @@ export default async function CustomerDetailPage({
                           </p>
                         </div>
 
-                        <p className="shrink-0 text-sm font-bold text-green-700">
+                        <p
+                          className={`shrink-0 text-sm font-bold ${
+                            refunded ? "text-[#6b705c] line-through" : "text-green-700"
+                          }`}
+                        >
                           {formatCurrencyPrecise(payment.amount)}
                         </p>
                       </>

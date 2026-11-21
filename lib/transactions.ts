@@ -83,6 +83,7 @@ type PaymentRecord = {
   payment_method: string | null;
   adjustment_type: string | null;
   tip_amount: number | string | null;
+  transaction_status: string | null;
 };
 
 type FeeRecord = {
@@ -130,7 +131,7 @@ async function fetchAllPayments(
     const { data, error } = await supabaseServer
       .from("jobber_payments")
       .select(
-        "jobber_payment_id, jobber_invoice_id, jobber_client_id, amount, payment_date, payment_method, adjustment_type, tip_amount"
+        "jobber_payment_id, jobber_invoice_id, jobber_client_id, amount, payment_date, payment_method, adjustment_type, tip_amount, transaction_status"
       )
       .gte("payment_date", startDate)
       .lte("payment_date", endDate)
@@ -356,7 +357,7 @@ export async function getTransactions(
   // reliably claims the fee record closest to itself rather than
   // whichever happens to be processed first.
   const allRows: TransactionRow[] = payments
-    .map((payment) => {
+    .flatMap((payment) => {
       const invoice = invoiceMap.get(payment.jobber_invoice_id);
       const clientName =
         (payment.jobber_client_id &&
@@ -367,7 +368,7 @@ export async function getTransactions(
       const amount = toNumber(payment.amount);
       const candidates = feesByInvoice.get(payment.jobber_invoice_id);
 
-      return {
+      const row: TransactionRow = {
         id: payment.jobber_payment_id,
         date: payment.payment_date,
         clientId: payment.jobber_client_id,
@@ -381,6 +382,26 @@ export async function getTransactions(
         tip: toNumber(payment.tip_amount),
         fee: candidates ? claimClosestFee(candidates, amount) : 0,
       };
+
+      // Jobber doesn't add a separate refund record; it flips the original
+      // payment's status to REFUNDED. Show the refund as its own negative
+      // line so totals net out. Jobber doesn't give the refund's date here,
+      // so it is dated with the payment.
+      if (/refund/i.test(payment.transaction_status ?? "")) {
+        return [
+          row,
+          {
+            ...row,
+            id: `${payment.jobber_payment_id}-refund`,
+            type: "Refund",
+            amount: -amount,
+            tip: -row.tip,
+            fee: 0,
+          },
+        ];
+      }
+
+      return [row];
     });
 
   // Filter dropdown options are built from everything in the date range
