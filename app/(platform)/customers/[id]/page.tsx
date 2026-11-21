@@ -928,7 +928,7 @@ async function getCustomerAmountCollected(
 ): Promise<number> {
   let query = supabaseServer
     .from("jobber_payments")
-    .select("amount")
+    .select("amount, transaction_status")
     .eq("jobber_client_id", jobberClientId)
     .lte("payment_date", endDate);
 
@@ -943,10 +943,14 @@ async function getCustomerAmountCollected(
     return 0;
   }
 
-  return (data ?? []).reduce(
-    (sum, row) => sum + toNumber((row as { amount: number | string }).amount),
-    0
-  );
+  // A payment Jobber marked REFUNDED no longer counts; a refund this app
+  // mirrored is a negative row that nets against its payment.
+  return (data ?? []).reduce((sum, row) => {
+    const payment = row as { amount: number | string; transaction_status: string | null };
+    return (
+      sum + netCollectedAmount(toNumber(payment.amount), payment.transaction_status, isCollectedPayment)
+    );
+  }, 0);
 }
 
 async function getInvoiceCostBreakdowns(
