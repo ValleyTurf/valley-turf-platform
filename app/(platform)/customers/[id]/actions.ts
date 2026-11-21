@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser, requireAdmin } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
+import { issueRefund } from "@/lib/refunds";
+import type { RefundReason } from "@/lib/refundLogic";
 import {
   insertVisitNote,
   parsePhotoPathsField,
@@ -995,4 +997,83 @@ export async function chargeCustomerInvoiceManually(
   }
 
   return result;
+}
+
+export type RefundCustomerPaymentResult =
+  | { error: string }
+  | { error: null; refundedAmount: number; fullyRefunded: boolean };
+
+// Refunds a card/ACH payment this app took through its own Stripe account.
+// Admin and manager only. The payment is identified by its mirror id in
+// jobber_payments ("native-payment-<PaymentIntent id>"); Jobber-processed
+// payments can't be refunded from here.
+export async function refundCustomerPayment(
+  jobberClientId: string,
+  paymentRecordId: string,
+  amountDollars: number,
+  reason: RefundReason,
+  note: string
+): Promise<RefundCustomerPaymentResult> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    return { error: "You must be signed in." };
+  }
+
+  if (actor.role !== "admin" && actor.role !== "manager") {
+    return { error: "Only an admin or manager can issue refunds." };
+  }
+
+  if (!paymentRecordId.startsWith("native-payment-")) {
+    return { error: "This payment was taken through Jobber. Refund it in Jobber." };
+  }
+
+  const paymentIntentId = paymentRecordId.slice("native-payment-".length);
+
+  const { data: paymentRecord } = await supabaseServer
+    .from("jobber_payments")
+    .select("jobber_client_id, amount")
+    .eq("jobber_payment_id", paymentRecordId)
+    .maybeSingle();
+
+  if (!paymentRecord || paymentRecord.jobber_client_id !== jobberClientId) {
+    return { error: "That payment doesn't belong to this customer." };
+  }
+
+  const result = await issueRefund({
+    paymentIntentId,
+    amountDollars,
+    reason,
+    note: note.trim() || null,
+    actorName: actor.name,
+  });
+
+  if (result.error !== null) {
+    return { error: result.error };
+  }
+
+  await recordAuditLog({
+    actor,
+    action: "update",
+    entityType: "payment",
+    entityId: paymentIntentId,
+    entityLabel: `Refund of ${result.refundedAmount.toFixed(2)}`,
+    after: {
+      refunded_amount: result.refundedAmount,
+      fully_refunded: result.fullyRefunded,
+      reason,
+      note: note.trim() || null,
+    },
+  });
+
+  revalidatePath(`/customers/${encodeURIComponent(jobberClientId)}`);
+  revalidatePath("/invoices");
+  revalidatePath("/revenue");
+  revalidatePath("/transactions");
+
+  return {
+    error: null,
+    refundedAmount: result.refundedAmount,
+    fullyRefunded: result.fullyRefunded,
+  };
 }

@@ -76,6 +76,8 @@ import {
   linkVisitsToInvoices,
 } from "@/lib/visitDetail";
 import { isCollectedPayment, nextReminder } from "@/lib/visitDetailLogic";
+import { netCollectedAmount } from "@/lib/refundLogic";
+import RefundButton from "./RefundButton";
 import { describeAutopaySchedule } from "@/lib/autopayTiming";
 import {
   buildVisitRows,
@@ -1948,6 +1950,7 @@ export default async function CustomerDetailPage({
   // rewrite or remove one after the fact.
   const currentUser = await getCurrentUser();
   const isAdmin = currentUser?.role === "admin";
+  const canRefund = currentUser?.role === "admin" || currentUser?.role === "manager";
 
   if (!client) {
     return (
@@ -2169,10 +2172,15 @@ export default async function CustomerDetailPage({
 
   const collectedByInvoice = new Map<string, number>();
   for (const payment of payments) {
-    if (!isCollectedPayment(payment.transaction_status)) continue;
+    const net = netCollectedAmount(
+      toNumber(payment.amount),
+      payment.transaction_status,
+      isCollectedPayment
+    );
+    if (net === 0) continue;
     collectedByInvoice.set(
       payment.jobber_invoice_id,
-      (collectedByInvoice.get(payment.jobber_invoice_id) ?? 0) + toNumber(payment.amount)
+      (collectedByInvoice.get(payment.jobber_invoice_id) ?? 0) + net
     );
   }
 
@@ -2346,14 +2354,18 @@ export default async function CustomerDetailPage({
     }))
     .filter((entry) => entry.due > 0.005);
   const paidThisYear = payments
-    .filter(
-      (payment) =>
-        isCollectedPayment(payment.transaction_status) &&
-        (toDateOnly(payment.payment_date) ?? "").startsWith(phoenixYear)
-    )
-    .reduce((sum, payment) => sum + toNumber(payment.amount), 0);
+    .filter((payment) => (toDateOnly(payment.payment_date) ?? "").startsWith(phoenixYear))
+    .reduce(
+      (sum, payment) =>
+        sum +
+        netCollectedAmount(toNumber(payment.amount), payment.transaction_status, isCollectedPayment),
+      0
+    );
   const failedCharges = payments.filter(
-    (payment) => !isCollectedPayment(payment.transaction_status)
+    (payment) =>
+      toNumber(payment.amount) >= 0 &&
+      !isCollectedPayment(payment.transaction_status) &&
+      !/refund/i.test(payment.transaction_status ?? "")
   ).length;
 
   const cardLabel = autopayPaymentMethod?.stripePaymentMethodId
@@ -2549,11 +2561,17 @@ export default async function CustomerDetailPage({
   for (const payment of payments.slice(0, 4)) {
     if (!payment.payment_date) continue;
     const ok = isCollectedPayment(payment.transaction_status);
+    const isRefundRow = toNumber(payment.amount) < 0;
+    const wasRefunded = !isRefundRow && /refund/i.test(payment.transaction_status ?? "");
     activity.push({
       at: payment.payment_date,
-      title: ok
-        ? `Payment received ${formatCurrencyPrecise(toNumber(payment.amount))}`
-        : `Payment attempt did not go through (${formatCurrencyPrecise(toNumber(payment.amount))})`,
+      title: isRefundRow
+        ? `Refund issued ${formatCurrencyPrecise(Math.abs(toNumber(payment.amount)))}`
+        : wasRefunded
+          ? `Payment refunded (${formatCurrencyPrecise(toNumber(payment.amount))})`
+          : ok
+            ? `Payment received ${formatCurrencyPrecise(toNumber(payment.amount))}`
+            : `Payment attempt did not go through (${formatCurrencyPrecise(toNumber(payment.amount))})`,
       detail: payment.payment_method ? formatStatus(payment.payment_method) : "",
       tag: "Payment",
     });
@@ -4151,7 +4169,39 @@ export default async function CustomerDetailPage({
                         )?.invoiceNumber;
 
                     const tip = toNumber(payment.tip_amount);
-                    const refunded = /refund/i.test(payment.transaction_status ?? "");
+                    const isRefundRow = toNumber(payment.amount) < 0;
+                    // Jobber marks the original payment itself REFUNDED; a refund
+                    // taken through this app is a separate negative row.
+                    const refunded = !isRefundRow && /refund/i.test(payment.transaction_status ?? "");
+                    const stripePaymentIntentId = payment.jobber_payment_id.startsWith("native-payment-")
+                      ? payment.jobber_payment_id.slice("native-payment-".length)
+                      : null;
+                    const refundedSoFar = stripePaymentIntentId
+                      ? payments
+                          .filter((p) => p.jobber_payment_id === `native-refund-${stripePaymentIntentId}`)
+                          .reduce((sum, p) => sum + Math.abs(toNumber(p.amount)), 0)
+                      : 0;
+                    const refundable = Math.round((toNumber(payment.amount) - refundedSoFar) * 100) / 100;
+                    const showRefund =
+                      canRefund &&
+                      stripePaymentIntentId !== null &&
+                      !isRefundRow &&
+                      !refunded &&
+                      refundable > 0;
+                    const jobberPaymentAgeDays = payment.payment_date
+                      ? Math.floor(
+                          (new Date(`${todayPhoenix}T00:00:00Z`).getTime() -
+                            new Date(`${toDateOnly(payment.payment_date)}T00:00:00Z`).getTime()) /
+                            86400000
+                        )
+                      : 9999;
+                    const jobberRefundHint =
+                      canRefund &&
+                      stripePaymentIntentId === null &&
+                      !payment.jobber_invoice_id.startsWith("native-") &&
+                      !isRefundRow &&
+                      !refunded &&
+                      jobberPaymentAgeDays <= 90;
 
                     const rowContent = (
                       <>
@@ -4165,9 +4215,14 @@ export default async function CustomerDetailPage({
 
                           <p className="text-xs text-[#6b705c]">
                             {payment.payment_method || "Unknown method"}
-                            {refunded && (
+                            {(refunded || isRefundRow) && (
                               <span className="ml-1 rounded-full bg-red-100 px-2 py-0.5 font-semibold text-red-700">
-                                Refunded
+                                {isRefundRow ? "Refund" : "Refunded"}
+                              </span>
+                            )}
+                            {refundedSoFar > 0 && !isRefundRow && (
+                              <span className="ml-1 text-red-700">
+                                · {formatCurrencyPrecise(refundedSoFar)} refunded
                               </span>
                             )}
                             {tip > 0 && !refunded && (
@@ -4181,7 +4236,11 @@ export default async function CustomerDetailPage({
 
                         <p
                           className={`shrink-0 text-sm font-bold ${
-                            refunded ? "text-[#6b705c] line-through" : "text-green-700"
+                            isRefundRow
+                              ? "text-red-700"
+                              : refunded
+                                ? "text-[#6b705c] line-through"
+                                : "text-green-700"
                           }`}
                         >
                           {formatCurrencyPrecise(payment.amount)}
@@ -4189,9 +4248,8 @@ export default async function CustomerDetailPage({
                       </>
                     );
 
-                    return nativeInvoiceId ? (
+                    const rowElement = nativeInvoiceId ? (
                       <a
-                        key={payment.jobber_payment_id}
                         href={`/api/invoices/${nativeInvoiceId}/pdf`}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -4201,11 +4259,28 @@ export default async function CustomerDetailPage({
                         {rowContent}
                       </a>
                     ) : (
-                      <div
-                        key={payment.jobber_payment_id}
-                        className="flex items-center justify-between gap-3 rounded-xl bg-[#f7f6f1] px-3 py-2"
-                      >
+                      <div className="flex items-center justify-between gap-3 rounded-xl bg-[#f7f6f1] px-3 py-2">
                         {rowContent}
+                      </div>
+                    );
+
+                    return (
+                      <div key={payment.jobber_payment_id}>
+                        {rowElement}
+                        {showRefund && stripePaymentIntentId && (
+                          <div className="mt-1 flex justify-end">
+                            <RefundButton
+                              jobberClientId={decodedId}
+                              paymentRecordId={payment.jobber_payment_id}
+                              maxAmount={refundable}
+                            />
+                          </div>
+                        )}
+                        {jobberRefundHint && (
+                          <p className="mt-1 text-right text-[11px] text-[#6b705c]">
+                            Taken through Jobber. To refund it, use Refund on the payment in Jobber.
+                          </p>
+                        )}
                       </div>
                     );
                   })

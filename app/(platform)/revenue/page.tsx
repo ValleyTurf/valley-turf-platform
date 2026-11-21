@@ -623,8 +623,9 @@ async function fetchDashboardPayments(
     const { data, error } = await supabaseServer
       .from("jobber_payments")
       .select("amount, payment_date, tip_amount")
-      // A payment Jobber has since marked refunded is not revenue.
-      .or("transaction_status.is.null,transaction_status.not.ilike.%refund%")
+      // A payment Jobber has since marked refunded is not revenue. Refund rows
+      // this app mirrors are negative and must stay so they subtract.
+      .or("transaction_status.is.null,transaction_status.not.ilike.%refund%,amount.lt.0")
       .gte("payment_date", startDate)
       .lte("payment_date", endDate)
       .range(from, from + pageSize - 1);

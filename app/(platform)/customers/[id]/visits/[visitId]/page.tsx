@@ -298,7 +298,14 @@ export default async function VisitDetailPage({ params }: PageProps) {
       timeline.push({
         at: payment.date,
         dateOnly: true,
-        label: payment.collected ? "Payment received" : "Payment attempt did not go through",
+        label:
+          payment.amount < 0
+            ? "Refund issued"
+            : payment.collected
+              ? "Payment received"
+              : /refund/i.test(payment.status ?? "")
+                ? "Payment refunded"
+                : "Payment attempt did not go through",
         detail: formatCurrencyPrecise(payment.amount),
       });
     }
@@ -578,7 +585,13 @@ export default async function VisitDetailPage({ params }: PageProps) {
                       {formatDateOnly(payment.date)}
                       <span className="ml-2 text-xs text-[#6b705c]">
                         {payment.method ? statusLabel(payment.method) : "Payment"}
-                        {!payment.collected ? " (did not go through)" : ""}
+                        {payment.amount < 0
+                          ? " (refund)"
+                          : /refund/i.test(payment.status ?? "")
+                            ? " (refunded)"
+                            : !payment.collected
+                              ? " (did not go through)"
+                              : ""}
                       </span>
                     </span>
                     <span className="font-semibold">{formatCurrencyPrecise(payment.amount)}</span>

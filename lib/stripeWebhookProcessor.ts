@@ -12,6 +12,7 @@ import "server-only";
 import type Stripe from "stripe";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getStripeClient } from "@/lib/stripe";
+import { recordNativeRefund } from "@/lib/refunds";
 import {
   upsertPaymentByIntentId,
   upsertStripePayout,
@@ -429,64 +430,22 @@ async function handleChargeRefunded(charge: Stripe.Charge): Promise<void> {
     return;
   }
 
-  const { data: paymentRow, error } = await supabaseServer
-    .from("payments")
-    .update({ status: "refunded", updated_at: new Date().toISOString() })
-    .eq("stripe_payment_intent_id", paymentIntentId)
-    .select("invoice_id")
-    .maybeSingle();
+  // Shared with the CRM's Refund button (lib/refunds.ts): marks the payment,
+  // mirrors the refund into jobber_payments (cumulative, so partial refunds
+  // and redelivery are safe), and reopens the invoice on a full refund.
+  const result = await recordNativeRefund({
+    paymentIntentId,
+    refundedCents: charge.amount_refunded ?? 0,
+    fullyRefunded: Boolean(charge.refunded),
+  });
 
-  if (error) {
-    throw new Error(`Failed to mark payment refunded: ${error.message}`);
+  if (result.error) {
+    throw new Error(result.error);
   }
 
-  const invoiceId = paymentRow?.invoice_id ?? null;
-
-  // charge.amount_refunded is the CUMULATIVE total refunded on this
-  // charge so far, not just this event's slice -- so upserting on a key
-  // derived from the PaymentIntent id (one refund mirror row per
-  // PaymentIntent, not per Stripe refund id) and always writing the
-  // current cumulative total is naturally idempotent: a redelivered
-  // event, or a second/third partial refund on the same charge, just
-  // re-upserts this one row to the right running total instead of
-  // double- or under-subtracting.
-  if (invoiceId && charge.amount_refunded) {
-    const mirrorInvoiceId = `native-${invoiceId}`;
-    const refundAmount = charge.amount_refunded / 100;
-
-    const { data: mirrorInvoiceRow } = await supabaseServer
-      .from("jobber_invoices")
-      .select("jobber_client_id")
-      .eq("jobber_invoice_id", mirrorInvoiceId)
-      .maybeSingle();
-
-    const { error: refundMirrorError } = await supabaseServer
-      .from("jobber_payments")
-      .upsert(
-        {
-          jobber_payment_id: `native-refund-${paymentIntentId}`,
-          jobber_invoice_id: mirrorInvoiceId,
-          jobber_client_id: mirrorInvoiceRow?.jobber_client_id ?? null,
-          amount: -refundAmount,
-          payment_date: new Date().toISOString().slice(0, 10),
-          payment_method: "Stripe",
-          adjustment_type: "refund",
-          transaction_status: "refunded",
-          tip_amount: 0,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "jobber_payment_id" }
-      );
-
-    if (refundMirrorError) {
-      console.error(
-        `Failed to mirror refund for payment intent ${paymentIntentId}:`,
-        refundMirrorError.message
-      );
-    }
-  } else if (!invoiceId) {
+  if (!result.invoiceId) {
     console.error(
-      `charge.refunded for payment intent ${paymentIntentId} has no resolvable invoice -- payment marked refunded but Revenue/Transactions still count the original amount.`
+      `charge.refunded for payment intent ${paymentIntentId} has no resolvable invoice -- Revenue/Transactions still count the original amount.`
     );
   }
 }

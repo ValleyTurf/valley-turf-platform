@@ -167,7 +167,10 @@ export async function getPaymentsForInvoices(
       date: (row.payment_date as string | null) ?? null,
       method: (row.payment_method as string | null) ?? null,
       status: (row.transaction_status as string | null) ?? null,
-      collected: isCollectedPayment(row.transaction_status as string | null),
+      // A mirrored refund is a negative row that nets against the original.
+      collected:
+        Number(row.amount ?? 0) < 0 ||
+        isCollectedPayment(row.transaction_status as string | null),
     });
     map.set(invoiceId, list);
   }

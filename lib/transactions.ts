@@ -387,7 +387,7 @@ export async function getTransactions(
       // payment's status to REFUNDED. Show the refund as its own negative
       // line so totals net out. Jobber doesn't give the refund's date here,
       // so it is dated with the payment.
-      if (/refund/i.test(payment.transaction_status ?? "")) {
+      if (amount > 0 && /refund/i.test(payment.transaction_status ?? "")) {
         return [
           row,
           {
