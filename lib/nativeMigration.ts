@@ -8,11 +8,11 @@ import { sendManualEmail, sendManualSms } from "@/lib/notifications";
 import { setInvoicingMode } from "@/lib/invoicingMode";
 import { recordAuditLog } from "@/lib/auditLog";
 import {
-  buildInviteEmail,
-  buildInviteSms,
   firstNameFor,
+  inviteEmailSubject,
   inviteSkipReason,
   migrationStage,
+  renderInviteMessage,
   SKIP_REASON_TEXT,
   type MigrationStage,
 } from "@/lib/nativeMigrationLogic";
@@ -131,6 +131,8 @@ export type InviteResult = {
 export async function sendMigrationInvites(params: {
   jobberClientIds: string[];
   actorName: string;
+  // The message text, with {first_name} and {link} placeholders.
+  template: string;
 }): Promise<InviteResult[]> {
   const now = new Date();
   const rows = await listMigrationRows();
@@ -170,19 +172,17 @@ export async function sendMigrationInvites(params: {
     }
 
     const link = `${baseUrl}/autopay/${token.token}`;
-    const message = {
+    const messageText = renderInviteMessage(params.template, {
       firstName: firstNameFor(row.name),
       link,
-      businessName: biz.name,
-      phoneDisplay: biz.phoneDisplay,
-    };
+    });
 
     let channel: "sms" | "email" | null = null;
 
     if (row.phone) {
       const sent = await sendManualSms({
         toPhone: row.phone,
-        body: buildInviteSms(message),
+        body: messageText,
         jobberClientId: id,
         createdByName: params.actorName,
       });
@@ -190,12 +190,11 @@ export async function sendMigrationInvites(params: {
     }
 
     if (!channel && row.email) {
-      const email = buildInviteEmail(message);
       const sent = await sendManualEmail({
         toEmail: row.email,
         customerName: row.name,
-        subject: email.subject,
-        body: email.body,
+        subject: inviteEmailSubject(biz.name),
+        body: messageText,
         jobberClientId: id,
         createdByName: params.actorName,
       });

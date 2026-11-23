@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  buildInviteSms,
+  defaultInviteTemplate,
+  renderInviteMessage,
+  smsSegments,
+  validateInviteTemplate,
   inviteSkipReason,
   inviteWindowOpen,
   migrationStage,
@@ -56,16 +59,32 @@ describe("inviteSkipReason", () => {
   });
 });
 
-describe("buildInviteSms", () => {
-  it("includes the link and the name, with no fancy punctuation", () => {
-    const sms = buildInviteSms({
-      firstName: "Chris",
-      link: "https://go.example.com/autopay/abc",
-      businessName: "Valley Turf Revival",
-      phoneDisplay: "(480) 331-4596",
-    });
-    expect(sms.includes("Hi Chris")).toBe(true);
-    expect(sms.includes("https://go.example.com/autopay/abc")).toBe(true);
-    expect(/[—–‘’“”]/.test(sms)).toBe(false);
+describe("invite message template", () => {
+  const template = defaultInviteTemplate("Valley Turf Revival", "(480) 331-4596");
+  it("fills in the name and link", () => {
+    const text = renderInviteMessage(template, { firstName: "Chris", link: "https://go.example.com/autopay/abc" });
+    expect(text.includes("Hi Chris")).toBe(true);
+    expect(text.includes("https://go.example.com/autopay/abc")).toBe(true);
+    expect(text.includes("{link}")).toBe(false);
+    expect(text.includes("{first_name}")).toBe(false);
+  });
+  it("fills every occurrence", () => {
+    const text = renderInviteMessage("{first_name}! {first_name}, {link} {link}", { firstName: "A", link: "L" });
+    expect(text).toBe("A! A, L L");
+  });
+  it("uses no fancy punctuation in the suggested wording", () => {
+    expect(/[\u2014\u2013\u2018\u2019\u201c\u201d]/.test(template)).toBe(false);
+  });
+  it("requires the link and a sensible length", () => {
+    expect(validateInviteTemplate(template) === null).toBe(true);
+    expect((validateInviteTemplate("Hi {first_name}, please pay") ?? "").includes("{link}")).toBe(true);
+    expect(validateInviteTemplate("   ") === null).toBe(false);
+    expect(validateInviteTemplate("{link} " + "x".repeat(700)) === null).toBe(false);
+  });
+  it("counts text segments", () => {
+    expect(smsSegments(100)).toBe(1);
+    expect(smsSegments(160)).toBe(1);
+    expect(smsSegments(161)).toBe(2);
+    expect(smsSegments(400)).toBe(3);
   });
 });

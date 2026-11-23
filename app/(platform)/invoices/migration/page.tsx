@@ -12,7 +12,12 @@ import {
   fetchLastInvoiceDateByClient,
   fetchRecurringClientIds,
 } from "@/lib/activeCustomers";
-import { inviteWindowOpen, MAX_INVITES_PER_BATCH } from "@/lib/nativeMigrationLogic";
+import { getBusiness } from "@/lib/business";
+import {
+  defaultInviteTemplate,
+  inviteWindowOpen,
+  MAX_INVITES_PER_BATCH,
+} from "@/lib/nativeMigrationLogic";
 import MigrationTable from "./MigrationTable";
 
 type View = "jobber_card" | "all_active" | "ready" | "invited" | "switched";
@@ -72,6 +77,8 @@ export default async function NativeMigrationPage({
   });
 
   const windowOpen = inviteWindowOpen(new Date());
+  const biz = await getBusiness();
+  const defaultTemplate = defaultInviteTemplate(biz.name, biz.phoneDisplay);
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
@@ -131,6 +138,7 @@ export default async function NativeMigrationPage({
           view={view}
           windowOpen={windowOpen}
           maxPerBatch={MAX_INVITES_PER_BATCH}
+          defaultTemplate={defaultTemplate}
         />
       </div>
     </main>

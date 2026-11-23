@@ -79,33 +79,42 @@ export function firstNameFor(fullName: string | null): string {
   return trimmed.split(/\s+/)[0];
 }
 
-export function buildInviteSms(params: {
-  firstName: string;
-  link: string;
-  businessName: string;
-  phoneDisplay: string;
-}): string {
+// The invite text is written by a person, with two placeholders that are
+// filled in per customer: {first_name} and {link}.
+export const MAX_TEMPLATE_LENGTH = 600;
+
+export function defaultInviteTemplate(businessName: string, phoneDisplay: string): string {
   return (
-    `Hi ${params.firstName}, this is ${params.businessName}. We're moving our billing to a new system. ` +
-    `Please save a card here so your invoices are paid automatically (takes about a minute): ${params.link} ` +
-    `Your card is only charged when an invoice is ready. Questions? Call or text ${params.phoneDisplay}.`
+    `Hi {first_name}, this is ${businessName}. We're moving our billing to a new system. ` +
+    `Please save a card here so your invoices are paid automatically (takes about a minute): {link} ` +
+    `Your card is only charged when an invoice is ready. Questions? Call or text ${phoneDisplay}.`
   );
 }
 
-export function buildInviteEmail(params: {
-  firstName: string;
-  link: string;
-  businessName: string;
-  phoneDisplay: string;
-}): { subject: string; body: string } {
-  return {
-    subject: `Save a card for automatic payment - ${params.businessName}`,
-    body:
-      `Hi ${params.firstName},\n\n` +
-      `We're moving our billing to a new system at ${params.businessName}. To keep things simple, ` +
-      `please save a card on file using this secure link (it takes about a minute):\n\n${params.link}\n\n` +
-      `Your card will only be charged when an invoice is ready for your service, and you'll get a receipt each time. ` +
-      `You can turn automatic payment off any time by contacting us.\n\n` +
-      `Questions? Call or text us at ${params.phoneDisplay}.\n\nThank you,\n${params.businessName}`,
-  };
+export function validateInviteTemplate(template: string): string | null {
+  const trimmed = template.trim();
+
+  if (!trimmed) return "Write the message first.";
+  if (!trimmed.includes("{link}")) return "The message must include {link} so each customer gets their own card link.";
+  if (trimmed.length > MAX_TEMPLATE_LENGTH) return `Keep the message under ${MAX_TEMPLATE_LENGTH} characters.`;
+
+  return null;
+}
+
+export function renderInviteMessage(template: string, values: { firstName: string; link: string }): string {
+  return template
+    .trim()
+    .split("{first_name}")
+    .join(values.firstName)
+    .split("{link}")
+    .join(values.link);
+}
+
+// A text over 160 characters is sent (and billed) as several segments.
+export function smsSegments(length: number): number {
+  return length <= 160 ? 1 : Math.ceil(length / 153);
+}
+
+export function inviteEmailSubject(businessName: string): string {
+  return `Save a card for automatic payment - ${businessName}`;
 }
