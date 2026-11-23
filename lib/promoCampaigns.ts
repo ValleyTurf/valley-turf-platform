@@ -14,6 +14,7 @@
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
 import { sendManualEmail, sendManualSms } from "@/lib/notifications";
+import { listPromotionsOptedOut } from "@/lib/notificationPrefs";
 
 export type RecurringStatusFilter =
   | "all"
@@ -167,10 +168,16 @@ export async function resolveAudience(
   const needsEmail = channels.includes("email");
   const needsSms = channels.includes("sms");
 
+  // Customers who turned promotions off in the portal are never included,
+  // so the preview count and the real send both leave them out.
+  const promotionsOptedOut = await listPromotionsOptedOut();
+
   const results: CampaignRecipient[] = [];
 
   for (const row of data as CustomerRow[]) {
     const id = row.jobber_client_id;
+
+    if (promotionsOptedOut.has(id)) continue;
 
     if (filters.recurringStatus === "active_recurring") {
       if (!activeIds.has(id)) continue;

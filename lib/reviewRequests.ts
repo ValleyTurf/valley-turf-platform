@@ -12,6 +12,7 @@
 // a visit's completion (end_at) counting forward instead of counting
 // down to a future start_at.
 import "server-only";
+import { loadNotificationPrefs, prefsFor } from "@/lib/notificationPrefs";
 import { supabaseServer } from "@/lib/supabase-server";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
 import {
@@ -166,10 +167,17 @@ export async function sendDueReviewRequests(): Promise<SendReviewRequestsResult>
     ])
   );
 
+  // Customers who turned review requests off in the portal.
+  const prefsById = await loadNotificationPrefs(clientIds);
+
   for (const visit of pendingVisits) {
     const customer = visit.jobber_client_id
       ? customersById.get(visit.jobber_client_id)
       : null;
+
+    if (!prefsFor(prefsById, visit.jobber_client_id).reviewRequestsEnabled) {
+      continue;
+    }
 
     const phone = customer?.phone?.trim() || null;
     const email = customer?.email?.trim() || null;

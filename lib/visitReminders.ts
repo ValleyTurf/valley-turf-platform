@@ -11,6 +11,8 @@ import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
 import { sendVisitReminderSms, sendVisitReminderEmail } from "@/lib/notifications";
+import { loadNotificationPrefs, prefsFor } from "@/lib/notificationPrefs";
+import { recipientsForChannel } from "@/lib/notificationPrefsLogic";
 import { getNotificationRecipients } from "@/lib/customerContacts";
 import { getOrCreateConfirmationToken } from "@/lib/visitConfirmation";
 import { getBaseUrl } from "@/lib/baseUrl";
@@ -185,6 +187,9 @@ export async function sendDueVisitReminders(): Promise<SendRemindersResult> {
       ])
     );
 
+    // Customer-chosen reminder channel (portal "Notifications" page).
+    const prefsById = await loadNotificationPrefs(clientIds);
+
     for (const visit of pendingVisits) {
       const customer = visit.jobber_client_id
         ? customersById.get(visit.jobber_client_id)
@@ -212,9 +217,14 @@ export async function sendDueVisitReminders(): Promise<SendRemindersResult> {
       // Fans out to any additional customer_contacts flagged
       // receives_notifications (migration 060), alongside the primary
       // phone/email looked up above.
-      const recipients = visit.jobber_client_id
+      const allRecipients = visit.jobber_client_id
         ? await getNotificationRecipients(visit.jobber_client_id, email, phone)
         : { emails: email ? [email] : [], phones: phone ? [phone] : [] };
+
+      const recipients = recipientsForChannel(
+        prefsFor(prefsById, visit.jobber_client_id).reminderChannel,
+        allRecipients
+      );
 
       const dateLabel = formatVisitDateLabel(visit.start_at);
 

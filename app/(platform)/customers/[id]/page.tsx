@@ -87,6 +87,8 @@ import {
   type VisitRowInput,
 } from "@/lib/visitTableRows";
 import { getCustomerJobCostingSummary } from "@/lib/jobCostingSummary";
+import { loadNotificationPrefs, prefsFor } from "@/lib/notificationPrefs";
+import { describePrefs } from "@/lib/notificationPrefsLogic";
 import { isQuoteStatus, computeDisplayStatus } from "@/lib/quotes";
 import {
   type MaterialOption,
@@ -2445,6 +2447,16 @@ export default async function CustomerDetailPage({
       ? { label: "Opted out of messages", className: "bg-amber-100 text-amber-800" }
       : { label: "Texts allowed", className: "bg-slate-100 text-slate-700" }
   );
+  // What the customer chose themselves on the portal Notifications page.
+  const chosenPrefs = describePrefs(
+    prefsFor(await loadNotificationPrefs([decodedId]), decodedId)
+  );
+  if (chosenPrefs.length > 0) {
+    statusChips.push({
+      label: `Customer chose: ${chosenPrefs.join(", ")}`,
+      className: "bg-amber-100 text-amber-800",
+    });
+  }
 
   // Color coding (Ryan, 2026-11-19): red for money overdue, orange for low
   // margin, blue for visit housekeeping (photos, costs, invoice link), green

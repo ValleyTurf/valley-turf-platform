@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { href: "/portal/request-service", label: "Request Service" },
   { href: "/portal/messages", label: "Messages" },
   { href: "/portal/account", label: "My Info" },
+  { href: "/portal/notifications", label: "Notifications" },
 ];
 
 export function PortalShell({
