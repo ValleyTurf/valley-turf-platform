@@ -14,82 +14,14 @@ export const revalidate = 0;
 // how invoices actually get created yet. That's a separate, later step
 // once this list has been reviewed.
 import Link from "next/link";
-import { supabaseServer } from "@/lib/supabase-server";
 import { listInvoicingModeRows } from "@/lib/invoicingMode";
 import ModeToggle from "./ModeToggle";
-
-const ACTIVE_WINDOW_DAYS = 182; // ~6 months
-
-type RecurringRow = { jobber_client_id: string | null };
-type InvoiceDateRow = { jobber_client_id: string | null; issue_date: string | null };
-
-// Same paginated-range-loop pattern used throughout this codebase
-// (customers/intelligence/page.tsx's fetchRecurringServiceRows /
-// fetchInvoices) since a plain .select() caps at Supabase's default
-// 1000-row page.
-async function fetchRecurringClientIds(): Promise<Set<string>> {
-  const ids = new Set<string>();
-  const pageSize = 1000;
-
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabaseServer
-      .from("job_service_category")
-      .select("jobber_client_id")
-      .eq("is_recurring_service", true)
-      .not("jobber_client_id", "is", null)
-      .range(from, from + pageSize - 1);
-
-    if (error) throw new Error(`Failed reading job_service_category: ${error.message}`);
-
-    const batch = (data ?? []) as RecurringRow[];
-    for (const row of batch) {
-      if (row.jobber_client_id) ids.add(row.jobber_client_id);
-    }
-
-    if (batch.length < pageSize) break;
-  }
-
-  return ids;
-}
-
-// Most recent invoice issue_date per client -- used as a stand-in for
-// "had a service recently" (an invoice only exists because a visit got
-// billed), same proxy the Reactivation/Customer Intelligence pages use
-// for "last service."
-async function fetchLastInvoiceDateByClient(): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  const pageSize = 1000;
-
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabaseServer
-      .from("invoice_financials")
-      .select("jobber_client_id, issue_date")
-      .not("jobber_client_id", "is", null)
-      .not("issue_date", "is", null)
-      .range(from, from + pageSize - 1);
-
-    if (error) throw new Error(`Failed reading invoice_financials: ${error.message}`);
-
-    const batch = (data ?? []) as InvoiceDateRow[];
-    for (const row of batch) {
-      if (!row.jobber_client_id || !row.issue_date) continue;
-      const existing = map.get(row.jobber_client_id);
-      if (!existing || row.issue_date > existing) {
-        map.set(row.jobber_client_id, row.issue_date);
-      }
-    }
-
-    if (batch.length < pageSize) break;
-  }
-
-  return map;
-}
-
-function daysSince(dateStr: string): number {
-  const then = new Date(`${dateStr}T00:00:00Z`).getTime();
-  const now = Date.now();
-  return Math.floor((now - then) / 86_400_000);
-}
+import {
+  ACTIVE_WINDOW_DAYS,
+  daysSince,
+  fetchLastInvoiceDateByClient,
+  fetchRecurringClientIds,
+} from "@/lib/activeCustomers";
 
 function sourceLabel(source: string | null): { text: string; color: string; bg: string } {
   switch (source) {

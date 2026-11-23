@@ -219,6 +219,8 @@ export const MANAGER_PLUS_PREFIXES = [
   // locked down like the rest of this list rather than the delegable
   // section-permission system, same reasoning.
   "/campaigns",
+  // Mass-texts real customers asking them to save a card.
+  "/invoices/migration",
 ];
 
 export type RolePermissionsMap = Record<

@@ -205,6 +205,13 @@ export default async function InvoicesPage({
             >
               Stage 7: Invoicing Routing
             </Link>
+
+            <Link
+              href="/invoices/migration"
+              className="rounded-xl border border-[#174734] px-4 py-2 text-center text-sm font-bold transition hover:bg-white"
+            >
+              Move customers to native
+            </Link>
           </div>
         </header>
 

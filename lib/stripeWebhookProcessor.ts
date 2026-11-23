@@ -13,6 +13,7 @@ import type Stripe from "stripe";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getStripeClient } from "@/lib/stripe";
 import { recordNativeRefund } from "@/lib/refunds";
+import { completeMigrationAfterCardSaved } from "@/lib/nativeMigration";
 import {
   upsertPaymentByIntentId,
   upsertStripePayout,
@@ -487,6 +488,18 @@ async function handleSetupIntentSucceeded(
   setupIntent: Stripe.SetupIntent
 ): Promise<void> {
   await attachPaymentMethodFromSetupIntent(setupIntent);
+
+  // Customers invited through the Jobber-to-native migration tool move to
+  // native invoicing the moment their card is saved. Never allowed to fail
+  // the card save itself.
+  const migratedClientId = setupIntent.metadata?.jobber_client_id;
+  if (migratedClientId) {
+    try {
+      await completeMigrationAfterCardSaved(migratedClientId);
+    } catch (error) {
+      console.error("Native migration switch after card save failed:", error);
+    }
+  }
 
   // A card was just saved (first enrollment or a replacement card).
   // Charge anything already due under this customer's autopay schedule
