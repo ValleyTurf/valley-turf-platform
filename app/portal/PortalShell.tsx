@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { href: "/portal/autopay", label: "Autopay" },
   { href: "/portal/request-service", label: "Request Service" },
   { href: "/portal/messages", label: "Messages" },
+  { href: "/portal/account", label: "My Info" },
 ];
 
 export function PortalShell({
