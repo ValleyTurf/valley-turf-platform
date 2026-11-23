@@ -6,6 +6,11 @@
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
 import { normalizePhone } from "@/lib/matching";
+import {
+  escapeLikePattern,
+  loginLinkRateLimited,
+  PORTAL_LOGIN_WINDOW_MINUTES,
+} from "@/lib/portalLogic";
 
 const TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -35,7 +40,7 @@ export async function findPortalCustomerByEmail(
   const { data, error } = await supabaseServer
     .from("customers")
     .select("jobber_client_id, email, full_name")
-    .ilike("email", email.trim())
+    .ilike("email", escapeLikePattern(email.trim()))
     .not("jobber_client_id", "is", null)
     .limit(1)
     .maybeSingle();
@@ -49,6 +54,23 @@ export async function findPortalCustomerByEmail(
     email: (data.email as string | null) ?? email.trim(),
     name: (data.full_name as string | null) || "there",
   };
+}
+
+// True if this customer already asked for several sign-in links in the last
+// few minutes. The login form silently skips sending in that case (it still
+// shows the same "link is on its way" message), so nobody can use it to
+// flood a customer's phone or inbox.
+export async function tooManyRecentLoginLinks(jobberClientId: string): Promise<boolean> {
+  const since = new Date(Date.now() - PORTAL_LOGIN_WINDOW_MINUTES * 60 * 1000).toISOString();
+
+  const { count, error } = await supabaseServer
+    .from("portal_login_tokens")
+    .select("token", { count: "exact", head: true })
+    .eq("jobber_client_id", jobberClientId)
+    .gte("created_at", since);
+
+  if (error) return false;
+  return loginLinkRateLimited(count ?? 0);
 }
 
 export async function createPortalLoginToken(

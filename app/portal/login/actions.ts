@@ -5,6 +5,7 @@ import {
   createPortalLoginToken,
   findPortalCustomerByEmail,
   findPortalCustomerByPhone,
+  tooManyRecentLoginLinks,
 } from "@/lib/portalLoginTokens";
 import { sendPortalMagicLinkEmail, sendPortalMagicLinkSms } from "@/lib/notifications";
 import { getBaseUrl } from "@/lib/baseUrl";
@@ -27,7 +28,7 @@ export async function requestPortalLogin(formData: FormData): Promise<void> {
 
     const customer = await findPortalCustomerByPhone(phone);
 
-    if (customer) {
+    if (customer && !(await tooManyRecentLoginLinks(customer.jobberClientId))) {
       try {
         const token = await createPortalLoginToken(customer);
         const baseUrl = await getBaseUrl();
@@ -45,7 +46,7 @@ export async function requestPortalLogin(formData: FormData): Promise<void> {
   const rawEmail = formData.get("email");
   const email = typeof rawEmail === "string" ? rawEmail.trim() : "";
 
-  if (!email) {
+  if (!email || !email.includes("@")) {
     redirect("/portal/login?result=invalid");
   }
 
@@ -53,7 +54,7 @@ export async function requestPortalLogin(formData: FormData): Promise<void> {
 
   // Same email whether we found a match or not — don't let this form
   // leak which email addresses are in the system.
-  if (customer) {
+  if (customer && !(await tooManyRecentLoginLinks(customer.jobberClientId))) {
     try {
       const token = await createPortalLoginToken(customer);
       const baseUrl = await getBaseUrl();

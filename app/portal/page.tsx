@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getCurrentPortalUser } from "@/lib/currentPortalUser";
 import { supabaseServer } from "@/lib/supabase-server";
+import { loadPortalInvoices } from "@/lib/portalInvoices";
+import { describeVisit } from "@/lib/portalLogic";
 import { formatCurrencyPrecise } from "@/lib/format";
 import { PortalShell } from "./PortalShell";
 
@@ -23,37 +25,6 @@ type RecentJob = {
   total: number | null;
 };
 
-type OutstandingSummary = {
-  outstanding_balance: number | string | null;
-};
-
-// Native invoices (Tier 1) live in their own table, separate from the
-// Jobber-synced jobber_invoices customer_financials is built from — see
-// app/portal/invoices/page.tsx's header comment for the full gap this
-// closes. No partial-payment concept for native invoices (no `balance`
-// column, just a status), so the open balance is simply the total for
-// any invoice still awaiting payment.
-type NativeInvoiceBalance = {
-  status: string;
-  total: number | string;
-};
-
-function formatVisitTime(value: string | null): string {
-  if (!value) return "—";
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return "—";
-
-  return new Intl.DateTimeFormat("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
-}
-
 export default async function PortalDashboardPage() {
   const customer = await getCurrentPortalUser();
 
@@ -61,47 +32,34 @@ export default async function PortalDashboardPage() {
     redirect("/portal/login");
   }
 
-  const nowIso = new Date().toISOString();
+  const now = new Date();
+  const nowIso = now.toISOString();
 
-  const [visitsResult, jobsResult, balanceResult, nativeInvoicesResult] =
-    await Promise.all([
-      supabaseServer
-        .from("jobber_visits")
-        .select("jobber_visit_id, title, visit_status, start_at, end_at")
-        .eq("jobber_client_id", customer.jobberClientId)
-        .gte("start_at", nowIso)
-        .order("start_at", { ascending: true })
-        .limit(5),
+  const [visitsResult, jobsResult, invoices] = await Promise.all([
+    supabaseServer
+      .from("jobber_visits")
+      .select("jobber_visit_id, title, visit_status, start_at, end_at")
+      .eq("jobber_client_id", customer.jobberClientId)
+      .gte("start_at", nowIso)
+      // Visits on archived (closed-out) jobs are not real upcoming service.
+      .or("job_status.is.null,job_status.neq.archived")
+      .order("start_at", { ascending: true })
+      .limit(5),
 
-      supabaseServer
-        .from("jobber_jobs")
-        .select("jobber_job_id, job_number, job_status, total")
-        .eq("jobber_client_id", customer.jobberClientId)
-        .order("jobber_job_id", { ascending: false })
-        .limit(5),
+    supabaseServer
+      .from("jobber_jobs")
+      .select("jobber_job_id, job_number, job_status, total")
+      .eq("jobber_client_id", customer.jobberClientId)
+      .order("jobber_job_id", { ascending: false })
+      .limit(5),
 
-      supabaseServer
-        .from("customer_financials")
-        .select("outstanding_balance")
-        .eq("jobber_client_id", customer.jobberClientId)
-        .maybeSingle(),
-
-      supabaseServer
-        .from("invoices")
-        .select("status, total")
-        .eq("jobber_client_id", customer.jobberClientId)
-        .in("status", ["sent", "overdue"]),
-    ]);
+    loadPortalInvoices(customer.jobberClientId),
+  ]);
 
   const upcomingVisits = (visitsResult.data ?? []) as UpcomingVisit[];
   const recentJobs = (jobsResult.data ?? []) as RecentJob[];
-  const jobberOutstandingBalance = Number(
-    (balanceResult.data as OutstandingSummary | null)?.outstanding_balance ?? 0
-  );
-  const nativeOutstandingBalance = (
-    (nativeInvoicesResult.data ?? []) as NativeInvoiceBalance[]
-  ).reduce((sum, invoice) => sum + Number(invoice.total ?? 0), 0);
-  const outstandingBalance = jobberOutstandingBalance + nativeOutstandingBalance;
+  // Same list the Invoices page shows, so the two always agree.
+  const outstandingBalance = invoices.reduce((sum, invoice) => sum + invoice.balance, 0);
 
   return (
     <PortalShell activeHref="/portal" customerName={customer.name}>
@@ -166,7 +124,7 @@ export default async function PortalDashboardPage() {
               >
                 <p className="font-bold">{visit.title || "Scheduled Visit"}</p>
                 <p className="mt-1 text-sm text-[#6b705c]">
-                  {formatVisitTime(visit.start_at)}
+                  {describeVisit(visit.start_at, now)?.label ?? "Date to be confirmed"}
                 </p>
               </div>
             ))}

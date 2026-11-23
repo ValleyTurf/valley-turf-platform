@@ -4,6 +4,7 @@ export const revalidate = 0;
 import { redirect } from "next/navigation";
 import { getCurrentPortalUser } from "@/lib/currentPortalUser";
 import { supabaseServer } from "@/lib/supabase-server";
+import { formatPortalTimestamp } from "@/lib/portalLogic";
 import { PortalShell } from "../PortalShell";
 import { sendPortalMessage } from "./actions";
 
@@ -14,19 +15,6 @@ type PortalMessage = {
   body: string;
   created_at: string;
 };
-
-function formatMessageTime(value: string): string {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return "";
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
-}
 
 export default async function PortalMessagesPage({
   searchParams,
@@ -55,7 +43,7 @@ export default async function PortalMessagesPage({
       <section className="rounded-3xl bg-white p-6 shadow">
         <h2 className="text-lg font-bold">Messages</h2>
         <p className="mt-1 text-sm text-[#6b705c]">
-          Send us a message any time — we&apos;ll reply here.
+          Send us a message any time. We&apos;ll reply by text or email, so keep an eye on your phone.
         </p>
 
         {result === "invalid" && (
@@ -96,7 +84,7 @@ export default async function PortalMessagesPage({
                   {message.sender === "staff"
                     ? message.sender_name || "Valley Turf Revival"
                     : "You"}{" "}
-                  · {formatMessageTime(message.created_at)}
+                  · {formatPortalTimestamp(message.created_at)}
                 </p>
               </div>
             ))
