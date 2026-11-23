@@ -4,7 +4,7 @@
 // until the confirm step, and shows what happened to each customer after.
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { sendInvitesAction } from "./actions";
+import { scheduleInvitesAction, sendInvitesAction } from "./actions";
 import { setManualInvoicingMode } from "../routing/actions";
 import type { MigrationRow, InviteResult } from "@/lib/nativeMigration";
 import {
@@ -36,7 +36,11 @@ export default function MigrationTable({
   windowOpen,
   maxPerBatch,
   defaultTemplate,
+  scheduledIds,
+  nextOpeningLabel,
 }: {
+  scheduledIds: string[];
+  nextOpeningLabel: string;
   rows: MigrationRow[];
   view: string;
   windowOpen: boolean;
@@ -45,17 +49,19 @@ export default function MigrationTable({
 }) {
   const [template, setTemplate] = useState(defaultTemplate);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState<"now" | "schedule" | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<InviteResult[] | null>(null);
   const [switched, setSwitched] = useState<Set<string>>(new Set());
   const [isPending, startTransition] = useTransition();
 
+  const scheduled = new Set(scheduledIds);
   const invitable = rows.filter((row) => row.stage === "not_invited" || row.stage === "invited");
   const selectedCount = selected.size;
 
   function toggle(id: string) {
-    setConfirming(false);
+    setConfirming(null);
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
@@ -64,11 +70,27 @@ export default function MigrationTable({
     });
   }
 
+  function schedule() {
+    setError(null);
+    setNotice(null);
+    startTransition(async () => {
+      const outcome = await scheduleInvitesAction(Array.from(selected), template);
+      setConfirming(null);
+      if (outcome.error) {
+        setError(outcome.error);
+        return;
+      }
+      setNotice(outcome.message);
+      setSelected(new Set());
+    });
+  }
+
   function send() {
     setError(null);
+    setNotice(null);
     startTransition(async () => {
       const outcome = await sendInvitesAction(Array.from(selected), template);
-      setConfirming(false);
+      setConfirming(null);
       if (outcome.error) {
         setError(outcome.error);
         return;
@@ -107,7 +129,7 @@ export default function MigrationTable({
             value={template}
             onChange={(event) => {
               setTemplate(event.target.value);
-              setConfirming(false);
+              setConfirming(null);
             }}
             rows={5}
             maxLength={MAX_TEMPLATE_LENGTH}
@@ -142,19 +164,37 @@ export default function MigrationTable({
 
       {view !== "switched" && (
         <div className="mb-3 flex flex-wrap items-center gap-3">
+          {windowOpen && (
+            <button
+              type="button"
+              disabled={
+                selectedCount === 0 ||
+                selectedCount > maxPerBatch ||
+                isPending ||
+                validateInviteTemplate(template) !== null
+              }
+              onClick={() => setConfirming("now")}
+              className="rounded-xl bg-[#174734] px-4 py-2 text-sm font-bold text-white disabled:opacity-40"
+            >
+              Send invite to {selectedCount || "selected"} now
+            </button>
+          )}
           <button
             type="button"
             disabled={
-              !windowOpen ||
               selectedCount === 0 ||
               selectedCount > maxPerBatch ||
               isPending ||
               validateInviteTemplate(template) !== null
             }
-            onClick={() => setConfirming(true)}
-            className="rounded-xl bg-[#174734] px-4 py-2 text-sm font-bold text-white disabled:opacity-40"
+            onClick={() => setConfirming("schedule")}
+            className={
+              windowOpen
+                ? "rounded-xl border border-[#174734] px-4 py-2 text-sm font-bold disabled:opacity-40"
+                : "rounded-xl bg-[#174734] px-4 py-2 text-sm font-bold text-white disabled:opacity-40"
+            }
           >
-            Send invite to {selectedCount || "selected"}
+            Send at 9am ({nextOpeningLabel.replace(" at 9am", "")}){selectedCount ? ` to ${selectedCount}` : ""}
           </button>
           <p className="text-xs text-[#6b705c]">
             Up to {maxPerBatch} at a time. Anyone already invited in the last 3 days is skipped.
@@ -165,12 +205,17 @@ export default function MigrationTable({
       {confirming && (
         <div className="mb-3 rounded-2xl border border-[#d9d4c6] bg-white p-4 text-sm">
           <p className="font-bold">
-            Text {selectedCount} customer{selectedCount === 1 ? "" : "s"} a link to save a card?
+            {confirming === "now"
+              ? `Text ${selectedCount} customer${selectedCount === 1 ? "" : "s"} a link to save a card?`
+              : `Queue ${selectedCount} customer${selectedCount === 1 ? "" : "s"} to get the link ${nextOpeningLabel} (Phoenix time)?`}
           </p>
           <p className="mt-1 text-[#6b705c]">
             Each gets the message you wrote above, with their own name and link. Customers with no
             phone number get it by email instead. Once they save a card, they switch to native
             invoicing automatically.
+            {confirming === "schedule"
+              ? " Nothing is sent now. You can cancel the batch any time before it goes out, and anyone who saves a card, opts out or is invited by then is skipped."
+              : ""}
           </p>
           <p className="mt-2 whitespace-pre-wrap rounded-xl bg-[#f7f6f1] p-3">
             {renderInviteMessage(template, {
@@ -181,15 +226,15 @@ export default function MigrationTable({
           <div className="mt-3 flex gap-2">
             <button
               type="button"
-              onClick={send}
+              onClick={confirming === "now" ? send : schedule}
               disabled={isPending}
               className="rounded-xl bg-[#174734] px-4 py-2 font-bold text-white disabled:opacity-60"
             >
-              {isPending ? "Sending..." : "Yes, send"}
+              {isPending ? "Working..." : confirming === "now" ? "Yes, send" : "Yes, schedule"}
             </button>
             <button
               type="button"
-              onClick={() => setConfirming(false)}
+              onClick={() => setConfirming(null)}
               disabled={isPending}
               className="rounded-xl border border-[#d9d4c6] px-4 py-2 font-bold"
             >
@@ -197,6 +242,10 @@ export default function MigrationTable({
             </button>
           </div>
         </div>
+      )}
+
+      {notice && (
+        <p className="mb-3 rounded-xl bg-green-50 p-3 text-sm font-semibold text-green-800">{notice}</p>
       )}
 
       {error && <p className="mb-3 rounded-xl bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</p>}
@@ -225,7 +274,8 @@ export default function MigrationTable({
           <ul className="divide-y divide-[#f0eee6]">
             {rows.map((row) => {
               const stage = switched.has(row.jobberClientId) ? STAGE_LABEL.switched : STAGE_LABEL[row.stage];
-              const canSelect = invitable.includes(row) && !switched.has(row.jobberClientId);
+              const canSelect =
+                invitable.includes(row) && !switched.has(row.jobberClientId) && !scheduled.has(row.jobberClientId);
               return (
                 <li key={row.jobberClientId} className="flex items-center gap-3 px-4 py-3">
                   {view !== "switched" && (
@@ -250,6 +300,7 @@ export default function MigrationTable({
                       {row.optedOut ? " · Opted out of messages" : ""}
                       {row.cardInJobber ? " · Card in Jobber" : ""}
                       {row.cardLast4 ? ` · Saved card ending ${row.cardLast4}` : ""}
+                      {scheduled.has(row.jobberClientId) ? " · Scheduled to send" : ""}
                       {row.lastInvitedAt
                         ? ` · Invited ${formatDay(row.lastInvitedAt)} by ${row.lastInviteChannel === "email" ? "email" : "text"}`
                         : ""}

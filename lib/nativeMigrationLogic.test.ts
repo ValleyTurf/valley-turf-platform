@@ -8,6 +8,8 @@ import {
   inviteWindowOpen,
   migrationStage,
   phoenixHour,
+  nextInviteOpening,
+  describeOpening,
 } from "./nativeMigrationLogic";
 
 describe("migrationStage", () => {
@@ -86,5 +88,24 @@ describe("invite message template", () => {
     expect(smsSegments(160)).toBe(1);
     expect(smsSegments(161)).toBe(2);
     expect(smsSegments(400)).toBe(3);
+  });
+});
+
+describe("nextInviteOpening (Phoenix 9am = 16:00 UTC)", () => {
+  it("before 9am is today at 9am", () => {
+    expect(nextInviteOpening(new Date("2026-11-23T14:00:00Z")).toISOString()).toBe("2026-11-23T16:00:00.000Z");
+  });
+  it("after 9am is tomorrow at 9am", () => {
+    expect(nextInviteOpening(new Date("2026-11-23T20:00:00Z")).toISOString()).toBe("2026-11-24T16:00:00.000Z");
+  });
+  it("late night Phoenix (UTC already next day) is the next Phoenix morning", () => {
+    // 10:30pm Phoenix Nov 23 = 05:30 UTC Nov 24
+    expect(nextInviteOpening(new Date("2026-11-24T05:30:00Z")).toISOString()).toBe("2026-11-24T16:00:00.000Z");
+  });
+  it("describes today / tomorrow", () => {
+    const now = new Date("2026-11-24T05:30:00Z"); // Nov 23 10:30pm Phoenix
+    expect(describeOpening(nextInviteOpening(now), now)).toBe("tomorrow at 9am");
+    const early = new Date("2026-11-23T14:00:00Z");
+    expect(describeOpening(nextInviteOpening(early), early)).toBe("today at 9am");
   });
 });

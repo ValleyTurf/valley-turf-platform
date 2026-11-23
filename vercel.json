@@ -53,6 +53,10 @@
       "schedule": "40 15 * * *"
     },
     {
+      "path": "/api/invoices/send-scheduled-migration-invites",
+      "schedule": "5 16 * * *"
+    },
+    {
       "path": "/api/invoices/send-overdue-reminders",
       "schedule": "10 16 * * *"
     },

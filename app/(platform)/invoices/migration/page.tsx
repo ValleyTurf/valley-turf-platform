@@ -13,12 +13,16 @@ import {
   fetchRecurringClientIds,
 } from "@/lib/activeCustomers";
 import { getBusiness } from "@/lib/business";
+import { listPendingBatches } from "@/lib/nativeMigrationSchedule";
 import {
   defaultInviteTemplate,
+  describeOpening,
   inviteWindowOpen,
+  nextInviteOpening,
   MAX_INVITES_PER_BATCH,
 } from "@/lib/nativeMigrationLogic";
 import MigrationTable from "./MigrationTable";
+import ScheduledBatches, { type ScheduledBatchView } from "./ScheduledBatches";
 
 type View = "jobber_card" | "all_active" | "ready" | "invited" | "switched";
 
@@ -42,11 +46,23 @@ export default async function NativeMigrationPage({
   const params = await searchParams;
   const view: View = isView(params.view) ? params.view : "jobber_card";
 
-  const [rows, recurringIds, lastInvoiceByClient] = await Promise.all([
+  const [rows, recurringIds, lastInvoiceByClient, pendingBatches] = await Promise.all([
     listMigrationRows(),
     fetchRecurringClientIds(),
     fetchLastInvoiceDateByClient(),
+    listPendingBatches(),
   ]);
+
+  const nameById = new Map(rows.map((row) => [row.jobberClientId, row.name]));
+  const scheduledIds = Array.from(new Set(pendingBatches.flatMap((batch) => batch.clientIds)));
+  const batchViews: ScheduledBatchView[] = pendingBatches.map((batch) => ({
+    id: batch.id,
+    count: batch.clientIds.length,
+    whenLabel: describeOpening(new Date(batch.sendAfter), new Date()),
+    byName: batch.scheduledByName,
+    message: batch.template,
+    names: batch.clientIds.map((id) => nameById.get(id) ?? id),
+  }));
 
   const activeRows = rows.filter((row) => {
     if (recurringIds.has(row.jobberClientId)) return true;
@@ -76,7 +92,9 @@ export default async function NativeMigrationPage({
     }
   });
 
-  const windowOpen = inviteWindowOpen(new Date());
+  const now = new Date();
+  const windowOpen = inviteWindowOpen(now);
+  const nextOpeningLabel = describeOpening(nextInviteOpening(now), now);
   const biz = await getBusiness();
   const defaultTemplate = defaultInviteTemplate(biz.name, biz.phoneDisplay);
 
@@ -128,13 +146,17 @@ export default async function NativeMigrationPage({
 
         {!windowOpen && (
           <p className="mt-4 rounded-xl bg-slate-100 p-3 text-sm font-semibold text-slate-700">
-            Invites can only be sent between 9am and 6pm Phoenix time, so the send button is off
-            right now.
+            Invites can only be sent between 9am and 6pm Phoenix time. Pick your customers and use
+            &quot;Send at 9am&quot; to queue them for {nextOpeningLabel}.
           </p>
         )}
 
+        <ScheduledBatches batches={batchViews} />
+
         <MigrationTable
           rows={visible}
+          scheduledIds={scheduledIds}
+          nextOpeningLabel={nextOpeningLabel}
           view={view}
           windowOpen={windowOpen}
           maxPerBatch={MAX_INVITES_PER_BATCH}

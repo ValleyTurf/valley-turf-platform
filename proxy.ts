@@ -121,6 +121,8 @@ const CRON_PATHS = [
   // Scheduled autopay charges (migration 105) -- customers set to be
   // charged on a day of the month or N days after their invoice.
   "/api/invoices/charge-scheduled-autopay",
+  // Queued "send at 9am" migration invites (/invoices/migration).
+  "/api/invoices/send-scheduled-migration-invites",
   // Daily ops digest (Ryan's request) -- unlogged job costs, visits
   // missing photos, quotes approved but not scheduled, stuck
   // timeclock/job-timer entries.

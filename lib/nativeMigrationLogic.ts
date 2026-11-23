@@ -35,6 +35,35 @@ export function inviteWindowOpen(now: Date): boolean {
   return hour >= INVITE_WINDOW_START_HOUR && hour < INVITE_WINDOW_END_HOUR;
 }
 
+// The next 9:00am Phoenix at or after "now". Phoenix is UTC-7 all year (no
+// daylight saving), so 9:00am there is always 16:00 UTC.
+export function nextInviteOpening(now: Date): Date {
+  const phoenixDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Phoenix",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+  const today = new Date(`${phoenixDate}T${String(INVITE_WINDOW_START_HOUR + 7).padStart(2, "0")}:00:00Z`);
+  if (today.getTime() >= now.getTime()) return today;
+  return new Date(today.getTime() + 86_400_000);
+}
+
+// "tomorrow at 9am" / "today at 9am" / "Mon, Nov 30 at 9am", Phoenix time.
+export function describeOpening(opening: Date, now: Date): string {
+  const dayKey = (d: Date) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: "America/Phoenix" }).format(d);
+  if (dayKey(opening) === dayKey(now)) return "today at 9am";
+  if (dayKey(opening) === dayKey(new Date(now.getTime() + 86_400_000))) return "tomorrow at 9am";
+  const label = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Phoenix",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(opening);
+  return `${label} at 9am`;
+}
+
 export function daysBetween(fromIso: string, now: Date): number {
   return Math.floor((now.getTime() - new Date(fromIso).getTime()) / 86_400_000);
 }
