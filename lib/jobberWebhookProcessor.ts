@@ -718,8 +718,27 @@ export async function syncSingleVisit(jobberVisitId: string): Promise<void> {
 
 async function handleDestroyedInvoice(jobberInvoiceId: string): Promise<void> {
   console.log(
-    `Jobber reported deleted invoice ${jobberInvoiceId}. Historical invoice data was retained.`
+    `Jobber reported deleted invoice ${jobberInvoiceId}. Historical invoice data was retained and marked void.`
   );
+
+  // Keep the row (history, payments and audit trail still point at it) but
+  // mark it void so every list, balance and revenue total that already
+  // skips void invoices stops counting an invoice that no longer exists in
+  // Jobber. Before this, a deleted invoice stayed "Awaiting payment" here
+  // forever. Native invoices (native-<uuid>) are this app's own and are
+  // never touched by a Jobber event.
+  if (!jobberInvoiceId.startsWith("native-")) {
+    const { error: voidError } = await supabaseServer
+      .from("jobber_invoices")
+      .update({ status: "void", balance: 0 })
+      .eq("jobber_invoice_id", jobberInvoiceId);
+
+    if (voidError) {
+      console.error(
+        `Unable to mark destroyed invoice ${jobberInvoiceId} void: ${voidError.message}`
+      );
+    }
+  }
 
   // Un-link it from any visit that pointed to it -- a voided/deleted
   // invoice means that visit is (once again) not actually invoiced, so it
