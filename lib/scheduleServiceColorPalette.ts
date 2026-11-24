@@ -18,9 +18,14 @@
 // not Tailwind classes -- and Tailwind's build-time scanner needs the
 // class names written out literally rather than assembled with template
 // strings, or they'd get purged from the production CSS). This is the
-// full fixed palette a rule can pick from; adding an eleventh color
-// still needs a code change here, but choosing which of these ten goes
-// with which service no longer does.
+// full fixed palette a rule can pick from; adding another color still
+// needs a code change here, but choosing which color goes with which
+// service no longer does. The first ten are the original palette (kept
+// first, in order, so saved rules and the picker's layout do not move);
+// the rest were added 2026-11 because several of the originals (green,
+// emerald and lime; blue and sky; pink and rose) looked too alike on the
+// Schedule. The added ones are picked to sit far from every other color
+// in hue or darkness, including dark and neutral shades.
 export const NAMED_COLORS = {
   green: {
     chip: "bg-green-100 text-green-800 border border-green-300",
@@ -61,6 +66,58 @@ export const NAMED_COLORS = {
   emerald: {
     chip: "bg-emerald-100 text-emerald-800 border border-emerald-300",
     hex: "#059669",
+  },
+  salmon: {
+    chip: "bg-red-100 text-red-800 border border-red-300",
+    hex: "#f87171",
+  },
+  cyan: {
+    chip: "bg-cyan-100 text-cyan-800 border border-cyan-300",
+    hex: "#22d3ee",
+  },
+  indigo: {
+    chip: "bg-indigo-100 text-indigo-800 border border-indigo-300",
+    hex: "#4f46e5",
+  },
+  fuchsia: {
+    chip: "bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-300",
+    hex: "#c026d3",
+  },
+  slate: {
+    chip: "bg-slate-100 text-slate-700 border border-slate-300",
+    hex: "#64748b",
+  },
+  brown: {
+    chip: "bg-[#f1e4d3] text-[#6b4423] border border-[#c9a27e]",
+    hex: "#8b5a2b",
+  },
+  maroon: {
+    chip: "bg-[#f3dede] text-[#7f1d1d] border border-[#c98a8a]",
+    hex: "#7f1d1d",
+  },
+  navy: {
+    chip: "bg-[#dde5f5] text-[#1e3a8a] border border-[#8397cc]",
+    hex: "#1e3a8a",
+  },
+  forest: {
+    chip: "bg-[#d9eadf] text-[#14532d] border border-[#7fb191]",
+    hex: "#14532d",
+  },
+  mint: {
+    chip: "bg-teal-100 text-teal-800 border border-teal-300",
+    hex: "#5eead4",
+  },
+  lavender: {
+    chip: "bg-[#ece7fb] text-[#5b4bb5] border border-[#b9acf0]",
+    hex: "#a78bfa",
+  },
+  tan: {
+    chip: "bg-[#f4ecd9] text-[#7a6532] border border-[#d6c28f]",
+    hex: "#c2a878",
+  },
+  charcoal: {
+    chip: "bg-[#e5e7eb] text-[#1f2937] border border-[#6b7280]",
+    hex: "#111827",
   },
 } as const;
 
