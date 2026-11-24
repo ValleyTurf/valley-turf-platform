@@ -408,7 +408,7 @@ async function checkPageErrors(): Promise<Check> {
 }
 
 // Every scheduled job, judged against how often vercel.json says it should
-// run (lib/cronWatch.ts). The hourly watchdog alerts on the same verdicts.
+// run (lib/cronWatch.ts). The daily watchdog alerts on the same verdicts.
 async function checkScheduledJobs(): Promise<Check> {
   let reports;
 

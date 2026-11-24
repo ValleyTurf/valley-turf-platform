@@ -70,7 +70,7 @@
     },
     {
       "path": "/api/ops/check-scheduled-jobs",
-      "schedule": "25 * * * *"
+      "schedule": "25 15 * * *"
     },
     {
       "path": "/api/ops/weekly-backup",

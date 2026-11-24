@@ -1,7 +1,7 @@
 // Scheduled-job watchdog. Nearly every cron job in vercel.json records each
 // run in jobber_sync_status (lib/jobberSyncTracking.ts). This reads that,
 // works out how often each job should run from vercel.json itself, and
-// tells you when one did not run, failed, or got stuck. It checks hourly
+// tells you when one did not run, failed, or got stuck. It checks once a day (8:25am Phoenix)
 // (app/api/ops/check-scheduled-jobs), and System Health shows the same
 // verdicts live.
 //

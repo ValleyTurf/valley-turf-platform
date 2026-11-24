@@ -210,7 +210,7 @@ Proposed 2026-11-24. Ryan picked 7 and 8; the rest are parked.
    `app/portal/receipts/[paymentId]`). The card brand and last 4 are not
    shown: the payment rows do not record which card was used.
 8. ~~**Alert if a scheduled job does not run.**~~ **Done.** A watchdog
-   (`/api/ops/check-scheduled-jobs`, hourly) compares every cron in
+   (`/api/ops/check-scheduled-jobs`, once a day at 8:25am Phoenix, since the Vercel Hobby plan allows only daily crons) compares every cron in
    `vercel.json` against its last run and alerts admins by push and email
    when one is late, failed or stuck, with 24-hour reminders and
    quiet hours overnight. System Health shows the open alerts
