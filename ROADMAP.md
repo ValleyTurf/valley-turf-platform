@@ -173,7 +173,7 @@ Proposed 2026-11-16. Ryan picked 4, 5 and 8; the rest are parked.
 
 1. **Recover failed card charges.** Parked.
 2. **Credit for skipped prepaid visits.** Parked.
-3. **Alert if a scheduled job does not run.** Parked.
+3. ~~**Alert if a scheduled job does not run.**~~ **Done** (see the fourth list, item 8).
 4. ~~**Automatic weekly backup.**~~ **Done.** Every Sunday the app saves a
    ZIP of about 80 tables (no passwords or tokens) to a private storage
    bucket, keeps the newest 8, and emails the digest recipients a 7-day
@@ -195,6 +195,27 @@ Proposed 2026-11-16. Ryan picked 4, 5 and 8; the rest are parked.
    (`lib/duplicateCustomers.ts`, migration 114).
 9. **Crew checklist per visit.** Parked.
 10. **Two-step sign-in for admin and manager.** Parked.
+
+## Top 10, fourth list (November 2026)
+
+Proposed 2026-11-24. Ryan picked 7 and 8; the rest are parked.
+
+7. ~~**Payment history and receipts in the portal.**~~ **Done.** Portal >
+   Payments lists every payment with date, method, invoice number, tip and
+   any refund (partial or full), shows attempts that did not go through,
+   and downloads a PDF receipt. Receipts are looked up by the signed-in
+   customer's own id, so another customer's id returns 404
+   (`lib/portalPaymentsLogic.ts`, `lib/portalPayments.ts`,
+   `lib/paymentReceiptPdf.ts`, `app/portal/payments`,
+   `app/portal/receipts/[paymentId]`). The card brand and last 4 are not
+   shown: the payment rows do not record which card was used.
+8. ~~**Alert if a scheduled job does not run.**~~ **Done.** A watchdog
+   (`/api/ops/check-scheduled-jobs`, hourly) compares every cron in
+   `vercel.json` against its last run and alerts admins by push and email
+   when one is late, failed or stuck, with 24-hour reminders and
+   quiet hours overnight. System Health shows the open alerts
+   (`lib/cronWatchLogic.ts`, `lib/cronWatch.ts`, migration 120). It is
+   itself a cron, so it cannot report if every cron stops.
 
 ## Fresh ideas (CRM + website)
 
