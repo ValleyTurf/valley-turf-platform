@@ -109,7 +109,12 @@ export default async function PortalDashboardPage() {
       </div>
 
       <section className="mt-6 rounded-3xl bg-white p-6 shadow">
-        <h2 className="text-lg font-bold">Upcoming Visits</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-bold">Upcoming Visits</h2>
+          <Link href="/portal/visits" className="text-sm font-semibold text-[#9c7a20] hover:underline">
+            Past visits &amp; photos &rarr;
+          </Link>
+        </div>
 
         {upcomingVisits.length === 0 ? (
           <p className="mt-4 rounded-2xl bg-[#f7f6f1] p-4 text-sm text-[#6b705c]">

@@ -64,3 +64,19 @@ describe("sign-in protections", () => {
     expect(loginLinkRateLimited(3)).toBe(true);
   });
 });
+
+import { formatPastVisitDate, isCompletedVisit } from "./portalLogic";
+
+describe("past visits", () => {
+  it("treats completed_at or COMPLETED status as completed", () => {
+    expect(isCompletedVisit(null, "2026-11-12T20:00:00Z")).toBe(true);
+    expect(isCompletedVisit("completed", null)).toBe(true);
+    expect(isCompletedVisit("UPCOMING", null)).toBe(false);
+    expect(isCompletedVisit(null, null)).toBe(false);
+  });
+  it("formats the date in Phoenix time", () => {
+    // 11pm Phoenix Nov 12 = 06:00 UTC Nov 13: still Nov 12 for the customer
+    expect(formatPastVisitDate("2026-11-13T06:00:00Z").includes("Nov 12")).toBe(true);
+    expect(formatPastVisitDate(null)).toBe("Date unknown");
+  });
+});

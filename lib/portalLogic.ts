@@ -94,3 +94,26 @@ export const PORTAL_LOGIN_WINDOW_MINUTES = 15;
 export function loginLinkRateLimited(recentLinkCount: number): boolean {
   return recentLinkCount >= PORTAL_LOGIN_MAX_LINKS;
 }
+
+// A visit the customer can look back on: finished work, not a canceled or
+// still-scheduled one.
+export function isCompletedVisit(
+  status: string | null | undefined,
+  completedAt: string | null | undefined
+): boolean {
+  return Boolean(completedAt) || (status ?? "").toUpperCase() === "COMPLETED";
+}
+
+// "Thursday, Nov 12, 2026" for a past visit, in Phoenix time.
+export function formatPastVisitDate(startAtIso: string | null): string {
+  if (!startAtIso) return "Date unknown";
+  const date = new Date(startAtIso);
+  if (Number.isNaN(date.getTime())) return "Date unknown";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: PHOENIX_TZ,
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
