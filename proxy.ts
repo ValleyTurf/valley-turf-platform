@@ -129,6 +129,8 @@ const CRON_PATHS = [
   "/api/ops/send-daily-digest",
   // Weekly automatic data backup (lib/backup.ts) -- Sunday early morning.
   "/api/ops/weekly-backup",
+  // Hourly watchdog that alerts when another scheduled job did not run.
+  "/api/ops/check-scheduled-jobs",
 ];
 
 // The customer portal is a completely separate auth world from the staff

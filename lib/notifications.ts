@@ -1335,6 +1335,17 @@ async function sendStaffAlertEmail(subject: string, html: string): Promise<void>
   }
 }
 
+// Scheduled-job watchdog (lib/cronWatch.ts): one plain email to the alert
+// address when a background job did not run, failed, or recovered.
+export async function sendJobWatchEmail(subject: string, lines: string[]): Promise<void> {
+  const escape = (value: string) =>
+    value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const html = `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.5">${lines
+    .map((line) => `<p>${escape(line)}</p>`)
+    .join("")}</div>`;
+  await sendStaffAlertEmail(subject, html);
+}
+
 async function sendStaffAlertSms(body: string): Promise<void> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;

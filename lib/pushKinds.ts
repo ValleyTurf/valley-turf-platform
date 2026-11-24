@@ -15,7 +15,8 @@ export type PushKind =
   | "missed_call"
   | "payment_received"
   | "autopay_failed"
-  | "low_rating";
+  | "low_rating"
+  | "job_problem";
 
 export type PushRole = "admin" | "manager" | "staff";
 
@@ -60,6 +61,12 @@ export const PUSH_KINDS: {
     label: "Low ratings",
     description: "A customer rates a visit 4 stars or below.",
     roles: ["admin", "manager"],
+  },
+  {
+    kind: "job_problem",
+    label: "Scheduled job problems",
+    description: "A background job (autopay charges, reminders, invoice sends, backups) did not run or failed.",
+    roles: ["admin"],
   },
 ];
 

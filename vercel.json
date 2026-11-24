@@ -69,6 +69,10 @@
       "schedule": "10 14 * * *"
     },
     {
+      "path": "/api/ops/check-scheduled-jobs",
+      "schedule": "25 * * * *"
+    },
+    {
       "path": "/api/ops/weekly-backup",
       "schedule": "20 10 * * 0"
     }

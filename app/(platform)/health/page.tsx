@@ -4,6 +4,7 @@ export const revalidate = 0;
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { listRecentPageErrors } from "@/lib/pageErrors";
+import { evaluateAllJobs } from "@/lib/cronWatch";
 
 type CheckStatus = "pass" | "warn" | "fail";
 
@@ -406,6 +407,49 @@ async function checkPageErrors(): Promise<Check> {
   };
 }
 
+// Every scheduled job, judged against how often vercel.json says it should
+// run (lib/cronWatch.ts). The hourly watchdog alerts on the same verdicts.
+async function checkScheduledJobs(): Promise<Check> {
+  let reports;
+
+  try {
+    reports = await evaluateAllJobs();
+  } catch (error) {
+    return {
+      name: "Scheduled jobs",
+      status: "warn",
+      detail: `Couldn't read job history: ${error instanceof Error ? error.message : "unknown error"}`,
+    };
+  }
+
+  const problems = reports.filter((r) => ["late", "failed", "stuck"].includes(r.evaluation.state));
+  const notRunYet = reports.filter((r) => r.evaluation.state === "never");
+
+  if (problems.length > 0) {
+    return {
+      name: "Scheduled jobs",
+      status: "fail",
+      detail: problems.map((r) => `${r.job.label}: ${r.evaluation.detail}`).join(" "),
+      hint: "You are also alerted by push and email. Check the job's cron in Vercel and the audit log for the error.",
+    };
+  }
+
+  if (notRunYet.length > 0) {
+    return {
+      name: "Scheduled jobs",
+      status: "warn",
+      detail: `${notRunYet.map((r) => r.job.label).join(", ")} ${notRunYet.length === 1 ? "has" : "have"} not run yet. All others ran on time.`,
+      hint: "Normal right after a new job is added. It clears after the job's first run.",
+    };
+  }
+
+  return {
+    name: "Scheduled jobs",
+    status: "pass",
+    detail: `All ${reports.length} scheduled jobs ran on time.`,
+  };
+}
+
 async function checkWeeklyBackup(): Promise<Check> {
   const { data, error } = await supabaseServer
     .from("jobber_sync_runs")
@@ -485,6 +529,7 @@ export default async function HealthPage() {
     checkSyncFreshness(),
     checkJobberSyncStatus(),
     checkWeeklyBackup(),
+    checkScheduledJobs(),
     checkPageErrors(),
   ]);
 
