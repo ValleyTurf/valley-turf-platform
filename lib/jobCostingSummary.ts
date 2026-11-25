@@ -3,6 +3,7 @@ import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
 import { isLaborMaterialName, parseLaborEmployeeName } from "@/lib/laborMaterialName";
 import { toNumber } from "@/lib/format";
+import { dropVoidInvoices } from "@/lib/voidInvoiceFilter";
 
 // Extracted out of app/(platform)/job-costing-analytics/page.tsx so the
 // same profitability-by-category engine can be reused by anything else
@@ -558,6 +559,37 @@ export async function fetchCostBreakdownForInvoices(
 // same in-memory set by date range for whatever timeframe they need,
 // avoiding a second round trip through the view for what's a small
 // dataset at this business's scale.
+// The invoice_cost_breakdown view still includes voided invoices (an
+// invoice deleted in Jobber is now marked void here instead of removed, so
+// its history is kept). Job costing should only count real revenue, so
+// anything void is dropped from every job-costing read. Optionally scoped
+// to one customer.
+export async function fetchVoidInvoiceIds(jobberClientId?: string): Promise<Set<string>> {
+  const ids = new Set<string>();
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    let query = supabaseServer
+      .from("jobber_invoices")
+      .select("jobber_invoice_id")
+      .ilike("status", "void%");
+
+    if (jobberClientId) {
+      query = query.eq("jobber_client_id", jobberClientId);
+    }
+
+    const { data, error } = await query.range(from, from + pageSize - 1);
+
+    if (error) throw error;
+
+    for (const row of data ?? []) ids.add(row.jobber_invoice_id as string);
+
+    if ((data ?? []).length < pageSize) break;
+  }
+
+  return ids;
+}
+
 export async function fetchAllInvoiceCosts(): Promise<InvoiceCostRow[]> {
   const pageSize = 1000;
   const rows: InvoiceCostRow[] = [];
@@ -578,7 +610,7 @@ export async function fetchAllInvoiceCosts(): Promise<InvoiceCostRow[]> {
     if (batch.length < pageSize) break;
   }
 
-  return rows;
+  return dropVoidInvoices(rows, await fetchVoidInvoiceIds());
 }
 
 export function filterRowsByRange(
@@ -646,7 +678,10 @@ export async function getCustomerJobCostingSummary(
 
   if (error) throw error;
 
-  const allRows = (data ?? []) as InvoiceCostRow[];
+  const allRows = dropVoidInvoices(
+    (data ?? []) as InvoiceCostRow[],
+    await fetchVoidInvoiceIds(jobberClientId)
+  );
   const rows = filterRowsByRange(allRows, startDate, endDate);
   const costBreakdowns = await fetchCostBreakdownForInvoices(rows);
 

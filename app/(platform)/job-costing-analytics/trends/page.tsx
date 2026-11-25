@@ -3,6 +3,8 @@ export const revalidate = 0;
 
 import { supabaseServer } from "@/lib/supabase-server";
 import { formatCurrency, formatPercent } from "@/lib/format";
+import { fetchVoidInvoiceIds } from "@/lib/jobCostingSummary";
+import { dropVoidInvoices } from "@/lib/voidInvoiceFilter";
 import {
   buildMonthlyTotals,
   buildSeasonalityGrid,
@@ -25,7 +27,7 @@ async function fetchAllInvoiceCosts(): Promise<InvoiceCostRow[]> {
     const { data, error } = await supabaseServer
       .from("invoice_cost_breakdown")
       .select(
-        "issue_date, revenue, direct_cost, overhead_allocated, estimated_profit"
+        "jobber_invoice_id, issue_date, revenue, direct_cost, overhead_allocated, estimated_profit"
       )
       .range(from, from + pageSize - 1);
 
@@ -37,7 +39,8 @@ async function fetchAllInvoiceCosts(): Promise<InvoiceCostRow[]> {
     if (batch.length < pageSize) break;
   }
 
-  return rows;
+  // Voided invoices (e.g. deleted in Jobber) are not real revenue.
+  return dropVoidInvoices(rows, await fetchVoidInvoiceIds());
 }
 
 function getPhoenixToday(): Date {

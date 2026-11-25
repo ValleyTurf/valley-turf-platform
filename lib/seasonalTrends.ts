@@ -7,6 +7,7 @@
 // pattern already used on /job-costing-analytics) and passes them in here.
 
 export type InvoiceCostRow = {
+  jobber_invoice_id?: string | null;
   issue_date: string | null;
   revenue: number | string | null | undefined;
   direct_cost: number | string | null | undefined;
