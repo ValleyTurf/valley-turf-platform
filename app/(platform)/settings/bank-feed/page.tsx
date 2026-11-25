@@ -10,6 +10,7 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import ConnectBankButton from "./ConnectBankButton";
 import SyncButton from "./SyncButton";
+import ReconnectBankButton from "./ReconnectBankButton";
 import { updateTrackedAccounts } from "./actions";
 import { listRules } from "@/lib/expenseRules";
 import { deleteCategoryRule } from "../../expenses/actions";
@@ -344,6 +345,10 @@ export default async function BankFeedSettingsPage() {
                     >
                       {connection.last_error}
                     </div>
+                  ) : null}
+
+                  {connection.status === "error" ? (
+                    <ReconnectBankButton connectionId={connection.id} />
                   ) : null}
 
                   <SyncButton disabled={connection.status !== "active"} />
