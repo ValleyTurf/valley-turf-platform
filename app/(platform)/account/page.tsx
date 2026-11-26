@@ -6,7 +6,7 @@ import ChangePasswordForm from "./ChangePasswordForm";
 import NotificationsSection from "./NotificationsSection";
 import { supabaseServer } from "@/lib/supabase-server";
 import { pushKindsForRole } from "@/lib/pushKinds";
-import { savePushPreferences } from "./actions";
+import { savePushPreferences, saveMyPhone } from "./actions";
 
 export default async function AccountPage() {
   const user = await getCurrentUser();
@@ -20,6 +20,13 @@ export default async function AccountPage() {
         .eq("user_id", user.id)
         .maybeSingle()
     : { data: null };
+
+  // Own cell number for CRM calling (migration 121). A missing column or a
+  // failed lookup just shows an empty field.
+  const { data: phoneRow } = user
+    ? await supabaseServer.from("users").select("phone").eq("id", user.id).maybeSingle()
+    : { data: null };
+  const myPhone = (phoneRow?.phone as string | null | undefined) ?? "";
 
   const disabledKinds = new Set<string>(
     (preferenceRow?.disabled_kinds as string[] | null) ?? []
@@ -51,6 +58,32 @@ export default async function AccountPage() {
               <span className="font-bold">Role:</span> {user?.role}
             </p>
           </div>
+        </section>
+
+        <section className="mt-6 rounded-2xl bg-white p-5 shadow">
+          <h2 className="text-lg font-bold">My Cell Number</h2>
+
+          <p className="mt-1 text-sm text-[#174734]/70">
+            When you tap Call on a customer, the business number rings this
+            phone first, then connects you to the customer, who sees the
+            business number instead of yours.
+          </p>
+
+          <form action={saveMyPhone} className="mt-3 flex gap-2">
+            <input
+              name="phone"
+              type="tel"
+              defaultValue={myPhone}
+              placeholder="(480) 555-0123"
+              className="min-w-0 flex-1 rounded-xl border border-[#d9dad2] px-3 py-2 text-sm"
+            />
+            <button
+              type="submit"
+              className="rounded-xl bg-[#174734] px-4 py-2 text-sm font-bold text-white"
+            >
+              Save
+            </button>
+          </form>
         </section>
 
         <section className="mt-6 rounded-2xl bg-white p-5 shadow">

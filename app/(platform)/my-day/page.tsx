@@ -27,6 +27,7 @@ import { completeVisit } from "./actions";
 import VisitTimer from "./VisitTimer";
 import VisitNoteForm from "./VisitNoteForm";
 import OnWayButton from "./OnWayButton";
+import CallButton from "./CallButton";
 import JobCostQuickEntryForm from "./JobCostQuickEntryForm";
 // Reused as-is from /invoices/create, not reimplemented -- same card,
 // same createInvoice/dismissVisitInvoice server actions (imported by
@@ -1066,18 +1067,27 @@ export default async function MyDayPage({ searchParams }: MyDayPageProps) {
 
                   {contact?.phone && (
                     <div className="mt-2 flex gap-2">
-                      <a
-                        href={`sms:${contact.phone}`}
-                        className="flex-1 rounded-xl bg-[#174734] px-4 py-2.5 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
-                      >
-                        Message
-                      </a>
-                      <a
-                        href={`tel:${contact.phone}`}
-                        className="flex-1 rounded-xl border border-[#174734] px-4 py-2.5 text-center text-sm font-bold transition hover:bg-[#f7f6f1]"
-                      >
-                        Call
-                      </a>
+                      {visit.jobber_client_id ? (
+                        <>
+                          {/* Opens the CRM thread so the text goes out
+                              from the business number (Twilio), not the
+                              phone's own Messages app. */}
+                          <a
+                            href={`/messages/${encodeURIComponent(visit.jobber_client_id)}`}
+                            className="flex-1 rounded-xl bg-[#174734] px-4 py-2.5 text-center text-sm font-bold text-white transition hover:bg-[#226246]"
+                          >
+                            Message
+                          </a>
+                          <CallButton jobberClientId={visit.jobber_client_id} />
+                        </>
+                      ) : (
+                        <a
+                          href={`tel:${contact.phone}`}
+                          className="flex-1 rounded-xl border border-[#174734] px-4 py-2.5 text-center text-sm font-bold transition hover:bg-[#f7f6f1]"
+                        >
+                          Call
+                        </a>
+                      )}
                     </div>
                   )}
 

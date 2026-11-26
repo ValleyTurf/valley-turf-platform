@@ -7,6 +7,7 @@ import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
 import type { ChangePasswordState } from "./actionState";
 import { pushKindsForRole } from "@/lib/pushKinds";
+import { toE164 } from "@/lib/outboundCallLogic";
 
 export async function changeOwnPassword(
   _prevState: ChangePasswordState,
@@ -98,6 +99,30 @@ export async function savePushPreferences(formData: FormData): Promise<void> {
 
   if (error) {
     throw new Error(`Couldn't save notification settings: ${error.message}`);
+  }
+
+  revalidatePath("/account");
+}
+
+
+// The signed-in person's own cell number, used by "Call" in the CRM (the
+// business number rings this phone, then connects to the customer).
+export async function saveMyPhone(formData: FormData): Promise<void> {
+  const user = await getCurrentUser();
+
+  if (!user) return;
+
+  const raw = String(formData.get("phone") ?? "").trim();
+  const phone = raw ? toE164(raw) : null;
+
+  if (raw && !phone) {
+    throw new Error("Enter a valid phone number, for example (480) 555-0123.");
+  }
+
+  const { error } = await supabaseServer.from("users").update({ phone }).eq("id", user.id);
+
+  if (error) {
+    throw new Error(`Could not save your phone number: ${error.message}`);
   }
 
   revalidatePath("/account");

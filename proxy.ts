@@ -35,6 +35,13 @@ const PUBLIC_PATHS = [
   // Twilio reports each customer text's delivery status here; signature
   // checked inside the route like the inbound webhook above.
   "/api/webhooks/twilio-status",
+  // Twilio fetches these for phone calls (inbound forwarding, and the
+  // second leg of a CRM click-to-call). Both verify X-Twilio-Signature
+  // inside the route. The inbound one was missing from this list, so
+  // Twilio was redirected to /login and incoming calls to the business
+  // number failed.
+  "/api/webhooks/twilio-voice",
+  "/api/webhooks/twilio-voice-outbound",
   "/api/scan-leads",
   // Called by an external automation (Jobber automation / Zapier), not
   // from inside this app. Guards itself internally with its own
