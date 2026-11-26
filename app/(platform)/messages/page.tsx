@@ -5,6 +5,9 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
 import NewMessageButton from "./NewMessageButton";
+import VoicemailsPanel from "./VoicemailsPanel";
+import UnknownContactsPanel from "./UnknownContactsPanel";
+import { listNewUnknownContacts } from "@/lib/unknownContacts";
 import { loadNeedsReply } from "@/lib/needsReply";
 import { formatWaiting } from "@/lib/needsReplyLogic";
 
@@ -105,6 +108,9 @@ export default async function MessagesInboxPage({
   const { view } = await searchParams;
   const needsReplyOnly = view === "needs-reply";
   const waitingThreads = await loadNeedsReply();
+  // Texts, calls and voicemails from numbers that are not a saved customer
+  // (this list was dropped from the page by accident in September).
+  const unknownContacts = await listNewUnknownContacts();
 
   const [messagesResult, requestsResult, inboundMessagesResult, outboundResult] =
     await Promise.all([
@@ -336,6 +342,10 @@ export default async function MessagesInboxPage({
 
           <NewMessageButton />
         </div>
+
+        <VoicemailsPanel />
+
+        <UnknownContactsPanel contacts={unknownContacts} />
 
         <section className="mt-8 rounded-3xl bg-white p-5 shadow sm:p-8">
           <div className="flex items-center justify-between gap-3">
