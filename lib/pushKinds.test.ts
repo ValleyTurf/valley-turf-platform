@@ -45,6 +45,6 @@ describe("pushKinds", () => {
   t("other disabled doesn't affect", shouldReceivePush("missed_call", "admin", ["payment_received"]), true);
   t("no role", shouldReceivePush("customer_message", null, []), false);
   t("kinds for staff", pushKindsForRole("staff").map(k => k.kind), ["customer_message", "unknown_sender", "missed_call"]);
-  t("kinds for admin count", pushKindsForRole("admin").length, 6);
+  t("kinds for admin count", pushKindsForRole("admin").length, 8);
   t("isPushKind", [isPushKind("low_rating"), isPushKind("nope")], [true, false]);
 });

@@ -12,6 +12,7 @@
 export type PushKind =
   | "customer_message"
   | "unknown_sender"
+  | "incoming_call"
   | "missed_call"
   | "payment_received"
   | "autopay_failed"
@@ -37,6 +38,12 @@ export const PUSH_KINDS: {
     label: "Unknown senders",
     description: "A text or email from a number or address that isn't on any customer.",
     roles: ["admin", "manager", "staff"],
+  },
+  {
+    kind: "incoming_call",
+    label: "Incoming calls",
+    description: "A call to the business number is ringing your phone, with who it is.",
+    roles: ["admin"],
   },
   {
     kind: "missed_call",

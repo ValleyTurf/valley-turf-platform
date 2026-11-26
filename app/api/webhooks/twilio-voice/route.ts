@@ -23,7 +23,7 @@
 //      one contact_history/unknown_contacts row gets written, already
 //      carrying the full picture (answered + duration, or missed +
 //      why) instead of needing a separate update afterward.
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import crypto from "crypto";
 import { headers } from "next/headers";
 import {
@@ -194,6 +194,29 @@ export async function POST(request: NextRequest) {
     }
 
     return twimlResponse("<Response></Response>");
+  }
+
+  // Tell the owner who is calling the moment it rings. Runs after the
+  // TwiML response is sent so looking up the customer and sending the push
+  // never delay the call connecting (and a failure here cannot break it).
+  if (fromPhone) {
+    after(async () => {
+      try {
+        const jobberClientId = await findJobberClientIdByPhone(fromPhone);
+        const callerName = await getCustomerDisplayName(jobberClientId);
+
+        await sendPush("incoming_call", {
+          title: `Incoming call: ${callerName ?? fromPhone}`,
+          body: callerName ? fromPhone : "Not a saved customer",
+          url: jobberClientId
+            ? `/customers/${encodeURIComponent(jobberClientId)}`
+            : "/messages",
+          badgeCount: await getUnreadMessageCount().catch(() => 0),
+        });
+      } catch (error) {
+        console.error("Incoming-call push failed:", error);
+      }
+    });
   }
 
   // Phase 1: a fresh incoming call -- forward it straight to Ryan's
