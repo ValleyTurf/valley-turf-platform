@@ -17,6 +17,8 @@ export type UnknownContact = {
   email: string | null;
   summary: string | null;
   createdAt: string;
+  // Twilio recording id when this is a voicemail (migration 122).
+  recordingSid: string | null;
 };
 
 type UnknownContactRow = {
@@ -26,6 +28,7 @@ type UnknownContactRow = {
   email: string | null;
   summary: string | null;
   created_at: string;
+  recording_sid?: string | null;
 };
 
 function mapRow(row: UnknownContactRow): UnknownContact {
@@ -36,6 +39,7 @@ function mapRow(row: UnknownContactRow): UnknownContact {
     email: row.email,
     summary: row.summary,
     createdAt: row.created_at,
+    recordingSid: row.recording_sid ?? null,
   };
 }
 
@@ -51,12 +55,16 @@ export async function logUnknownContact(params: {
   phone?: string | null;
   email?: string | null;
   summary: string | null;
+  recordingSid?: string | null;
 }): Promise<void> {
   const { error } = await supabaseServer.from("unknown_contacts").insert({
     channel: params.channel,
     phone: params.phone ?? null,
     email: params.email ?? null,
     summary: params.summary,
+    // Only sent when there is one, so a missing column (migration 122 not
+    // run yet) never breaks ordinary unknown-sender logging.
+    ...(params.recordingSid ? { recording_sid: params.recordingSid } : {}),
   });
 
   if (error) {
@@ -82,12 +90,26 @@ export async function logUnknownContact(params: {
 // Messages page reads this to show a review queue -- only ever the ones
 // nobody has acted on yet (added as a lead or dismissed).
 export async function listNewUnknownContacts(): Promise<UnknownContact[]> {
-  const { data, error } = await supabaseServer
+  // Try with the voicemail column first; fall back if migration 122 has not
+  // been run yet, so the queue never goes blank.
+  const first = await supabaseServer
     .from("unknown_contacts")
-    .select("id, channel, phone, email, summary, created_at")
+    .select("id, channel, phone, email, summary, created_at, recording_sid")
     .eq("status", "new")
     .order("created_at", { ascending: false })
     .limit(200);
+
+  let data: UnknownContactRow[] | null = first.data as UnknownContactRow[] | null;
+  let error: { message: string } | null = first.error;
+
+  if (error) {
+    ({ data, error } = await supabaseServer
+      .from("unknown_contacts")
+      .select("id, channel, phone, email, summary, created_at")
+      .eq("status", "new")
+      .order("created_at", { ascending: false })
+      .limit(200));
+  }
 
   if (error) {
     console.error("listNewUnknownContacts failed:", error.message);

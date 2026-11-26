@@ -42,6 +42,7 @@ const PUBLIC_PATHS = [
   // number failed.
   "/api/webhooks/twilio-voice",
   "/api/webhooks/twilio-voice-outbound",
+  "/api/webhooks/twilio-voicemail",
   "/api/scan-leads",
   // Called by an external automation (Jobber automation / Zapier), not
   // from inside this app. Guards itself internally with its own

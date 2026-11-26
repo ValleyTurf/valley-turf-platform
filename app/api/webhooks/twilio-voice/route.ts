@@ -34,6 +34,13 @@ import {
 import { sendPush } from "@/lib/webPush";
 import { findJobberClientIdByPhone } from "@/lib/customerContacts";
 import { logUnknownContact } from "@/lib/unknownContacts";
+import { getBusiness } from "@/lib/business";
+import {
+  VOICEMAIL_RING_SECONDS,
+  shouldTakeVoicemail,
+  voicemailGreeting,
+  voicemailTwiml,
+} from "@/lib/voicemailLogic";
 
 export const dynamic = "force-dynamic";
 
@@ -193,6 +200,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Nobody picked up: let the caller leave a message, saved to the CRM
+    // by app/api/webhooks/twilio-voicemail.
+    if (shouldTakeVoicemail(params.DialCallStatus)) {
+      const biz = await getBusiness();
+      const voicemailUrl = fullUrl.replace(/twilio-voice$/, "twilio-voicemail");
+
+      return twimlResponse(
+        voicemailTwiml({ greeting: voicemailGreeting(biz.name), actionUrl: voicemailUrl })
+      );
+    }
+
     return twimlResponse("<Response></Response>");
   }
 
@@ -225,6 +243,6 @@ export async function POST(request: NextRequest) {
   // the quick TwiML Bin forward this replaces, so nothing changes about
   // what shows up on the phone.
   return twimlResponse(
-    `<Response><Dial action="${fullUrl}" method="POST">${ALERT_PHONE}</Dial></Response>`
+    `<Response><Dial timeout="${VOICEMAIL_RING_SECONDS}" action="${fullUrl}" method="POST">${ALERT_PHONE}</Dial></Response>`
   );
 }

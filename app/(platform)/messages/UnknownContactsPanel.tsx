@@ -119,6 +119,14 @@ export default function UnknownContactsPanel({
                       {contact.summary}
                     </p>
                   ) : null}
+                  {contact.recordingSid ? (
+                    <audio
+                      controls
+                      preload="none"
+                      src={`/api/voicemail/${contact.recordingSid}`}
+                      className="mt-2 h-9 w-full max-w-xs"
+                    />
+                  ) : null}
                   <p className="mt-1 text-xs text-[#9c9887]">
                     {formatTimestamp(contact.createdAt)}
                   </p>

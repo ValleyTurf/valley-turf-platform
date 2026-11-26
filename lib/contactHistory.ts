@@ -251,6 +251,9 @@ export type ContactHistoryEntry = {
   deliveryErrorCode: string | null;
   createdByName: string | null;
   createdAt: string;
+  // "voicemail" + the Twilio recording id for a saved voicemail.
+  relatedType?: string | null;
+  relatedId?: string | null;
 };
 
 type ContactHistoryRow = {
@@ -265,6 +268,8 @@ type ContactHistoryRow = {
   delivery_error_code: string | null;
   created_by_name: string | null;
   created_at: string;
+  related_type?: string | null;
+  related_id?: string | null;
 };
 
 type PortalMessageRow = {
@@ -282,7 +287,7 @@ export async function getContactHistoryForCustomer(
     supabaseServer
       .from("contact_history")
       .select(
-        "id, channel, direction, subject, summary, opened_at, delivered_at, delivery_status, delivery_error_code, created_by_name, created_at"
+        "id, channel, direction, subject, summary, opened_at, delivered_at, delivery_status, delivery_error_code, created_by_name, created_at, related_type, related_id"
       )
       .eq("jobber_client_id", jobberClientId)
       .order("created_at", { ascending: false })
@@ -311,6 +316,8 @@ export async function getContactHistoryForCustomer(
     deliveryErrorCode: row.delivery_error_code,
     createdByName: row.created_by_name,
     createdAt: row.created_at,
+    relatedType: row.related_type ?? null,
+    relatedId: row.related_id ?? null,
   }));
 
   const chatEntries: ContactHistoryEntry[] = messageRows.map((row) => ({

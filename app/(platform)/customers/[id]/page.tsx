@@ -3579,6 +3579,15 @@ export default async function CustomerDetailPage({
                         </p>
                       )}
 
+                      {entry.relatedType === "voicemail" && entry.relatedId ? (
+                        <audio
+                          controls
+                          preload="none"
+                          src={`/api/voicemail/${entry.relatedId}`}
+                          className="mt-2 h-9 w-full max-w-xs"
+                        />
+                      ) : null}
+
                       <p className="mt-1 text-xs font-semibold text-[#9c7a20]">
                         {entry.createdByName ? `${entry.createdByName} · ` : ""}
                         {formatContactHistoryTimestamp(entry.createdAt)}
