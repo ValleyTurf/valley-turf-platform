@@ -110,8 +110,8 @@ export default async function MessagesInboxPage({
 }) {
   const { view } = await searchParams;
   const needsReplyOnly = view === "needs-reply";
-  const tab: "inbox" | "needs-reply" | "calls" | "sent" =
-    view === "needs-reply" || view === "calls" || view === "sent" ? view : "inbox";
+  const tab: "inbox" | "needs-reply" | "sent" =
+    view === "needs-reply" || view === "sent" ? view : "inbox";
   const waitingThreads = await loadNeedsReply();
   // Texts, calls and voicemails from numbers that are not a saved customer
   // (this list was dropped from the page by accident in September).
@@ -332,163 +332,183 @@ export default async function MessagesInboxPage({
 
   const unreadTotal = allInboxRows.reduce((sum, row) => sum + row.unreadCount, 0);
   const callbackCount = countNeedingCallback(callLog, now);
+  const textUnknowns = unknownContacts.filter((c) => c.channel !== "call");
 
-  const tabs: Array<{ key: typeof tab; label: string; href: string; count: number }> = [
-    { key: "inbox", label: "Inbox", href: "/messages", count: unreadTotal },
+  const chips: Array<{ key: typeof tab; label: string; href: string; count: number }> = [
+    { key: "inbox", label: "All", href: "/messages", count: unreadTotal },
     { key: "needs-reply", label: "Needs reply", href: "/messages?view=needs-reply", count: waitingCount },
-    { key: "calls", label: "Calls & voicemails", href: "/messages?view=calls", count: callbackCount },
     { key: "sent", label: "Sent today", href: "/messages?view=sent", count: sentToday.length },
   ];
 
+  // Each column scrolls on its own, so the page itself never turns into
+  // one long list.
+  const columnBody = "mt-3 max-h-[70vh] overflow-y-auto lg:max-h-[calc(100vh-13rem)]";
+
   return (
     <main className="min-h-screen bg-[#f5f4ef] px-4 py-5 text-[#174734] sm:px-6 sm:py-6">
-      <div className="mx-auto max-w-4xl">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="mx-auto max-w-6xl">
+        <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold">Customer Connections</h1>
             <p className="mt-0.5 text-sm text-[#6b705c]">
-              Texts, emails, chats, calls and voicemails in one place.
+              Phone on the left, texts and email on the right.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-start gap-2">
-            <DialPad />
-            <NewMessageButton />
-          </div>
+          <NewMessageButton />
         </div>
 
-        <nav className="mt-4 flex flex-wrap gap-2">
-          {tabs.map((t) => (
-            <Link
-              key={t.key}
-              href={t.href}
-              className={`rounded-full border px-3.5 py-1.5 text-sm font-bold transition ${
-                tab === t.key
-                  ? "border-[#174734] bg-[#174734] text-white"
-                  : "border-[#d8d3c6] text-[#174734] hover:border-[#9c7a20]"
-              }`}
-            >
-              {t.label}
-              {t.count > 0 ? (
-                <span
-                  className={`ml-1.5 rounded-full px-1.5 py-0.5 text-xs ${
-                    tab === t.key ? "bg-white/20" : "bg-[#faf4e3] text-[#9c7a20]"
-                  }`}
-                >
-                  {t.count}
-                </span>
-              ) : null}
-            </Link>
-          ))}
-        </nav>
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          {/* Phone */}
+          <section className="rounded-2xl bg-white p-4 shadow">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-base font-bold">
+                Phone
+                {callbackCount > 0 ? (
+                  <span className="ml-2 rounded-full bg-[#fbe9e7] px-2 py-0.5 text-xs font-bold text-[#9a2f22]">
+                    {callbackCount} to call back
+                  </span>
+                ) : null}
+              </h2>
 
-        {tab === "calls" ? (
-          <section className="mt-3 rounded-2xl bg-white p-4 shadow">
-            <CallLogList entries={callLog} />
+              <DialPad />
+            </div>
+
+            <div className={columnBody}>
+              <CallLogList entries={callLog} />
+            </div>
           </section>
-        ) : null}
 
-        {tab === "sent" ? (
-          <section className="mt-3 rounded-2xl bg-white p-4 shadow">
-            {sentToday.length === 0 ? (
-              <p className="rounded-xl bg-[#f7f6f1] p-3 text-sm text-[#6b705c]">
-                Nothing sent out yet today.
-              </p>
-            ) : (
-              <div className="divide-y divide-[#efebdf]">
-                {sentToday.map((row, index) => {
-                  const icon = row.channel === "sms" ? "💬" : "✉️";
-                  const time = new Intl.DateTimeFormat("en-US", {
-                    timeZone: "America/Phoenix",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  }).format(new Date(row.createdAt));
+          {/* Text & Email */}
+          <section className="rounded-2xl bg-white p-4 shadow">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-base font-bold">Text &amp; Email</h2>
 
-                  const content = (
-                    <div className="flex items-center justify-between gap-3 py-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-bold">
-                          {icon} {row.customerName}
-                        </p>
-                        <p className="truncate text-xs text-[#6b705c]">{row.subject}</p>
-                      </div>
-                      <span className="shrink-0 text-xs text-[#9c9887]">{time}</span>
-                    </div>
-                  );
+              <nav className="flex flex-wrap gap-1.5">
+                {chips.map((chip) => (
+                  <Link
+                    key={chip.key}
+                    href={chip.href}
+                    className={`rounded-full border px-3 py-1 text-xs font-bold transition ${
+                      tab === chip.key
+                        ? "border-[#174734] bg-[#174734] text-white"
+                        : "border-[#d8d3c6] text-[#174734] hover:border-[#9c7a20]"
+                    }`}
+                  >
+                    {chip.label}
+                    {chip.count > 0 ? (
+                      <span
+                        className={`ml-1 rounded-full px-1.5 text-[11px] ${
+                          tab === chip.key ? "bg-white/20" : "bg-[#faf4e3] text-[#9c7a20]"
+                        }`}
+                      >
+                        {chip.count}
+                      </span>
+                    ) : null}
+                  </Link>
+                ))}
+              </nav>
+            </div>
 
-                  return row.jobberClientId ? (
-                    <Link
-                      key={`${row.jobberClientId}-${row.createdAt}-${index}`}
-                      href={`/messages/${encodeURIComponent(row.jobberClientId)}`}
-                      className="block transition hover:opacity-80"
-                    >
-                      {content}
-                    </Link>
-                  ) : (
-                    <div key={`unlinked-${row.createdAt}-${index}`}>{content}</div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-        ) : null}
+            <div className={columnBody}>
+              {tab === "sent" ? (
+                sentToday.length === 0 ? (
+                  <p className="rounded-xl bg-[#f7f6f1] p-3 text-sm text-[#6b705c]">
+                    Nothing sent out yet today.
+                  </p>
+                ) : (
+                  <div className="divide-y divide-[#efebdf]">
+                    {sentToday.map((row, index) => {
+                      const icon = row.channel === "sms" ? "💬" : "✉️";
+                      const time = new Intl.DateTimeFormat("en-US", {
+                        timeZone: "America/Phoenix",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      }).format(new Date(row.createdAt));
 
-        {tab === "inbox" || tab === "needs-reply" ? (
-          <>
-            {tab === "inbox" ? <UnknownContactsPanel contacts={unknownContacts} /> : null}
-
-            <section className="mt-3 rounded-2xl bg-white p-3 shadow sm:p-4">
-              {inboxRows.length === 0 ? (
-                <p className="rounded-xl bg-[#f7f6f1] p-4 text-sm text-[#6b705c]">
-                  {needsReplyOnly ? "Everyone has been answered." : "No messages yet."}
-                </p>
-              ) : (
-                <div className="divide-y divide-[#efebdf]">
-                  {inboxRows.map((row) => (
-                    <Link
-                      key={row.jobberClientId}
-                      href={`/messages/${encodeURIComponent(row.jobberClientId)}`}
-                      className="flex items-center justify-between gap-3 px-1 py-2.5 transition hover:bg-[#faf9f4]"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-bold">{row.customerName}</p>
-                        {row.lastMessagePreview ? (
-                          <p className="truncate text-xs text-[#6b705c]">{row.lastMessagePreview}</p>
-                        ) : null}
-                      </div>
-
-                      <div className="flex shrink-0 flex-col items-end gap-1">
-                        <span className="text-xs text-[#9c9887]">
-                          {formatInboxTimestamp(row.lastActivityAt, todayPhoenix)}
-                        </span>
-
-                        <div className="flex items-center gap-1.5">
-                          {row.openRequestCount > 0 ? (
-                            <span className="rounded-full bg-[#faf4e3] px-2 py-0.5 text-xs font-bold text-[#9c7a20]">
-                              {row.openRequestCount} request{row.openRequestCount === 1 ? "" : "s"}
-                            </span>
-                          ) : null}
-
-                          {row.waitingSince ? (
-                            <span className="rounded-full bg-[#faf4e3] px-2 py-0.5 text-xs font-bold text-[#9c7a20]">
-                              Waiting {formatWaiting(row.waitingSince, now)}
-                            </span>
-                          ) : null}
-
-                          {row.unreadCount > 0 ? (
-                            <span className="rounded-full bg-[#174734] px-2 py-0.5 text-xs font-bold text-white">
-                              {row.unreadCount} unread
-                            </span>
-                          ) : null}
+                      const content = (
+                        <div className="flex items-center justify-between gap-3 py-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-bold">
+                              {icon} {row.customerName}
+                            </p>
+                            <p className="truncate text-xs text-[#6b705c]">{row.subject}</p>
+                          </div>
+                          <span className="shrink-0 text-xs text-[#9c9887]">{time}</span>
                         </div>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
+                      );
+
+                      return row.jobberClientId ? (
+                        <Link
+                          key={`${row.jobberClientId}-${row.createdAt}-${index}`}
+                          href={`/messages/${encodeURIComponent(row.jobberClientId)}`}
+                          className="block transition hover:opacity-80"
+                        >
+                          {content}
+                        </Link>
+                      ) : (
+                        <div key={`unlinked-${row.createdAt}-${index}`}>{content}</div>
+                      );
+                    })}
+                  </div>
+                )
+              ) : (
+                <>
+                  {tab === "inbox" ? <UnknownContactsPanel contacts={textUnknowns} /> : null}
+
+                  {inboxRows.length === 0 ? (
+                    <p className="rounded-xl bg-[#f7f6f1] p-4 text-sm text-[#6b705c]">
+                      {needsReplyOnly ? "Everyone has been answered." : "No messages yet."}
+                    </p>
+                  ) : (
+                    <div className="divide-y divide-[#efebdf]">
+                      {inboxRows.map((row) => (
+                        <Link
+                          key={row.jobberClientId}
+                          href={`/messages/${encodeURIComponent(row.jobberClientId)}`}
+                          className="flex items-center justify-between gap-3 px-1 py-2.5 transition hover:bg-[#faf9f4]"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-bold">{row.customerName}</p>
+                            {row.lastMessagePreview ? (
+                              <p className="truncate text-xs text-[#6b705c]">{row.lastMessagePreview}</p>
+                            ) : null}
+                          </div>
+
+                          <div className="flex shrink-0 flex-col items-end gap-1">
+                            <span className="text-xs text-[#9c9887]">
+                              {formatInboxTimestamp(row.lastActivityAt, todayPhoenix)}
+                            </span>
+
+                            <div className="flex items-center gap-1.5">
+                              {row.openRequestCount > 0 ? (
+                                <span className="rounded-full bg-[#faf4e3] px-2 py-0.5 text-xs font-bold text-[#9c7a20]">
+                                  {row.openRequestCount} request{row.openRequestCount === 1 ? "" : "s"}
+                                </span>
+                              ) : null}
+
+                              {row.waitingSince ? (
+                                <span className="rounded-full bg-[#faf4e3] px-2 py-0.5 text-xs font-bold text-[#9c7a20]">
+                                  Waiting {formatWaiting(row.waitingSince, now)}
+                                </span>
+                              ) : null}
+
+                              {row.unreadCount > 0 ? (
+                                <span className="rounded-full bg-[#174734] px-2 py-0.5 text-xs font-bold text-white">
+                                  {row.unreadCount} unread
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
-            </section>
-          </>
-        ) : null}
+            </div>
+          </section>
+        </div>
       </div>
     </main>
   );

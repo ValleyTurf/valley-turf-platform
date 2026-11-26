@@ -27,7 +27,7 @@ export default function DialPad() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-xl border border-[#174734] px-5 py-3 text-sm font-bold text-[#174734] transition hover:bg-[#f7f6f1]"
+        className="rounded-xl bg-[#174734] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#226246]"
       >
         Dial
       </button>
@@ -35,7 +35,7 @@ export default function DialPad() {
   }
 
   return (
-    <div className="w-full rounded-2xl border border-[#e7e2d5] bg-white p-4 shadow sm:w-72">
+    <div className="w-full rounded-2xl border border-[#e7e2d5] bg-[#faf9f4] p-3 sm:max-w-xs">
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm font-bold">Dial a number</p>
         <button

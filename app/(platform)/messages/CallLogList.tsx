@@ -5,6 +5,7 @@ import Link from "next/link";
 import BusinessCallButton from "@/app/components/BusinessCallButton";
 import { callKindLabel, needsCallback } from "@/lib/callLogLogic";
 import type { CallLogEntry } from "@/lib/callLog";
+import UnknownCallActions from "./UnknownCallActions";
 
 function formatTimestamp(iso: string): string {
   const date = new Date(iso);
@@ -82,6 +83,10 @@ export default function CallLogList({ entries }: { entries: CallLogEntry[] }) {
                     Call back
                   </BusinessCallButton>
                 ) : null
+              ) : null}
+
+              {entry.id.startsWith("u-") ? (
+                <UnknownCallActions contactId={entry.id.slice(2)} />
               ) : null}
             </div>
 

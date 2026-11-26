@@ -78,21 +78,19 @@ export default function UnknownContactsPanel({
   }
 
   return (
-    <section className="mt-6 rounded-3xl bg-white p-5 shadow sm:p-8">
+    <section className="mb-3 rounded-xl border border-[#e7e2d5] bg-[#faf9f4] p-3">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-bold">Unknown senders</h2>
+        <h2 className="text-sm font-bold">Unknown senders</h2>
         <span className="text-xs font-semibold text-[#9c7a20]">
           {visible.length} to review
         </span>
       </div>
 
-      <p className="mt-2 text-sm text-[#6b705c]">
-        Texts, calls, and emails from a phone number or address that
-        doesn&apos;t match anyone on file. Could be a new prospect -- add
-        them as a lead, or dismiss if it&apos;s spam or a wrong number.
+      <p className="mt-1 text-xs text-[#6b705c]">
+        Not on file. Add as a lead, or dismiss if it&apos;s spam.
       </p>
 
-      <div className="mt-4 space-y-2">
+      <div className="mt-2 space-y-1.5">
         {visible.map((contact) => {
           const icon =
             contact.channel === "sms"
@@ -107,7 +105,7 @@ export default function UnknownContactsPanel({
           return (
             <div
               key={contact.id}
-              className="rounded-2xl border border-[#e7e2d5] px-4 py-3"
+              className="rounded-xl border border-[#e7e2d5] bg-white px-3 py-2"
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0">

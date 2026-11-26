@@ -78,8 +78,8 @@ export async function POST(request: NextRequest) {
   await sendPush("missed_call", {
     title: `Voicemail from ${callerName ?? fromPhone}`,
     body: `${length} -- tap to listen`,
-    // Lands on the Calls & voicemails tab, where it can be played.
-    url: "/messages?view=calls",
+    // Messages shows the Phone column with the voicemail and a play button.
+    url: "/messages",
     badgeCount: await getUnreadMessageCount().catch(() => 0),
   });
 

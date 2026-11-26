@@ -13,10 +13,9 @@
 //
 // Two-phase design, one route: Twilio hits this URL twice per call.
 //   1. The call first comes in -- no DialCallStatus param yet. We answer
-//      with TwiML that forwards the call to ALERT_PHONE (the same
-//      number lib/notifications.ts already texts/calls for low-rating
-//      and new-lead alerts), via a <Dial> whose own action= points back
-//      at this exact URL.
+//      with TwiML that rings the cell saved on each admin's Account page
+//      (lib/callForwarding.ts; ALERT_PHONE only if none is saved), via a
+//      <Dial> whose own action= points back at this exact URL.
 //   2. When that <Dial> resolves (answered, no answer, busy, failed),
 //      Twilio POSTs here again -- this time WITH DialCallStatus. That's
 //      the only point we actually know the outcome, so that's where the
@@ -35,6 +34,8 @@ import { sendPush } from "@/lib/webPush";
 import { findJobberClientIdByPhone } from "@/lib/customerContacts";
 import { logUnknownContact } from "@/lib/unknownContacts";
 import { getBusiness } from "@/lib/business";
+import { getForwardingNumbers } from "@/lib/callForwarding";
+import { forwardTwiml } from "@/lib/callForwardingLogic";
 import {
   VOICEMAIL_RING_SECONDS,
   shouldTakeVoicemail,
@@ -48,7 +49,6 @@ export const dynamic = "force-dynamic";
 // reach Ryan directly for low-rating/new-lead alerts -- one "where do
 // urgent things reach a real person" number for the whole app rather
 // than a second, parallel setting just for call forwarding.
-const ALERT_PHONE = process.env.ALERT_PHONE || "+14803314596";
 
 function verifyTwilioSignature(
   authToken: string,
@@ -172,7 +172,7 @@ export async function POST(request: NextRequest) {
         await sendPush("missed_call", {
           title: `Missed call: ${callerName ?? fromPhone}`,
           body: callerName ? `${fromPhone} -- ${outcome}` : outcome,
-          url: "/messages?view=calls",
+          url: "/messages",
           badgeCount: await getUnreadMessageCount().catch(() => 0),
         });
       }
@@ -240,7 +240,9 @@ export async function POST(request: NextRequest) {
   // Twilio number itself, not the original caller's number) -- same as
   // the quick TwiML Bin forward this replaces, so nothing changes about
   // what shows up on the phone.
+  const numbers = await getForwardingNumbers();
+
   return twimlResponse(
-    `<Response><Dial timeout="${VOICEMAIL_RING_SECONDS}" action="${fullUrl}" method="POST">${ALERT_PHONE}</Dial></Response>`
+    forwardTwiml({ numbers, timeout: VOICEMAIL_RING_SECONDS, actionUrl: fullUrl })
   );
 }

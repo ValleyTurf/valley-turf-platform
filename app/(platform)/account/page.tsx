@@ -66,7 +66,8 @@ export default async function AccountPage() {
           <p className="mt-1 text-sm text-[#174734]/70">
             When you tap Call on a customer, the business number rings this
             phone first, then connects you to the customer, who sees the
-            business number instead of yours.
+            business number instead of yours. For owners, calls to the
+            business number also ring this phone.
           </p>
 
           <form action={saveMyPhone} className="mt-3 flex gap-2">
