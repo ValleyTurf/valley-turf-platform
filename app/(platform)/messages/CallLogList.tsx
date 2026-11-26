@@ -32,7 +32,7 @@ export default function CallLogList({ entries }: { entries: CallLogEntry[] }) {
   if (entries.length === 0) {
     return (
       <p className="rounded-2xl bg-[#f7f6f1] p-4 text-sm text-[#6b705c]">
-        No calls or voicemails yet.
+        No calls or voicemails in the last 14 days.
       </p>
     );
   }
@@ -101,6 +101,9 @@ export default function CallLogList({ entries }: { entries: CallLogEntry[] }) {
           </div>
         );
       })}
+      <p className="pt-3 text-center text-xs text-[#9c9887]">
+        Showing the last 14 days. Older calls are on each customer&apos;s page.
+      </p>
     </div>
   );
 }

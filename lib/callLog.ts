@@ -17,12 +17,19 @@ export type CallLogEntry = {
   createdAt: string;
 };
 
-export async function loadCallLog(limit = 40): Promise<CallLogEntry[]> {
+// Calls older than this drop off the Messages page (they stay on each
+// customer's own history).
+export const CALL_LOG_DAYS = 14;
+
+export async function loadCallLog(limit = 40, now: Date = new Date()): Promise<CallLogEntry[]> {
+  const cutoff = new Date(now.getTime() - CALL_LOG_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
   const [historyResult, unknown] = await Promise.all([
     supabaseServer
       .from("contact_history")
       .select("id, jobber_client_id, direction, summary, related_type, related_id, created_at")
       .eq("channel", "call")
+      .gte("created_at", cutoff)
       .order("created_at", { ascending: false })
       .limit(limit),
     listNewUnknownContacts().catch(() => []),
@@ -58,7 +65,7 @@ export async function loadCallLog(limit = 40): Promise<CallLogEntry[]> {
     createdAt: r.created_at as string,
   }));
 
-  for (const u of unknown.filter((c) => c.channel === "call")) {
+  for (const u of unknown.filter((c) => c.channel === "call" && c.createdAt >= cutoff)) {
     entries.push({
       id: `u-${u.id}`,
       kind: classifyCall({ direction: "inbound", relatedType: u.recordingSid ? "voicemail" : null, summary: u.summary }),
