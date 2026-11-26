@@ -8,6 +8,7 @@ import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { startBridgedCall } from "@/lib/outboundCall";
 import { toE164 } from "@/lib/outboundCallLogic";
+import { findJobberClientIdByPhone } from "@/lib/customerContacts";
 
 export async function callCustomerViaBusinessLine(
   jobberClientId: string,
@@ -40,8 +41,52 @@ export async function callCustomerViaBusinessLine(
     return { error: "This customer has no usable phone number on file." };
   }
 
-  // The staff member's own cell (Account page). Falls back to the owner's
-  // alert number for admins who have not saved one yet.
+  const staff = await resolveStaffPhone(actor);
+
+  if ("error" in staff) {
+    return { error: staff.error };
+  }
+
+  const result = await startBridgedCall({ staffPhone: staff.phone, customerPhone, jobberClientId });
+
+  return { error: result.ok ? null : result.error };
+}
+
+// Dial pad / call-back: calls any number, saved customer or not. If the
+// number matches a customer the call is logged on their history.
+export async function callNumberViaBusinessLine(
+  rawNumber: string
+): Promise<{ error: string | null }> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    return { error: "You must be signed in." };
+  }
+
+  const customerPhone = toE164(rawNumber);
+
+  if (!customerPhone) {
+    return { error: "Enter a full 10-digit phone number." };
+  }
+
+  const staff = await resolveStaffPhone(actor);
+
+  if ("error" in staff) {
+    return { error: staff.error };
+  }
+
+  const jobberClientId = await findJobberClientIdByPhone(customerPhone).catch(() => null);
+  const result = await startBridgedCall({ staffPhone: staff.phone, customerPhone, jobberClientId });
+
+  return { error: result.ok ? null : result.error };
+}
+
+// The staff member's own cell (Account page). Falls back to the owner's
+// alert number for admins who have not saved one yet.
+async function resolveStaffPhone(actor: {
+  id: string;
+  role: string;
+}): Promise<{ phone: string } | { error: string }> {
   const { data: userRow, error: userError } = await supabaseServer
     .from("users")
     .select("phone")
@@ -58,7 +103,5 @@ export async function callCustomerViaBusinessLine(
     return { error: "Add your cell number on the Account page first, so the CRM knows which phone to ring." };
   }
 
-  const result = await startBridgedCall({ staffPhone, customerPhone, jobberClientId });
-
-  return { error: result.ok ? null : result.error };
+  return { phone: staffPhone };
 }

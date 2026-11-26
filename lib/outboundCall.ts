@@ -11,7 +11,8 @@ export const OUTBOUND_BRIDGE_PATH = "/api/webhooks/twilio-voice-outbound";
 export async function startBridgedCall(params: {
   staffPhone: string;
   customerPhone: string;
-  jobberClientId: string;
+  // Omitted when dialing a number that is not a saved customer.
+  jobberClientId?: string | null;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -25,7 +26,8 @@ export async function startBridgedCall(params: {
     return { ok: false, error: "A phone number is not in a valid format." };
   }
 
-  const query = new URLSearchParams({ to: params.customerPhone, client: params.jobberClientId });
+  const query = new URLSearchParams({ to: params.customerPhone });
+  if (params.jobberClientId) query.set("client", params.jobberClientId);
   const url = `${await getBaseUrl()}${OUTBOUND_BRIDGE_PATH}?${query.toString()}`;
 
   const response = await fetch(

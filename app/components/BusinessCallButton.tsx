@@ -6,16 +6,19 @@
 // phone number appears, in place of a plain tel: link that would dial from
 // your personal phone.
 import { useState, useTransition, type ReactNode } from "react";
-import { callCustomerViaBusinessLine } from "@/lib/callActions";
+import { callCustomerViaBusinessLine, callNumberViaBusinessLine } from "@/lib/callActions";
 
 export default function BusinessCallButton({
   jobberClientId,
+  phone,
   contactId,
   className,
   stopPropagation,
   children,
 }: {
-  jobberClientId: string;
+  // Give either a saved customer (jobberClientId) or a raw phone number.
+  jobberClientId?: string;
+  phone?: string;
   contactId?: string | null;
   className?: string;
   // Set when this sits inside a clickable card, so tapping Call does not
@@ -37,7 +40,9 @@ export default function BusinessCallButton({
           setError(null);
           setStarted(false);
           startTransition(async () => {
-            const result = await callCustomerViaBusinessLine(jobberClientId, contactId);
+            const result = phone
+              ? await callNumberViaBusinessLine(phone)
+              : await callCustomerViaBusinessLine(jobberClientId ?? "", contactId);
             if (result.error) setError(result.error);
             else setStarted(true);
           });

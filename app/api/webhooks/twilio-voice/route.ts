@@ -172,9 +172,7 @@ export async function POST(request: NextRequest) {
         await sendPush("missed_call", {
           title: `Missed call: ${callerName ?? fromPhone}`,
           body: callerName ? `${fromPhone} -- ${outcome}` : outcome,
-          url: jobberClientId
-            ? `/customers/${encodeURIComponent(jobberClientId)}`
-            : "/messages",
+          url: "/messages?view=calls",
           badgeCount: await getUnreadMessageCount().catch(() => 0),
         });
       }

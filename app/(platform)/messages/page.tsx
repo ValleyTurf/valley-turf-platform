@@ -5,7 +5,10 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
 import NewMessageButton from "./NewMessageButton";
-import VoicemailsPanel from "./VoicemailsPanel";
+import CallLogList from "./CallLogList";
+import DialPad from "./DialPad";
+import { loadCallLog } from "@/lib/callLog";
+import { countNeedingCallback } from "@/lib/callLogLogic";
 import UnknownContactsPanel from "./UnknownContactsPanel";
 import { listNewUnknownContacts } from "@/lib/unknownContacts";
 import { loadNeedsReply } from "@/lib/needsReply";
@@ -107,10 +110,13 @@ export default async function MessagesInboxPage({
 }) {
   const { view } = await searchParams;
   const needsReplyOnly = view === "needs-reply";
+  const tab: "inbox" | "needs-reply" | "calls" | "sent" =
+    view === "needs-reply" || view === "calls" || view === "sent" ? view : "inbox";
   const waitingThreads = await loadNeedsReply();
   // Texts, calls and voicemails from numbers that are not a saved customer
   // (this list was dropped from the page by accident in September).
   const unknownContacts = await listNewUnknownContacts();
+  const callLog = await loadCallLog(40);
 
   const [messagesResult, requestsResult, inboundMessagesResult, outboundResult] =
     await Promise.all([
@@ -324,155 +330,165 @@ export default async function MessagesInboxPage({
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
 
+  const unreadTotal = allInboxRows.reduce((sum, row) => sum + row.unreadCount, 0);
+  const callbackCount = countNeedingCallback(callLog, now);
+
+  const tabs: Array<{ key: typeof tab; label: string; href: string; count: number }> = [
+    { key: "inbox", label: "Inbox", href: "/messages", count: unreadTotal },
+    { key: "needs-reply", label: "Needs reply", href: "/messages?view=needs-reply", count: waitingCount },
+    { key: "calls", label: "Calls & voicemails", href: "/messages?view=calls", count: callbackCount },
+    { key: "sent", label: "Sent today", href: "/messages?view=sent", count: sentToday.length },
+  ];
+
   return (
-    <main className="min-h-screen bg-[#f5f4ef] px-4 py-6 text-[#174734] sm:px-6 sm:py-8">
+    <main className="min-h-screen bg-[#f5f4ef] px-4 py-5 text-[#174734] sm:px-6 sm:py-6">
       <div className="mx-auto max-w-4xl">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-[#9c7a20]">
-              Valley Turf Revival OS
-            </p>
-            <h1 className="mt-2 text-3xl font-bold">Messages</h1>
-            <p className="mt-2 max-w-xl text-[#6b705c]">
-              Portal chat, service requests, and every outbound text/email
-              (visit reminders, invoices, receipts, and more), all in one
-              place.
+            <h1 className="text-2xl font-bold">Customer Connections</h1>
+            <p className="mt-0.5 text-sm text-[#6b705c]">
+              Texts, emails, chats, calls and voicemails in one place.
             </p>
           </div>
 
-          <NewMessageButton />
-        </div>
-
-        <VoicemailsPanel />
-
-        <UnknownContactsPanel contacts={unknownContacts} />
-
-        <section className="mt-8 rounded-3xl bg-white p-5 shadow sm:p-8">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-bold">Sent today</h2>
-            <span className="text-xs font-semibold text-[#9c7a20]">
-              {sentToday.length} sent
-            </span>
+          <div className="flex flex-wrap items-start gap-2">
+            <DialPad />
+            <NewMessageButton />
           </div>
-
-          {sentToday.length === 0 ? (
-            <p className="mt-3 rounded-2xl bg-[#f7f6f1] p-4 text-sm text-[#6b705c]">
-              Nothing sent out yet today.
-            </p>
-          ) : (
-            <div className="mt-4 max-h-64 space-y-2 overflow-y-auto">
-              {sentToday.map((row, index) => {
-                const icon = row.channel === "sms" ? "💬" : "✉️";
-                const time = new Intl.DateTimeFormat("en-US", {
-                  timeZone: "America/Phoenix",
-                  hour: "numeric",
-                  minute: "2-digit",
-                }).format(new Date(row.createdAt));
-
-                const content = (
-                  <div className="flex items-center justify-between gap-4 rounded-2xl border border-[#e7e2d5] px-4 py-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-bold">
-                        {icon} {row.customerName}
-                      </p>
-                      <p className="truncate text-xs text-[#6b705c]">{row.subject}</p>
-                    </div>
-                    <span className="shrink-0 text-xs text-[#9c9887]">{time}</span>
-                  </div>
-                );
-
-                return row.jobberClientId ? (
-                  <Link
-                    key={`${row.jobberClientId}-${row.createdAt}-${index}`}
-                    href={`/messages/${encodeURIComponent(row.jobberClientId)}`}
-                    className="block transition hover:opacity-80"
-                  >
-                    {content}
-                  </Link>
-                ) : (
-                  <div key={`unlinked-${row.createdAt}-${index}`}>{content}</div>
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        <div className="mt-6 flex gap-2">
-          <Link
-            href="/messages"
-            className={`rounded-full border px-4 py-1.5 text-sm font-bold transition ${
-              needsReplyOnly
-                ? "border-[#d8d3c6] text-[#174734] hover:border-[#9c7a20]"
-                : "border-[#174734] bg-[#174734] text-white"
-            }`}
-          >
-            All
-          </Link>
-          <Link
-            href="/messages?view=needs-reply"
-            className={`rounded-full border px-4 py-1.5 text-sm font-bold transition ${
-              needsReplyOnly
-                ? "border-[#174734] bg-[#174734] text-white"
-                : "border-[#d8d3c6] text-[#174734] hover:border-[#9c7a20]"
-            }`}
-          >
-            Needs reply{waitingCount > 0 ? ` (${waitingCount})` : ""}
-          </Link>
         </div>
 
-        <section className="mt-3 rounded-3xl bg-white p-5 shadow sm:p-8">
-          {inboxRows.length === 0 ? (
-            <p className="rounded-2xl bg-[#f7f6f1] p-5 text-[#6b705c]">
-              {needsReplyOnly ? "Everyone has been answered." : "No messages yet."}
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {inboxRows.map((row) => (
-                <Link
-                  key={row.jobberClientId}
-                  href={`/messages/${encodeURIComponent(row.jobberClientId)}`}
-                  className="flex items-center justify-between gap-4 rounded-2xl border border-[#e7e2d5] p-5 transition hover:border-[#d4af37]"
+        <nav className="mt-4 flex flex-wrap gap-2">
+          {tabs.map((t) => (
+            <Link
+              key={t.key}
+              href={t.href}
+              className={`rounded-full border px-3.5 py-1.5 text-sm font-bold transition ${
+                tab === t.key
+                  ? "border-[#174734] bg-[#174734] text-white"
+                  : "border-[#d8d3c6] text-[#174734] hover:border-[#9c7a20]"
+              }`}
+            >
+              {t.label}
+              {t.count > 0 ? (
+                <span
+                  className={`ml-1.5 rounded-full px-1.5 py-0.5 text-xs ${
+                    tab === t.key ? "bg-white/20" : "bg-[#faf4e3] text-[#9c7a20]"
+                  }`}
                 >
-                  <div className="min-w-0">
-                    <p className="truncate font-bold">{row.customerName}</p>
-                    {row.lastMessagePreview ? (
-                      <p className="mt-1 truncate text-sm text-[#6b705c]">
-                        {row.lastMessagePreview}
-                      </p>
-                    ) : null}
-                  </div>
+                  {t.count}
+                </span>
+              ) : null}
+            </Link>
+          ))}
+        </nav>
 
-                  <div className="flex shrink-0 flex-col items-end gap-1.5">
-                    <span className="text-xs text-[#9c9887]">
-                      {formatInboxTimestamp(row.lastActivityAt, todayPhoenix)}
-                    </span>
+        {tab === "calls" ? (
+          <section className="mt-3 rounded-2xl bg-white p-4 shadow">
+            <CallLogList entries={callLog} />
+          </section>
+        ) : null}
 
-                    <div className="flex items-center gap-2">
-                      {row.openRequestCount > 0 ? (
-                        <span className="rounded-full bg-[#faf4e3] px-3 py-1 text-xs font-bold text-[#9c7a20]">
-                          {row.openRequestCount} open request
-                          {row.openRequestCount === 1 ? "" : "s"}
-                        </span>
-                      ) : null}
+        {tab === "sent" ? (
+          <section className="mt-3 rounded-2xl bg-white p-4 shadow">
+            {sentToday.length === 0 ? (
+              <p className="rounded-xl bg-[#f7f6f1] p-3 text-sm text-[#6b705c]">
+                Nothing sent out yet today.
+              </p>
+            ) : (
+              <div className="divide-y divide-[#efebdf]">
+                {sentToday.map((row, index) => {
+                  const icon = row.channel === "sms" ? "💬" : "✉️";
+                  const time = new Intl.DateTimeFormat("en-US", {
+                    timeZone: "America/Phoenix",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  }).format(new Date(row.createdAt));
 
-                      {row.waitingSince ? (
-                        <span className="rounded-full bg-[#faf4e3] px-3 py-1 text-xs font-bold text-[#9c7a20]">
-                          Waiting {formatWaiting(row.waitingSince, now)}
-                        </span>
-                      ) : null}
-
-                      {row.unreadCount > 0 ? (
-                        <span className="rounded-full bg-[#174734] px-3 py-1 text-xs font-bold text-white">
-                          {row.unreadCount} unread
-                        </span>
-                      ) : null}
+                  const content = (
+                    <div className="flex items-center justify-between gap-3 py-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold">
+                          {icon} {row.customerName}
+                        </p>
+                        <p className="truncate text-xs text-[#6b705c]">{row.subject}</p>
+                      </div>
+                      <span className="shrink-0 text-xs text-[#9c9887]">{time}</span>
                     </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
-        </section>
+                  );
+
+                  return row.jobberClientId ? (
+                    <Link
+                      key={`${row.jobberClientId}-${row.createdAt}-${index}`}
+                      href={`/messages/${encodeURIComponent(row.jobberClientId)}`}
+                      className="block transition hover:opacity-80"
+                    >
+                      {content}
+                    </Link>
+                  ) : (
+                    <div key={`unlinked-${row.createdAt}-${index}`}>{content}</div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        ) : null}
+
+        {tab === "inbox" || tab === "needs-reply" ? (
+          <>
+            {tab === "inbox" ? <UnknownContactsPanel contacts={unknownContacts} /> : null}
+
+            <section className="mt-3 rounded-2xl bg-white p-3 shadow sm:p-4">
+              {inboxRows.length === 0 ? (
+                <p className="rounded-xl bg-[#f7f6f1] p-4 text-sm text-[#6b705c]">
+                  {needsReplyOnly ? "Everyone has been answered." : "No messages yet."}
+                </p>
+              ) : (
+                <div className="divide-y divide-[#efebdf]">
+                  {inboxRows.map((row) => (
+                    <Link
+                      key={row.jobberClientId}
+                      href={`/messages/${encodeURIComponent(row.jobberClientId)}`}
+                      className="flex items-center justify-between gap-3 px-1 py-2.5 transition hover:bg-[#faf9f4]"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold">{row.customerName}</p>
+                        {row.lastMessagePreview ? (
+                          <p className="truncate text-xs text-[#6b705c]">{row.lastMessagePreview}</p>
+                        ) : null}
+                      </div>
+
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <span className="text-xs text-[#9c9887]">
+                          {formatInboxTimestamp(row.lastActivityAt, todayPhoenix)}
+                        </span>
+
+                        <div className="flex items-center gap-1.5">
+                          {row.openRequestCount > 0 ? (
+                            <span className="rounded-full bg-[#faf4e3] px-2 py-0.5 text-xs font-bold text-[#9c7a20]">
+                              {row.openRequestCount} request{row.openRequestCount === 1 ? "" : "s"}
+                            </span>
+                          ) : null}
+
+                          {row.waitingSince ? (
+                            <span className="rounded-full bg-[#faf4e3] px-2 py-0.5 text-xs font-bold text-[#9c7a20]">
+                              Waiting {formatWaiting(row.waitingSince, now)}
+                            </span>
+                          ) : null}
+
+                          {row.unreadCount > 0 ? (
+                            <span className="rounded-full bg-[#174734] px-2 py-0.5 text-xs font-bold text-white">
+                              {row.unreadCount} unread
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </section>
+          </>
+        ) : null}
       </div>
     </main>
   );
