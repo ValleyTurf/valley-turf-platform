@@ -1,5 +1,6 @@
 "use client";
 
+import BusinessCallButton from "@/app/components/BusinessCallButton";
 import { useMemo, useState, useTransition, type ReactNode } from "react";
 import Link from "next/link";
 import ScheduleGrids from "./ScheduleGrids";
@@ -173,13 +174,23 @@ export default function ScheduleInteractive({
                       )}
 
                       {visit.phone && (
-                        <a
-                          href={`tel:${visit.phone.replace(/[^\d+]/g, "")}`}
-                          onClick={(event) => event.stopPropagation()}
-                          className="mt-1 inline-block text-base font-semibold text-[#9c7a20] hover:underline"
-                        >
-                          {visit.phone}
-                        </a>
+                        visit.clientId ? (
+                          <BusinessCallButton
+                            jobberClientId={visit.clientId}
+                            stopPropagation
+                            className="mt-1 inline-block text-base font-semibold text-[#9c7a20] hover:underline"
+                          >
+                            {visit.phone}
+                          </BusinessCallButton>
+                        ) : (
+                          <a
+                            href={`tel:${visit.phone.replace(/[^\d+]/g, "")}`}
+                            onClick={(event) => event.stopPropagation()}
+                            className="mt-1 inline-block text-base font-semibold text-[#9c7a20] hover:underline"
+                          >
+                            {visit.phone}
+                          </a>
+                        )
                       )}
 
                       {visit.gateCode && (

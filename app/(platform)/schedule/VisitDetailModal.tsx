@@ -1,5 +1,6 @@
 "use client";
 
+import BusinessCallButton from "@/app/components/BusinessCallButton";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import type { AssignableUser, ScheduleVisit } from "./types";
@@ -271,12 +272,21 @@ export default function VisitDetailModal({
                 Phone
               </dt>
               <dd className="mt-0.5">
-                <a
-                  href={`tel:${visit.phone.replace(/[^\d+]/g, "")}`}
-                  className="font-semibold text-[#9c7a20] hover:underline"
-                >
-                  {visit.phone}
-                </a>
+                {visit.clientId ? (
+                  <BusinessCallButton
+                    jobberClientId={visit.clientId}
+                    className="font-semibold text-[#9c7a20] hover:underline"
+                  >
+                    {visit.phone}
+                  </BusinessCallButton>
+                ) : (
+                  <a
+                    href={`tel:${visit.phone.replace(/[^\d+]/g, "")}`}
+                    className="font-semibold text-[#9c7a20] hover:underline"
+                  >
+                    {visit.phone}
+                  </a>
+                )}
               </dd>
             </div>
           )}

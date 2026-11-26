@@ -3,7 +3,7 @@
 // Calls the customer through the CRM business number: the business number
 // rings your phone, you answer, and it connects you to the customer.
 import { useState, useTransition } from "react";
-import { callCustomerViaBusinessLine } from "./callActions";
+import { callCustomerViaBusinessLine } from "@/lib/callActions";
 
 export default function CallButton({ jobberClientId }: { jobberClientId: string }) {
   const [isPending, startTransition] = useTransition();

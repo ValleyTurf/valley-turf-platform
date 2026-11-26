@@ -30,6 +30,7 @@ import {
   setCurrentProperty,
 } from "./actions";
 import { formatCurrency } from "@/lib/format";
+import BusinessCallButton from "@/app/components/BusinessCallButton";
 
 export type AdditionalContact = {
   id: string;
@@ -381,12 +382,12 @@ export default function CustomerContactsSection({
             <p className="text-xs font-bold text-[#9c7a20]">Phone</p>
 
             {phone ? (
-              <a
-                href={`tel:${phone.replace(/[^\d+]/g, "")}`}
-                className="mt-0.5 block text-sm font-semibold hover:underline"
+              <BusinessCallButton
+                jobberClientId={jobberClientId}
+                className="mt-0.5 block text-left text-sm font-semibold hover:underline disabled:opacity-60"
               >
                 {formatPhone(phone)}
-              </a>
+              </BusinessCallButton>
             ) : (
               <p className="mt-0.5 text-sm text-[#6b705c]">No phone</p>
             )}
@@ -811,12 +812,13 @@ export default function CustomerContactsSection({
                   )}
 
                   {contact.phone && (
-                    <a
-                      href={`tel:${contact.phone.replace(/[^\d+]/g, "")}`}
-                      className="mt-0.5 block text-xs font-semibold hover:underline"
+                    <BusinessCallButton
+                      jobberClientId={jobberClientId}
+                      contactId={contact.id}
+                      className="mt-0.5 block text-left text-xs font-semibold hover:underline disabled:opacity-60"
                     >
                       {contact.phone}
-                    </a>
+                    </BusinessCallButton>
                   )}
                 </div>
 

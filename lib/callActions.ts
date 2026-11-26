@@ -10,7 +10,8 @@ import { startBridgedCall } from "@/lib/outboundCall";
 import { toE164 } from "@/lib/outboundCallLogic";
 
 export async function callCustomerViaBusinessLine(
-  jobberClientId: string
+  jobberClientId: string,
+  contactId?: string | null
 ): Promise<{ error: string | null }> {
   const actor = await getCurrentUser();
 
@@ -18,11 +19,20 @@ export async function callCustomerViaBusinessLine(
     return { error: "You must be signed in." };
   }
 
-  const { data: customer } = await supabaseServer
-    .from("customers")
-    .select("phone")
-    .eq("jobber_client_id", jobberClientId)
-    .maybeSingle();
+  // An additional contact's number is looked up from that contact's own
+  // row, and only if it belongs to this customer.
+  const { data: customer } = contactId
+    ? await supabaseServer
+        .from("customer_contacts")
+        .select("phone")
+        .eq("id", contactId)
+        .eq("jobber_client_id", jobberClientId)
+        .maybeSingle()
+    : await supabaseServer
+        .from("customers")
+        .select("phone")
+        .eq("jobber_client_id", jobberClientId)
+        .maybeSingle();
 
   const customerPhone = toE164(customer?.phone as string | null | undefined);
 
