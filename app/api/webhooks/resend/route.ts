@@ -33,8 +33,7 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { logContactHistory, markEmailDelivered, markEmailOpened } from "@/lib/contactHistory";
 import { decodeClientIdFromReplyAddress } from "@/lib/replyRouting";
-import { normalizeEmail } from "@/lib/matching";
-import { logUnknownContact } from "@/lib/unknownContacts";
+import { handleGmailForwardedMail } from "@/lib/gmailForward";
 
 export const dynamic = "force-dynamic";
 
@@ -168,15 +167,17 @@ async function handleInboundReply(
     : "(No message body.)";
 
   if (!jobberClientId) {
-    // Not addressed to one of our reply-routing addresses -- e.g.
-    // RESEND_REPLY_DOMAIN isn't configured yet, or this is some other
-    // mail that landed on the receiving domain. Log it as an unknown
-    // contact (rather than dropping it) so a cold prospect emailing in
-    // still shows up on the Messages page for a human to triage.
-    await logUnknownContact({
-      channel: "email",
-      email: normalizeEmail(fromAddress),
-      summary: summary.slice(0, 4000),
+    // Not addressed to one of our reply-routing addresses. Most often
+    // this is Gmail mail: a customer email forwarded by Ryan's Gmail
+    // filter, or an email he sent with the CRM inbox on BCC (see
+    // lib/gmailForward.ts). A known customer's mail goes on their
+    // thread; anything from a stranger still lands in Customer
+    // Connections as an unknown sender so a cold prospect never vanishes.
+    await handleGmailForwardedMail({
+      from: fromAddress,
+      to: toAddresses,
+      subject: content?.subject || fallbackSubject,
+      body: summary,
     });
     return;
   }
