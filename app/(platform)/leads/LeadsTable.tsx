@@ -10,7 +10,13 @@
 // search elsewhere in the app has, just without a network call.
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { setLeadStatus, deleteLead } from "./actions";
+import { setLeadStatus, deleteLead, createCustomerForLead } from "./actions";
+import {
+  LEAD_STAGE_ORDER,
+  stageLabel,
+  type LeadStage,
+  type LeadStageKey,
+} from "@/lib/leadPipelineLogic";
 import ConfirmSubmitButton from "@/app/components/ConfirmSubmitButton";
 
 export type LeadRow = {
@@ -29,7 +35,9 @@ export type LeadRow = {
   // status buttons show, separate from `status` above which is just the
   // as-stored display label.
   rawStatus: string;
-  statusClassName: string;
+  // Where the lead stands, derived from its quotes + manual status.
+  stage: LeadStage;
+  needsAttention: boolean;
   scanCount: number | null;
   customerMatch: { jobberClientId: string; label: string } | null;
   // Precomputed once server-side (lowercased, all searchable fields
@@ -40,14 +48,45 @@ export type LeadRow = {
 
 export default function LeadsTable({ rows }: { rows: LeadRow[] }) {
   const [query, setQuery] = useState("");
+  const [stageFilter, setStageFilter] = useState<LeadStageKey | "all" | "attention">(
+    "all"
+  );
+
+  const stageCounts = useMemo(() => {
+    const counts = new Map<LeadStageKey, number>();
+    for (const row of rows) {
+      counts.set(row.stage.key, (counts.get(row.stage.key) ?? 0) + 1);
+    }
+    return counts;
+  }, [rows]);
+
+  const attentionCount = useMemo(
+    () => rows.filter((row) => row.needsAttention).length,
+    [rows]
+  );
 
   const filteredRows = useMemo(() => {
     const needle = query.trim().toLowerCase();
 
-    if (!needle) return rows;
+    return rows.filter((row) => {
+      if (stageFilter === "attention" && !row.needsAttention) return false;
+      if (
+        stageFilter !== "all" &&
+        stageFilter !== "attention" &&
+        row.stage.key !== stageFilter
+      ) {
+        return false;
+      }
+      return !needle || row.searchText.includes(needle);
+    });
+  }, [rows, query, stageFilter]);
 
-    return rows.filter((row) => row.searchText.includes(needle));
-  }, [rows, query]);
+  const chipClass = (active: boolean) =>
+    `rounded-full border px-3 py-1 text-xs font-bold transition ${
+      active
+        ? "border-[#174734] bg-[#174734] text-white"
+        : "border-[#d8d3c6] bg-white text-[#174734] hover:border-[#d4af37]"
+    }`;
 
   return (
     <>
@@ -60,9 +99,36 @@ export default function LeadsTable({ rows }: { rows: LeadRow[] }) {
           className="w-full max-w-md rounded-xl border border-[#d9d4c6] bg-white px-4 py-2.5 text-sm text-[#174734] outline-none transition placeholder:text-[#8b8d82] focus:border-[#d4af37] focus:ring-2 focus:ring-[#d4af37]/20"
         />
 
-        {query && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setStageFilter("all")}
+            className={chipClass(stageFilter === "all")}
+          >
+            All ({rows.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setStageFilter("attention")}
+            className={chipClass(stageFilter === "attention")}
+          >
+            Needs attention ({attentionCount})
+          </button>
+          {LEAD_STAGE_ORDER.filter((key) => stageCounts.has(key)).map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setStageFilter(key)}
+              className={chipClass(stageFilter === key)}
+            >
+              {stageLabel(key)} ({stageCounts.get(key)})
+            </button>
+          ))}
+        </div>
+
+        {(query || stageFilter !== "all") && (
           <p className="mt-2 text-xs text-[#6b705c]">
-            {filteredRows.length} of {rows.length} leads match
+            {filteredRows.length} of {rows.length} leads shown
           </p>
         )}
       </div>
@@ -136,10 +202,15 @@ export default function LeadsTable({ rows }: { rows: LeadRow[] }) {
                   </td>
                   <td className="py-2 pr-4">
                     <span
-                      className={`rounded-full px-2 py-1 text-xs font-bold ${row.statusClassName}`}
+                      className={`whitespace-nowrap rounded-full px-2 py-1 text-xs font-bold ${row.stage.className}`}
                     >
-                      {row.status}
+                      {row.stage.label}
                     </span>
+                    {row.stage.detail && (
+                      <p className="mt-1 text-xs text-[#6b705c]">
+                        {row.stage.detail}
+                      </p>
+                    )}
                   </td>
                   <td className="py-2 pr-4">
                     {row.scanCount && row.scanCount > 1 ? (
@@ -161,7 +232,17 @@ export default function LeadsTable({ rows }: { rows: LeadRow[] }) {
                         {row.customerMatch.label}
                       </Link>
                     ) : (
-                      <span className="text-[#6b705c]">Not a customer yet</span>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[#6b705c]">Not linked yet</span>
+                        <form action={createCustomerForLead.bind(null, row.id)}>
+                          <button
+                            type="submit"
+                            className="rounded-lg border border-[#174734] bg-white px-2 py-0.5 text-xs font-bold text-[#174734] transition hover:bg-[#174734] hover:text-white"
+                          >
+                            Add as Customer
+                          </button>
+                        </form>
+                      </div>
                     )}
                   </td>
                   <td className="py-2 pr-4">
@@ -182,6 +263,19 @@ export default function LeadsTable({ rows }: { rows: LeadRow[] }) {
                             className="rounded-lg border border-[#d8d3c6] bg-white px-2.5 py-1 text-xs font-bold text-[#174734] transition hover:border-[#d4af37]"
                           >
                             Mark Contacted
+                          </button>
+                        </form>
+                      )}
+
+                      {row.rawStatus !== "needs_info" && (
+                        <form
+                          action={setLeadStatus.bind(null, row.id, "needs_info")}
+                        >
+                          <button
+                            type="submit"
+                            className="rounded-lg border border-[#d8d3c6] bg-white px-2.5 py-1 text-xs font-bold text-orange-800 transition hover:border-orange-300"
+                          >
+                            Can&apos;t Quote
                           </button>
                         </form>
                       )}

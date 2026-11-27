@@ -2,6 +2,7 @@ import { NextResponse, after } from "next/server";
 import { supabaseServer } from "@/lib/supabase-server";
 import { validateAddress } from "@/lib/addressValidation";
 import { sendNewLeadAlerts } from "@/lib/notifications";
+import { ensureCustomerForLead } from "@/lib/leadCustomers";
 
 // Public endpoint: meant to be called by an external automation (e.g. a
 // Jobber automation or Zapier zap posting new client/request info) rather
@@ -98,6 +99,19 @@ export async function POST(request: Request) {
         campaignName: null,
       })
     );
+
+    // Leads that arrive through this webhook never got a customer record
+    // (only the website form did). Create/link one now, best-effort --
+    // skipped when the caller already told us which customer this is.
+    if (!jobberClientId && data?.id) {
+      const customerResult = await ensureCustomerForLead(data.id);
+      if (!customerResult.ok) {
+        console.error(
+          "api/leads: customer creation failed:",
+          customerResult.error
+        );
+      }
+    }
 
     return NextResponse.json({ ok: true, lead: data });
   } catch {

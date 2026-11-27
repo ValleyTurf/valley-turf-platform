@@ -3,7 +3,14 @@ export const revalidate = 0;
 
 import { supabaseServer } from "@/lib/supabase-server";
 import { normalizeEmail, normalizePhone } from "@/lib/matching";
+import { loadAllCustomerContacts } from "@/lib/leadCustomers";
+import {
+  deriveLeadStage,
+  leadNeedsAttention,
+  type LeadQuoteInfo,
+} from "@/lib/leadPipelineLogic";
 import LeadsTable, { type LeadRow } from "./LeadsTable";
+import { createMissingCustomers } from "./actions";
 
 type Lead = {
   id: string;
@@ -22,6 +29,12 @@ type Lead = {
   scan_count: number | null;
   address_validation_status: string | null;
   address_formatted: string | null;
+  jobber_client_id: string | null;
+};
+
+type QuoteForLead = LeadQuoteInfo & {
+  lead_id: string | null;
+  customer_id: string | null;
 };
 
 type Campaign = {
@@ -50,24 +63,6 @@ function formatArizonaTime(value: string | null) {
     minute: "2-digit",
     hour12: true,
   });
-}
-
-function statusBadge(status: string | null) {
-  const normalized = (status || "New").toLowerCase();
-
-  if (normalized === "new") {
-    return "bg-[#d4af37]/20 text-[#9c7a20]";
-  }
-
-  if (normalized === "converted" || normalized === "won") {
-    return "bg-[#174734]/10 text-[#174734]";
-  }
-
-  if (normalized === "lost" || normalized === "dead") {
-    return "bg-red-100 text-red-700";
-  }
-
-  return "bg-[#f0eee6] text-[#6b705c]";
 }
 
 // Maps lib/addressValidation.ts's AddressValidationStatus values to a
@@ -100,7 +95,7 @@ export default async function LeadsPage() {
   const { data: leadsData, error } = await supabaseServer
     .from("leads")
     .select(
-      "id, first_name, last_name, email, phone, address, city, state, zip, source, status, campaign_id, created_at, scan_count, address_validation_status, address_formatted"
+      "id, first_name, last_name, email, phone, address, city, state, zip, source, status, campaign_id, created_at, scan_count, address_validation_status, address_formatted, jobber_client_id"
     )
     .order("created_at", { ascending: false });
 
@@ -123,14 +118,23 @@ export default async function LeadsPage() {
     }
   }
 
-  const { data: customersData } = await supabaseServer
-    .from("customers")
-    .select("jobber_client_id, full_name, email, phone");
+  // Paged load of every customer (the plain select stopped at 1000 rows,
+  // so newer customers never matched) plus every quote, so each lead's
+  // stage can be worked out from its quotes.
+  const [customers, quotesResult] = await Promise.all([
+    loadAllCustomerContacts(),
+    supabaseServer
+      .from("quotes")
+      .select("lead_id, customer_id, status, expires_at, sent_at, created_at"),
+  ]);
 
+  const customerById = new Map<string, CustomerMatch>();
   const customerByPhone = new Map<string, CustomerMatch>();
   const customerByEmail = new Map<string, CustomerMatch>();
 
-  for (const customer of (customersData ?? []) as CustomerMatch[]) {
+  for (const customer of customers) {
+    customerById.set(customer.jobber_client_id, customer);
+
     const normalizedPhone = normalizePhone(customer.phone);
     const normalizedEmail = normalizeEmail(customer.email);
 
@@ -143,7 +147,31 @@ export default async function LeadsPage() {
     }
   }
 
+  const quotesByLead = new Map<string, QuoteForLead[]>();
+  const quotesByCustomer = new Map<string, QuoteForLead[]>();
+
+  for (const quote of (quotesResult.data ?? []) as QuoteForLead[]) {
+    if (quote.lead_id) {
+      quotesByLead.set(quote.lead_id, [
+        ...(quotesByLead.get(quote.lead_id) ?? []),
+        quote,
+      ]);
+    }
+
+    if (quote.customer_id) {
+      quotesByCustomer.set(quote.customer_id, [
+        ...(quotesByCustomer.get(quote.customer_id) ?? []),
+        quote,
+      ]);
+    }
+  }
+
   function matchCustomer(lead: Lead): CustomerMatch | null {
+    // The link made at intake wins -- it's exact, unlike phone/email.
+    if (lead.jobber_client_id && customerById.has(lead.jobber_client_id)) {
+      return customerById.get(lead.jobber_client_id)!;
+    }
+
     const normalizedPhone = normalizePhone(lead.phone);
     const normalizedEmail = normalizeEmail(lead.email);
 
@@ -158,8 +186,25 @@ export default async function LeadsPage() {
     return null;
   }
 
+  function quotesFor(lead: Lead, customer: CustomerMatch | null): QuoteForLead[] {
+    const seen = new Set<QuoteForLead>();
+
+    for (const quote of quotesByLead.get(lead.id) ?? []) seen.add(quote);
+
+    // Quotes written straight to the customer (not via this lead) count
+    // too, once the lead is linked to that customer.
+    if (customer) {
+      for (const quote of quotesByCustomer.get(customer.jobber_client_id) ?? []) {
+        seen.add(quote);
+      }
+    }
+
+    return Array.from(seen);
+  }
+
   const totalLeads = leads.length;
   const matchedCount = leads.filter((lead) => matchCustomer(lead)).length;
+  const unlinkedCount = totalLeads - matchedCount;
 
   const rows: LeadRow[] = leads.map((lead) => {
     const campaign = lead.campaign_id ? campaignMap.get(lead.campaign_id) : null;
@@ -172,10 +217,11 @@ export default async function LeadsPage() {
         .join(", ") ||
       null;
     const campaignLabel = campaign ? campaign.alias || campaign.name : null;
-    const status = lead.status || "New";
     const customerLabel = customer
       ? customer.full_name || "View Customer"
       : null;
+    const rawStatus = (lead.status || "new").toLowerCase();
+    const stage = deriveLeadStage(rawStatus, quotesFor(lead, customer));
 
     return {
       id: lead.id,
@@ -190,9 +236,10 @@ export default async function LeadsPage() {
         campaign && campaignLabel
           ? { slug: campaign.slug, label: campaignLabel }
           : null,
-      status,
-      rawStatus: (lead.status || "new").toLowerCase(),
-      statusClassName: statusBadge(lead.status),
+      status: stage.label,
+      rawStatus,
+      stage,
+      needsAttention: leadNeedsAttention(stage),
       scanCount: lead.scan_count,
       customerMatch:
         customer && customerLabel
@@ -205,7 +252,7 @@ export default async function LeadsPage() {
         displayAddress,
         lead.source,
         campaignLabel,
-        status,
+        stage.label,
         customerLabel,
       ]
         .filter(Boolean)
@@ -223,12 +270,12 @@ export default async function LeadsPage() {
           </p>
           <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Leads</h1>
           <p className="mt-3 max-w-2xl text-green-50">
-            Everyone captured from QR scans, tracked links, and future intake
-            forms, matched against your customer list.
+            Everyone captured from QR scans, tracked links, and intake forms, with
+            where each one stands: quote sent, accepted, declined, or stuck.
           </p>
         </section>
 
-        <section className="mt-8 grid gap-6 sm:grid-cols-3">
+        <section className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
             <p className="text-xs text-[#6b705c]">Total Leads</p>
             <p className="mt-1 text-4xl font-bold text-[#174734]">
@@ -237,17 +284,37 @@ export default async function LeadsPage() {
           </div>
 
           <div className="rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
-            <p className="text-xs text-[#6b705c]">Matched to a Customer</p>
-            <p className="mt-1 text-4xl font-bold text-[#174734]">
-              {matchedCount}
+            <p className="text-xs text-[#6b705c]">Needs Your Attention</p>
+            <p className="mt-1 text-4xl font-bold text-[#9c7a20]">
+              {rows.filter((row) => row.needsAttention).length}
+            </p>
+            <p className="mt-1 text-xs text-[#6b705c]">
+              New, quote not sent, or quote expired
             </p>
           </div>
 
           <div className="rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
-            <p className="text-xs text-[#6b705c]">Not Yet Converted</p>
-            <p className="mt-1 text-4xl font-bold text-[#174734]">
-              {totalLeads - matchedCount}
+            <p className="text-xs text-[#6b705c]">Quotes Waiting on a Reply</p>
+            <p className="mt-1 text-4xl font-bold text-indigo-800">
+              {rows.filter((row) => row.stage.key === "quote_sent").length}
             </p>
+          </div>
+
+          <div className="rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
+            <p className="text-xs text-[#6b705c]">Not Linked to a Customer</p>
+            <p className="mt-1 text-4xl font-bold text-[#174734]">
+              {unlinkedCount}
+            </p>
+            {unlinkedCount > 0 && (
+              <form action={createMissingCustomers} className="mt-2">
+                <button
+                  type="submit"
+                  className="rounded-lg bg-[#174734] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#226246]"
+                >
+                  Add all as customers
+                </button>
+              </form>
+            )}
           </div>
         </section>
 

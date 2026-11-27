@@ -14,7 +14,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase-server";
 import { normalizeEmail, normalizePhone } from "@/lib/matching";
-import { setLeadStatus, deleteLead } from "../actions";
+import { setLeadStatus, deleteLead, createCustomerForLead } from "../actions";
+import { loadAllCustomerContacts } from "@/lib/leadCustomers";
+import { deriveLeadStage } from "@/lib/leadPipelineLogic";
+import { computeDisplayStatus, isQuoteStatus, quoteStatusLabel } from "@/lib/quotes";
 import ConfirmSubmitButton from "@/app/components/ConfirmSubmitButton";
 
 type LeadDetail = {
@@ -83,24 +86,6 @@ function formatArizonaTime(value: string | null) {
   });
 }
 
-function statusBadge(status: string | null) {
-  const normalized = (status || "New").toLowerCase();
-
-  if (normalized === "new") {
-    return "bg-[#d4af37]/20 text-[#9c7a20]";
-  }
-
-  if (normalized === "converted" || normalized === "won") {
-    return "bg-[#174734]/10 text-[#174734]";
-  }
-
-  if (normalized === "lost" || normalized === "dead") {
-    return "bg-red-100 text-red-700";
-  }
-
-  return "bg-[#f0eee6] text-[#6b705c]";
-}
-
 // Same mapping as leads/page.tsx's addressValidationBadge.
 function addressValidationBadge(
   status: string | null
@@ -159,7 +144,7 @@ export default async function LeadDetailPage({
 
   const lead = leadData as LeadDetail;
 
-  const [campaignResult, customersResult] = await Promise.all([
+  const [campaignResult, customers, quotesResult] = await Promise.all([
     lead.campaign_id
       ? supabaseServer
           .from("campaigns")
@@ -167,12 +152,20 @@ export default async function LeadDetailPage({
           .eq("id", lead.campaign_id)
           .maybeSingle()
       : Promise.resolve({ data: null as Campaign | null }),
-    // Same in-memory normalize-then-match convention as leads/page.tsx --
-    // there's no normalized column on customers to query directly, and
-    // this is a one-off page load rather than a hot path.
+    // Paged load (a plain select stops at 1000 rows) with the same
+    // in-memory normalize-then-match convention as leads/page.tsx.
+    loadAllCustomerContacts(),
     supabaseServer
-      .from("customers")
-      .select("jobber_client_id, full_name, email, phone"),
+      .from("quotes")
+      .select(
+        "id, status, price_total, expires_at, sent_at, created_at, lead_id, customer_id"
+      )
+      .or(
+        lead.jobber_client_id
+          ? `lead_id.eq.${lead.id},customer_id.eq.${lead.jobber_client_id}`
+          : `lead_id.eq.${lead.id}`
+      )
+      .order("created_at", { ascending: false }),
   ]);
 
   const campaign = campaignResult.data as Campaign | null;
@@ -180,13 +173,26 @@ export default async function LeadDetailPage({
   const normalizedLeadPhone = normalizePhone(lead.phone);
   const normalizedLeadEmail = normalizeEmail(lead.email);
 
-  const customerMatch = ((customersResult.data ?? []) as CustomerMatch[]).find(
-    (customer) =>
-      (normalizedLeadPhone &&
-        normalizePhone(customer.phone) === normalizedLeadPhone) ||
-      (normalizedLeadEmail &&
-        normalizeEmail(customer.email) === normalizedLeadEmail)
-  );
+  const customerMatch =
+    (lead.jobber_client_id
+      ? customers.find((c) => c.jobber_client_id === lead.jobber_client_id)
+      : undefined) ??
+    customers.find(
+      (customer: CustomerMatch) =>
+        (normalizedLeadPhone &&
+          normalizePhone(customer.phone) === normalizedLeadPhone) ||
+        (normalizedLeadEmail &&
+          normalizeEmail(customer.email) === normalizedLeadEmail)
+    );
+
+  const quotes = (quotesResult.data ?? []) as {
+    id: string;
+    status: string | null;
+    price_total: number | string | null;
+    expires_at: string | null;
+    sent_at: string | null;
+    created_at: string | null;
+  }[];
 
   const name = [lead.first_name, lead.last_name].filter(Boolean).join(" ") || "—";
   const displayAddress =
@@ -194,7 +200,7 @@ export default async function LeadDetailPage({
     [lead.address, lead.city, lead.state, lead.zip].filter(Boolean).join(", ") ||
     null;
   const addressBadge = addressValidationBadge(lead.address_validation_status);
-  const status = lead.status || "New";
+  const stage = deriveLeadStage(lead.status, quotes);
   const campaignLabel = campaign ? campaign.alias || campaign.name : null;
   const photoPaths = lead.photo_paths ?? [];
   const rawStatus = (lead.status || "new").toLowerCase();
@@ -220,12 +226,13 @@ export default async function LeadDetailPage({
             {campaignLabel ? ` · ${campaignLabel}` : ""}
           </p>
           <span
-            className={`mt-3 inline-block w-fit rounded-full px-3 py-1 text-xs font-bold ${statusBadge(
-              lead.status
-            )}`}
+            className={`mt-3 inline-block w-fit rounded-full px-3 py-1 text-xs font-bold ${stage.className}`}
           >
-            {status}
+            {stage.label}
           </span>
+          {stage.detail && (
+            <p className="mt-1 text-sm text-green-50">{stage.detail}</p>
+          )}
         </section>
 
         <div className="mt-6 flex flex-wrap items-center gap-2">
@@ -243,6 +250,17 @@ export default async function LeadDetailPage({
                 className="rounded-xl border border-[#d8d3c6] bg-white px-4 py-2 text-sm font-bold text-[#174734] transition hover:border-[#d4af37]"
               >
                 Mark Contacted
+              </button>
+            </form>
+          )}
+
+          {rawStatus !== "needs_info" && (
+            <form action={setLeadStatus.bind(null, lead.id, "needs_info")}>
+              <button
+                type="submit"
+                className="rounded-xl border border-[#d8d3c6] bg-white px-4 py-2 text-sm font-bold text-orange-800 transition hover:border-orange-300"
+              >
+                Can&apos;t Quote - Need Info
               </button>
             </form>
           )}
@@ -278,6 +296,20 @@ export default async function LeadDetailPage({
             </ConfirmSubmitButton>
           </form>
         </div>
+
+        {!customerMatch && (
+          <section className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#d4af37]/40 bg-[#d4af37]/10 p-4">
+            <p className="text-sm">Not linked to a customer record yet.</p>
+            <form action={createCustomerForLead.bind(null, lead.id)}>
+              <button
+                type="submit"
+                className="rounded-xl bg-[#174734] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#226246]"
+              >
+                Add as Customer
+              </button>
+            </form>
+          </section>
+        )}
 
         {customerMatch && (
           <section className="mt-6 rounded-2xl border border-[#174734]/20 bg-[#174734]/5 p-4">
@@ -344,6 +376,47 @@ export default async function LeadDetailPage({
               {lead.notes || "No notes submitted."}
             </p>
           </div>
+        </section>
+
+        <section className="mt-6 rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
+          <p className={fieldLabel}>Quotes</p>
+          {quotes.length === 0 ? (
+            <p className={fieldValue}>No quote has been created for this lead yet.</p>
+          ) : (
+            <ul className="mt-2 divide-y divide-[#f0eee6]">
+              {quotes.map((quote) => {
+                const display = isQuoteStatus(quote.status)
+                  ? computeDisplayStatus(quote.status, quote.expires_at)
+                  : null;
+                const price =
+                  quote.price_total !== null && quote.price_total !== ""
+                    ? Number(quote.price_total)
+                    : null;
+
+                return (
+                  <li
+                    key={quote.id}
+                    className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
+                  >
+                    <Link
+                      href={`/quotes/${quote.id}`}
+                      className="font-semibold text-[#174734] hover:underline"
+                    >
+                      {display ? quoteStatusLabel(display) : quote.status || "Quote"}
+                      {price !== null && Number.isFinite(price)
+                        ? ` - $${price.toLocaleString("en-US")}`
+                        : ""}
+                    </Link>
+                    <span className="text-xs text-[#6b705c]">
+                      {quote.sent_at
+                        ? `Sent ${formatArizonaTime(quote.sent_at)}`
+                        : `Created ${formatArizonaTime(quote.created_at)}`}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </section>
 
         {photoPaths.length > 0 && (

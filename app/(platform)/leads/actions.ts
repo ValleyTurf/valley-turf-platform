@@ -9,15 +9,19 @@ import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabase-server";
 import { getCurrentUser } from "@/lib/currentUser";
 import { recordAuditLog } from "@/lib/auditLog";
+import { ensureCustomerForLead } from "@/lib/leadCustomers";
 
-// Deliberately just the three manual states Ryan asked for -- "New" is
+// Deliberately just the four manual states Ryan asked for (needs_info =
+// "can't send a quote -- not enough info", added 2026-11-27). The stages
+// past these (Quote Sent / Declined / Won...) are derived from the lead's
+// quotes in lib/leadPipelineLogic.ts, never stored here -- "New" is
 // also the reset/undo target, same "reversible manual override" shape as
 // the invoice-dismissal Undo button. This does NOT cover "Converted"/
 // "Won": those read off of LeadsPage's own matchCustomer() lookup (a
 // real customer record exists with the same phone/email), which isn't
 // something a button should be able to fake by just writing a status
 // string.
-const LEAD_STATUSES = ["new", "contacted", "lost"] as const;
+const LEAD_STATUSES = ["new", "contacted", "lost", "needs_info"] as const;
 export type LeadStatus = (typeof LEAD_STATUSES)[number];
 
 function isLeadStatus(value: string): value is LeadStatus {
@@ -134,4 +138,82 @@ export async function deleteLead(id: string): Promise<void> {
   // that page no longer has a lead to show once this runs, so send
   // staff back to the list instead of leaving them on a 404.
   redirect("/leads");
+}
+
+// "Add as Customer" button: links the lead to an existing customer with
+// the same phone/email, or creates a native one. Also backfills the
+// customer onto any quotes already written for the lead.
+export async function createCustomerForLead(id: string): Promise<void> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    throw new Error("You must be signed in to add a customer.");
+  }
+
+  const result = await ensureCustomerForLead(id);
+
+  if (!result.ok) {
+    throw new Error(`Couldn't add this lead as a customer: ${result.error}`);
+  }
+
+  if (result.created) {
+    await recordAuditLog({
+      actor,
+      action: "create",
+      entityType: "customer",
+      entityId: result.clientId,
+      entityLabel: "Customer created from lead",
+      after: { lead_id: id },
+    });
+  }
+
+  revalidatePath("/leads");
+  revalidatePath(`/leads/${id}`);
+  revalidatePath("/customers");
+}
+
+// One click to clear the backlog: every lead that isn't linked to a
+// customer yet gets linked/created. Skips leads with no name, phone or
+// email at all (nothing to build a customer from).
+export async function createMissingCustomers(): Promise<void> {
+  const actor = await getCurrentUser();
+
+  if (!actor) {
+    throw new Error("You must be signed in to add customers.");
+  }
+
+  const { data: leads, error } = await supabaseServer
+    .from("leads")
+    .select("id, first_name, last_name, email, phone")
+    .is("jobber_client_id", null);
+
+  if (error) {
+    throw new Error(`Couldn't load leads: ${error.message}`);
+  }
+
+  let created = 0;
+
+  for (const lead of leads ?? []) {
+    if (!lead.first_name && !lead.last_name && !lead.email && !lead.phone) {
+      continue;
+    }
+
+    const result = await ensureCustomerForLead(lead.id);
+
+    if (result.ok && result.created) created += 1;
+  }
+
+  if (created > 0) {
+    await recordAuditLog({
+      actor,
+      action: "create",
+      entityType: "customer",
+      entityId: null,
+      entityLabel: `${created} customers created from leads`,
+      after: { created },
+    });
+  }
+
+  revalidatePath("/leads");
+  revalidatePath("/customers");
 }
