@@ -310,16 +310,7 @@ export default async function InvoicesPage({
                         </p>
                       </div>
 
-                      {invoice.jobber_web_uri ? (
-                        <a
-                          href={invoice.jobber_web_uri}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs font-semibold text-[#9c7a20] hover:underline"
-                        >
-                          View in Jobber →
-                        </a>
-                      ) : isNative ? (
+                      {isNative ? (
                         <span className="text-xs font-semibold text-[#6b705c]">
                           Native invoice
                         </span>

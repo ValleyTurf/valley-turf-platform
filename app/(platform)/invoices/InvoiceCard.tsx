@@ -295,16 +295,6 @@ export default function InvoiceCard({
             Invoice created, but delivery failed — check the customer&apos;s email/phone on file.
           </p>
         )}
-        {success.jobberWebUri && (
-          <a
-            href={success.jobberWebUri}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-2 inline-block text-sm font-semibold text-green-800 underline"
-          >
-            View in Jobber →
-          </a>
-        )}
       </article>
     );
   }

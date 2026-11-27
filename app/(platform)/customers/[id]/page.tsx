@@ -3127,17 +3127,6 @@ export default async function CustomerDetailPage({
                         >
                           Manage →
                         </Link>
-
-                        {job.jobberWebUri && (
-                          <a
-                            href={job.jobberWebUri}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-xs font-semibold text-[#6b705c] hover:underline"
-                          >
-                            Open in Jobber ↗
-                          </a>
-                        )}
                       </div>
                     </div>
                   ))
@@ -4488,18 +4477,7 @@ export default async function CustomerDetailPage({
                           key={invoice.id}
                           className="overflow-hidden rounded-xl border border-[#e7e2d5]"
                         >
-                          {invoice.jobberWebUri ? (
-                            <a
-                              href={invoice.jobberWebUri}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="block px-3 py-2 transition hover:bg-[#f7f6f1]"
-                            >
-                              {content}
-                            </a>
-                          ) : (
-                            <div className="px-3 py-2">{content}</div>
-                          )}
+                          <div className="px-3 py-2">{content}</div>
                         </div>
                       );
                     }
@@ -4696,17 +4674,6 @@ export default async function CustomerDetailPage({
                         >
                           Manage →
                         </Link>
-
-                        {job.jobberWebUri && (
-                          <a
-                            href={job.jobberWebUri}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-xs font-semibold text-[#6b705c] hover:underline"
-                          >
-                            Open in Jobber ↗
-                          </a>
-                        )}
                       </div>
                     </div>
                   ))

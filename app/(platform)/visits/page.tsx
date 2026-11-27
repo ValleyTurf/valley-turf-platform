@@ -392,7 +392,6 @@ export default async function VisitsPage({ searchParams }: VisitsPageProps) {
                           Job Type{sortIndicator("jobType")}
                         </Link>
                       </th>
-                      <th className="px-5 py-3 text-center">Open</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -443,21 +442,6 @@ export default async function VisitsPage({ searchParams }: VisitsPageProps) {
                             </span>
                           </td>
                           <td className="px-5 py-3 text-[#6b705c]">{row.jobType}</td>
-                          <td className="px-5 py-3 text-center">
-                            {row.jobberWebUri ? (
-                              <a
-                                href={row.jobberWebUri}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                title="Open in Jobber"
-                                className="text-[#9c7a20] hover:underline"
-                              >
-                                ↗
-                              </a>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
                         </tr>
                       );
                     })}

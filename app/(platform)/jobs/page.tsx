@@ -416,16 +416,7 @@ export default async function JobsPage({ searchParams }: JobsPageProps) {
                           Manage →
                         </Link>
 
-                        {job.jobber_web_uri ? (
-                          <a
-                            href={job.jobber_web_uri}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs font-semibold text-[#6b705c] hover:underline"
-                          >
-                            Open in Jobber ↗
-                          </a>
-                        ) : isNative ? (
+                        {isNative ? (
                           <span className="text-xs font-semibold text-[#6b705c]">
                             Native job
                           </span>
