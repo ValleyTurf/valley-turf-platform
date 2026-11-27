@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase-server";
 import { listRecentPageErrors } from "@/lib/pageErrors";
 import { evaluateAllJobs } from "@/lib/cronWatch";
+import { checkPhoneLine } from "@/lib/phoneLineHealth";
 
 type CheckStatus = "pass" | "warn" | "fail";
 
@@ -450,6 +451,49 @@ async function checkScheduledJobs(): Promise<Check> {
   };
 }
 
+// The business phone number: Twilio is pointed at the CRM for calls, the
+// balance is healthy, and calls are not set to loop back to the number
+// itself (lib/phoneLineHealth.ts).
+async function checkBusinessPhoneLine(): Promise<Check> {
+  let findings;
+
+  try {
+    findings = await checkPhoneLine();
+  } catch (error) {
+    return {
+      name: "Business phone line",
+      status: "warn",
+      detail: `Couldn't check the phone line: ${error instanceof Error ? error.message : "unknown error"}`,
+    };
+  }
+
+  const fails = findings.filter((f) => f.severity === "fail");
+  const warns = findings.filter((f) => f.severity === "warn");
+
+  if (fails.length > 0) {
+    return {
+      name: "Business phone line",
+      status: "fail",
+      detail: [...fails, ...warns].map((f) => f.message).join(" "),
+      hint: "Calls to the business number or texts from it may not be working. Fix in the Twilio console (Phone Numbers > the number > Configure) or in Vercel settings.",
+    };
+  }
+
+  if (warns.length > 0) {
+    return {
+      name: "Business phone line",
+      status: "warn",
+      detail: warns.map((f) => f.message).join(" "),
+    };
+  }
+
+  return {
+    name: "Business phone line",
+    status: "pass",
+    detail: "Calls are pointed at the CRM, the number can make and receive calls, and the Twilio balance is healthy.",
+  };
+}
+
 async function checkWeeklyBackup(): Promise<Check> {
   const { data, error } = await supabaseServer
     .from("jobber_sync_runs")
@@ -530,6 +574,7 @@ export default async function HealthPage() {
     checkJobberSyncStatus(),
     checkWeeklyBackup(),
     checkScheduledJobs(),
+    checkBusinessPhoneLine(),
     checkPageErrors(),
   ]);
 
