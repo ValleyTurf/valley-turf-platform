@@ -13,6 +13,7 @@
 import { describeTwilioError } from "@/lib/textDeliveryStatus";
 import { loadNeedsReply } from "@/lib/needsReply";
 import { formatWaiting } from "@/lib/needsReplyLogic";
+import { elapsedMinutes, firstQuoteSentAt, formatDuration } from "@/lib/quoteSpeedLogic";
 import "server-only";
 import { supabaseServer } from "@/lib/supabase-server";
 import { toPhoenixDateString } from "@/lib/phoenixDate";
@@ -686,6 +687,71 @@ async function countWaitingReplies(): Promise<{ count: number; sample: string[] 
   }
 }
 
+// New leads from the last 30 days that are more than a day old and still
+// have no quote sent -- the "nobody answered this one" net. Leads marked
+// lost or "can't quote" are excluded.
+async function countWaitingLeads(): Promise<{ count: number; sample: string[] }> {
+  try {
+    const now = new Date();
+    const oldest = new Date(now.getTime() - 30 * 86_400_000).toISOString();
+    const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+
+    const [leadsResult, quotesResult] = await Promise.all([
+      supabaseServer
+        .from("leads")
+        .select("id, first_name, last_name, status, created_at, jobber_client_id")
+        .gte("created_at", oldest)
+        .lte("created_at", cutoff)
+        .order("created_at", { ascending: true }),
+      supabaseServer
+        .from("quotes")
+        .select("lead_id, customer_id, status, sent_at, created_at")
+        .gte("created_at", oldest),
+    ]);
+
+    const quotes = (quotesResult.data ?? []) as {
+      lead_id: string | null;
+      customer_id: string | null;
+      status: string | null;
+      sent_at: string | null;
+      created_at: string | null;
+    }[];
+
+    const waiting = ((leadsResult.data ?? []) as {
+      id: string;
+      first_name: string | null;
+      last_name: string | null;
+      status: string | null;
+      created_at: string;
+      jobber_client_id: string | null;
+    }[]).filter((lead) => {
+      const status = (lead.status || "new").toLowerCase();
+      if (status !== "new" && status !== "contacted") return false;
+
+      const mine = quotes.filter(
+        (quote) =>
+          quote.lead_id === lead.id ||
+          (lead.jobber_client_id && quote.customer_id === lead.jobber_client_id)
+      );
+
+      return firstQuoteSentAt(mine) === null;
+    });
+
+    return {
+      count: waiting.length,
+      sample: waiting.slice(0, SAMPLE_LIMIT).map((lead) => {
+        const name =
+          [lead.first_name, lead.last_name].filter(Boolean).join(" ") || "Unnamed lead";
+        const minutes = elapsedMinutes(lead.created_at, now) ?? 0;
+        return `${name} -- waiting ${formatDuration(minutes)}`;
+      }),
+    };
+  } catch (error) {
+    console.error("Waiting leads lookup failed:", error);
+    return { count: 0, sample: [] };
+  }
+}
+
 // Pay-ahead customers whose card is charged tomorrow, with the amount
 // (lib/autopayPrepay.ts) -- the day-before heads-up Ryan asked for when
 // he chose to have these charged automatically.
@@ -751,6 +817,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     failedAutopayCharges,
     failedTexts,
     waitingReplies,
+    waitingLeads,
     monthAheadChargesTomorrow,
     skippedInvoicedVisits,
   ] = await Promise.all([
@@ -766,6 +833,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     countFailedAutopayCharges(),
     countFailedTexts(),
     countWaitingReplies(),
+    countWaitingLeads(),
     countMonthAheadChargesTomorrow(),
     countSkippedInvoicedVisits(),
   ]);
@@ -784,6 +852,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     failedAutopayCharges,
     failedTexts,
     waitingReplies,
+    waitingLeads,
     monthAheadChargesTomorrow,
     skippedInvoicedVisits,
   };
@@ -805,6 +874,7 @@ export async function sendDailyDigest(): Promise<SendDailyDigestResult> {
     data.failedAutopayCharges.count +
     data.failedTexts.count +
     data.waitingReplies.count +
+    data.waitingLeads.count +
     data.monthAheadChargesTomorrow.count +
     data.skippedInvoicedVisits.count;
 

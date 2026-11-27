@@ -38,6 +38,8 @@ export type LeadRow = {
   // Where the lead stands, derived from its quotes + manual status.
   stage: LeadStage;
   needsAttention: boolean;
+  // "Waiting 5 h" / "Quoted in 40 min" timer text, with a color class.
+  speed: { label: string; className: string } | null;
   scanCount: number | null;
   customerMatch: { jobberClientId: string; label: string } | null;
   // Precomputed once server-side (lowercased, all searchable fields
@@ -209,6 +211,11 @@ export default function LeadsTable({ rows }: { rows: LeadRow[] }) {
                     {row.stage.detail && (
                       <p className="mt-1 text-xs text-[#6b705c]">
                         {row.stage.detail}
+                      </p>
+                    )}
+                    {row.speed && (
+                      <p className={`mt-1 text-xs ${row.speed.className}`}>
+                        {row.speed.label}
                       </p>
                     )}
                   </td>

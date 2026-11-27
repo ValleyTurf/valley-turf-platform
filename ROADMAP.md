@@ -217,6 +217,27 @@ Proposed 2026-11-24. Ryan picked 7 and 8; the rest are parked.
    (`lib/cronWatchLogic.ts`, `lib/cronWatch.ts`, migration 120). It is
    itself a cron, so it cannot report if every cron stops.
 
+## Top 10, fifth list (November 2026)
+
+Proposed 2026-11-30. Ryan picked the first item and asked for a quote-speed
+timer alongside it; the rest are parked (instant missed-call text-back,
+online booking, referral links and credit tracker, automatic follow-up
+sequences, HOA and commercial accounts, failed-payment recovery and card
+expiry warnings, guarantee and re-clean tracking, crew checklist with
+required photos, price increase tool).
+
+1. ~~**Instant lead reply and quote-speed timer.**~~ **Done.** A website
+   quote request now texts and emails the customer right away ("we got
+   your request, your quote is coming within one business day", with what
+   they submitted), once per lead (migration 123, `leads.ack_sent_at`;
+   `lib/leadAck.ts`). Admins and managers get a New leads push (any
+   source, including QR scans). Leads shows a live "Waiting 5 h" /
+   "Quoted in 40 min" under each stage, a Quote Speed panel (typical time
+   to quote, % within 1 hour and 24 hours, waiting now, and close rate by
+   speed bucket over the last 90 days), and the daily digest lists leads
+   with no quote after a day. The clock is wall-clock time, nights and
+   weekends included.
+
 ## Fresh ideas (CRM + website)
 
 1. ~~**Capture inbound text replies.**~~ **Done.** A customer replying

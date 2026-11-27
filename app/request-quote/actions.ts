@@ -11,6 +11,7 @@ import { validateAddress } from "@/lib/addressValidation";
 import { splitName } from "@/lib/leadJobberClient";
 import { ensureCustomerForLead } from "@/lib/leadCustomers";
 import { sendNewLeadAlerts } from "@/lib/notifications";
+import { sendLeadAcknowledgement } from "@/lib/leadAck";
 
 export type SubmitQuoteRequestInput = {
   fullName: string;
@@ -118,6 +119,7 @@ export async function submitQuoteRequest(
       email,
       source: "Website Form",
       campaignName: null,
+      leadId: insertedLead.id,
     })
   );
 
@@ -137,6 +139,11 @@ export async function submitQuoteRequest(
       customerResult.error
     );
   }
+
+  // Instant "we got your request" text and email to the customer, after
+  // the response so the form is not held up (lib/leadAck.ts). Runs after
+  // the customer is linked above so the messages land on their thread.
+  after(() => sendLeadAcknowledgement(insertedLead.id));
 
   return { ok: true };
 }

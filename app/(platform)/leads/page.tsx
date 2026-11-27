@@ -9,6 +9,13 @@ import {
   leadNeedsAttention,
   type LeadQuoteInfo,
 } from "@/lib/leadPipelineLogic";
+import {
+  elapsedMinutes,
+  firstQuoteSentAt,
+  formatDuration,
+  summarizeQuoteSpeed,
+  type SpeedLead,
+} from "@/lib/quoteSpeedLogic";
 import LeadsTable, { type LeadRow } from "./LeadsTable";
 import { createMissingCustomers } from "./actions";
 
@@ -206,6 +213,11 @@ export default async function LeadsPage() {
   const matchedCount = leads.filter((lead) => matchCustomer(lead)).length;
   const unlinkedCount = totalLeads - matchedCount;
 
+  const now = new Date();
+  const SPEED_WINDOW_DAYS = 90;
+  const speedWindowStart = now.getTime() - SPEED_WINDOW_DAYS * 86_400_000;
+  const speedLeads: SpeedLead[] = [];
+
   const rows: LeadRow[] = leads.map((lead) => {
     const campaign = lead.campaign_id ? campaignMap.get(lead.campaign_id) : null;
     const customer = matchCustomer(lead);
@@ -221,7 +233,50 @@ export default async function LeadsPage() {
       ? customer.full_name || "View Customer"
       : null;
     const rawStatus = (lead.status || "new").toLowerCase();
-    const stage = deriveLeadStage(rawStatus, quotesFor(lead, customer));
+    const leadQuotes = quotesFor(lead, customer);
+    const stage = deriveLeadStage(rawStatus, leadQuotes);
+
+    // Quote-speed timer: how long it took (or is taking) to get a first
+    // quote out. Only leads still owed a quote count as "waiting".
+    const sentAt = firstQuoteSentAt(leadQuotes);
+    const isWaiting =
+      !sentAt &&
+      (stage.key === "new" ||
+        stage.key === "contacted" ||
+        stage.key === "quote_drafted");
+    let speed: LeadRow["speed"] = null;
+
+    if (sentAt) {
+      const minutes = elapsedMinutes(lead.created_at, sentAt);
+      if (minutes !== null) {
+        speed = {
+          label: `Quoted in ${formatDuration(minutes)}`,
+          className: minutes < 240 ? "text-green-700" : "text-[#6b705c]",
+        };
+      }
+    } else if (isWaiting) {
+      const minutes = elapsedMinutes(lead.created_at, now);
+      if (minutes !== null) {
+        speed = {
+          label: `Waiting ${formatDuration(minutes)}`,
+          className:
+            minutes >= 24 * 60
+              ? "font-bold text-red-700"
+              : minutes >= 240
+                ? "font-semibold text-amber-700"
+                : "text-[#6b705c]",
+        };
+      }
+    }
+
+    if (new Date(lead.created_at).getTime() >= speedWindowStart) {
+      speedLeads.push({
+        createdAt: lead.created_at,
+        firstQuoteSentAt: sentAt,
+        accepted: stage.key === "won",
+        waiting: isWaiting,
+      });
+    }
 
     return {
       id: lead.id,
@@ -240,6 +295,7 @@ export default async function LeadsPage() {
       rawStatus,
       stage,
       needsAttention: leadNeedsAttention(stage),
+      speed,
       scanCount: lead.scan_count,
       customerMatch:
         customer && customerLabel
@@ -260,6 +316,8 @@ export default async function LeadsPage() {
         .toLowerCase(),
     };
   });
+
+  const speedSummary = summarizeQuoteSpeed(speedLeads, now);
 
   return (
     <main className="min-h-screen bg-[#f5f4ef] p-4 text-[#174734] sm:p-8">
@@ -316,6 +374,103 @@ export default async function LeadsPage() {
               </form>
             )}
           </div>
+        </section>
+
+        <section className="mt-8 rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">
+          <h2 className="text-2xl font-bold text-[#174734]">Quote Speed</h2>
+          <p className="mt-1 text-sm text-[#6b705c]">
+            How fast a new lead gets its first quote, and how often each speed
+            wins the job. Last {SPEED_WINDOW_DAYS} days.
+          </p>
+
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-xl bg-[#f7f6f1] p-4">
+              <p className="text-xs text-[#6b705c]">Typical time to quote</p>
+              <p className="mt-1 text-2xl font-bold text-[#174734]">
+                {speedSummary.medianMinutes !== null
+                  ? formatDuration(speedSummary.medianMinutes)
+                  : "—"}
+              </p>
+              <p className="mt-1 text-xs text-[#6b705c]">
+                Median of {speedSummary.quotedCount} quoted leads
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-[#f7f6f1] p-4">
+              <p className="text-xs text-[#6b705c]">Quoted within 1 hour</p>
+              <p className="mt-1 text-2xl font-bold text-[#174734]">
+                {speedSummary.within1hPercent !== null
+                  ? `${speedSummary.within1hPercent}%`
+                  : "—"}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-[#f7f6f1] p-4">
+              <p className="text-xs text-[#6b705c]">Quoted within 24 hours</p>
+              <p className="mt-1 text-2xl font-bold text-[#174734]">
+                {speedSummary.within24hPercent !== null
+                  ? `${speedSummary.within24hPercent}%`
+                  : "—"}
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-[#f7f6f1] p-4">
+              <p className="text-xs text-[#6b705c]">Waiting for a quote now</p>
+              <p
+                className={`mt-1 text-2xl font-bold ${
+                  speedSummary.waitingOver24h > 0
+                    ? "text-red-700"
+                    : "text-[#174734]"
+                }`}
+              >
+                {speedSummary.waitingCount}
+              </p>
+              <p className="mt-1 text-xs text-[#6b705c]">
+                {speedSummary.oldestWaitingMinutes !== null
+                  ? `Oldest: ${formatDuration(speedSummary.oldestWaitingMinutes)}`
+                  : "Everyone has a quote"}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-[#e7e2d5] text-[#6b705c]">
+                  <th className="pb-2 pr-4">Time to first quote</th>
+                  <th className="pb-2 pr-4 text-right">Quotes sent</th>
+                  <th className="pb-2 pr-4 text-right">Accepted</th>
+                  <th className="pb-2 text-right">Close rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {speedSummary.buckets.map((bucket) => (
+                  <tr key={bucket.key} className="border-b border-[#f0eee6]">
+                    <td className="py-2 pr-4 font-semibold">{bucket.label}</td>
+                    <td className="py-2 pr-4 text-right">{bucket.quoted}</td>
+                    <td className="py-2 pr-4 text-right">{bucket.accepted}</td>
+                    <td className="py-2 text-right font-bold">
+                      {bucket.closeRatePercent !== null
+                        ? `${bucket.closeRatePercent}%`
+                        : "—"}
+                      {bucket.closeRatePercent !== null && bucket.smallSample && (
+                        <span className="ml-1 text-xs font-normal text-[#6b705c]">
+                          (few quotes)
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <p className="mt-3 text-xs text-[#6b705c]">
+            The timer runs on the clock, nights and weekends included, from
+            when the lead came in to when the first quote went out. Recent
+            quotes may still be waiting on an answer, so close rates firm up
+            over time.
+          </p>
         </section>
 
         <section className="mt-8 rounded-2xl border border-[#e7e2d5] bg-white p-6 shadow-sm">

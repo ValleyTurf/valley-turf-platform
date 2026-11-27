@@ -11,6 +11,7 @@
 
 export type PushKind =
   | "customer_message"
+  | "new_lead"
   | "unknown_sender"
   | "incoming_call"
   | "missed_call"
@@ -32,6 +33,12 @@ export const PUSH_KINDS: {
     label: "Customer messages",
     description: "A customer texts, replies by email, or writes in the portal.",
     roles: ["admin", "manager", "staff"],
+  },
+  {
+    kind: "new_lead",
+    label: "New leads",
+    description: "Someone requests a quote on the website or scans a QR code.",
+    roles: ["admin", "manager"],
   },
   {
     kind: "unknown_sender",

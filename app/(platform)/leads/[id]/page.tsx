@@ -17,6 +17,7 @@ import { normalizeEmail, normalizePhone } from "@/lib/matching";
 import { setLeadStatus, deleteLead, createCustomerForLead } from "../actions";
 import { loadAllCustomerContacts } from "@/lib/leadCustomers";
 import { deriveLeadStage } from "@/lib/leadPipelineLogic";
+import { elapsedMinutes, firstQuoteSentAt, formatDuration } from "@/lib/quoteSpeedLogic";
 import { computeDisplayStatus, isQuoteStatus, quoteStatusLabel } from "@/lib/quotes";
 import ConfirmSubmitButton from "@/app/components/ConfirmSubmitButton";
 
@@ -201,6 +202,17 @@ export default async function LeadDetailPage({
     null;
   const addressBadge = addressValidationBadge(lead.address_validation_status);
   const stage = deriveLeadStage(lead.status, quotes);
+  const firstSent = firstQuoteSentAt(quotes);
+  const minutesToQuote = firstSent ? elapsedMinutes(lead.created_at, firstSent) : null;
+  const minutesWaiting = elapsedMinutes(lead.created_at, new Date());
+  const quoteTimer =
+    minutesToQuote !== null
+      ? `First quote went out ${formatDuration(minutesToQuote)} after this request came in`
+      : !firstSent &&
+          minutesWaiting !== null &&
+          (stage.key === "new" || stage.key === "contacted" || stage.key === "quote_drafted")
+        ? `Waiting for a quote: ${formatDuration(minutesWaiting)}`
+        : null;
   const campaignLabel = campaign ? campaign.alias || campaign.name : null;
   const photoPaths = lead.photo_paths ?? [];
   const rawStatus = (lead.status || "new").toLowerCase();
@@ -233,6 +245,7 @@ export default async function LeadDetailPage({
           {stage.detail && (
             <p className="mt-1 text-sm text-green-50">{stage.detail}</p>
           )}
+          {quoteTimer && <p className="mt-1 text-sm text-green-50">{quoteTimer}</p>}
         </section>
 
         <div className="mt-6 flex flex-wrap items-center gap-2">

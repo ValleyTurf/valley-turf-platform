@@ -25,7 +25,8 @@
 // notification -- and neither are the internal staff alerts at the
 // bottom of this file, which were never customer-facing to begin with.
 import "server-only";
-import { logContactHistory } from "@/lib/contactHistory";
+import { getUnreadMessageCount, logContactHistory } from "@/lib/contactHistory";
+import { sendPush } from "@/lib/webPush";
 import { sendTwilioMessage, twilioSidOf } from "@/lib/twilioSend";
 import { replyToAddressFor } from "@/lib/replyRouting";
 import { supabaseServer } from "@/lib/supabase-server";
@@ -92,10 +93,32 @@ export type NewLeadAlert = {
   email: string | null;
   source: string | null;
   campaignName: string | null;
+  // Lets the push open the lead straight away.
+  leadId?: string | null;
 };
 
 export async function sendNewLeadAlerts(lead: NewLeadAlert): Promise<void> {
-  await Promise.allSettled([sendLeadEmailAlert(lead), sendLeadSmsAlert(lead)]);
+  await Promise.allSettled([
+    sendLeadEmailAlert(lead),
+    sendLeadSmsAlert(lead),
+    sendLeadPush(lead),
+  ]);
+}
+
+async function sendLeadPush(lead: NewLeadAlert): Promise<void> {
+  try {
+    await sendPush("new_lead", {
+      title: `New lead: ${lead.name || "Unknown"}`,
+      body:
+        [lead.phone, lead.campaignName || lead.source]
+          .filter(Boolean)
+          .join(" - ") || "Tap to open",
+      url: lead.leadId ? `/leads/${lead.leadId}` : "/leads",
+      badgeCount: await getUnreadMessageCount().catch(() => 0),
+    });
+  } catch (error) {
+    console.error("Lead push error:", error);
+  }
 }
 
 function escapeHtml(value: string | null): string {
@@ -290,6 +313,8 @@ export type DailyDigestData = {
   failedAutopayCharges: DailyDigestSection;
   failedTexts: DailyDigestSection;
   waitingReplies: DailyDigestSection;
+  // New leads still without a quote after more than a day (Leads page).
+  waitingLeads: DailyDigestSection;
   // Pay-ahead customers being charged tomorrow, with amounts, and
   // already-invoiced visits that were skipped/cancelled in the last 7
   // days (lib/autopayPrepay.ts).
@@ -380,6 +405,11 @@ export async function sendDailyDigestEmail(
         "Customers waiting on a reply for over a day (Messages > Needs reply)",
         data.waitingReplies,
         "Everyone has been answered."
+      )}
+      ${digestSectionHtml(
+        "New leads still waiting on a quote for over a day (Leads page)",
+        data.waitingLeads,
+        "Every lead has a quote or is being handled."
       )}
       ${digestSectionHtml(
         "Texts that were not delivered (last 24h) -- an email copy goes out automatically where we have an address",

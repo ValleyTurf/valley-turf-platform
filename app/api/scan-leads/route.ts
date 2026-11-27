@@ -152,6 +152,7 @@ export async function POST(request: Request) {
         email: email || null,
         source: "QR Scan",
         campaignName: campaign.alias || campaign.name || null,
+        leadId: data?.id ?? null,
       })
     );
 

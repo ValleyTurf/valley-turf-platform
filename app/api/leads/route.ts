@@ -97,6 +97,7 @@ export async function POST(request: Request) {
         email,
         source,
         campaignName: null,
+        leadId: data?.id ?? null,
       })
     );
 
